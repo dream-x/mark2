@@ -7,3 +7,23 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# Сериализация нейтральных типов и сессий
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+# Схемы тулов и валидация аргументов
+schemars.workspace = true
+jsonschema.workspace = true
+
+# Async: agent loop, стримы провайдера, отмена
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+
+# Ошибки, логи, прочее
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+dirs.workspace = true

@@ -70,10 +70,10 @@ mark2/
 
 ### Task 2: Нейтральные типы сообщений и событий
 **Files:** Create: `core/src/message.rs`, `core/src/event.rs`
-- [ ] `Message { role, content: Vec<ContentBlock>, usage }`; `ContentBlock::{Text, Thinking, ToolUse{id,name,input}, ToolResult{id,content,is_error}}`
-- [ ] `Event` enum (serde-tagged): `TurnStarted, TextDelta, ThinkingDelta, ToolCallStarted, ToolCallOutput, ToolCallFinished, MessageComplete, Usage, TurnFinished{reason}, Error`
-- [ ] `Op` enum: `UserInput, Interrupt, Approve{id, decision}`
-- [ ] тесты: round-trip serde сообщений и событий, стабильность порядка ключей
+- [x] `Message { role, content: Vec<ContentBlock>, metadata: MessageMetadata{agent_visible,user_visible} }` (флаги — фундамент компакции из Task 7, дефолт не сериализуется); `ContentBlock::{Text, Thinking, ToolUse{id,name,input}, ToolResult{tool_use_id,content,is_error}}`; `Usage` — отдельный тип (input/output/cache_read/cache_write)
+- [x] `Event` enum (serde-tagged): `TurnStarted, TextDelta, ThinkingDelta, ToolCallStarted, ToolCallOutput, ToolCallFinished, ApprovalRequired, MessageComplete, Usage, Compacted, TurnFinished{reason: StopReason}, Error`
+- [x] `Op` enum: `UserInput, Interrupt, Approve{id, decision: ApprovalDecision}, Compact`
+- [x] тесты: round-trip serde сообщений и событий, стабильность порядка ключей
 
 ### Task 3: Provider trait + OpenAI-compatible провайдер
 **Files:** Create: `core/src/provider.rs`, `providers/src/{openai_compat,sse,json_repair}.rs`

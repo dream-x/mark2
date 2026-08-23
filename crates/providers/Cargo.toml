@@ -8,3 +8,20 @@ rust-version.workspace = true
 
 [dependencies]
 mark2-core.workspace = true
+
+# HTTP / SSE
+reqwest.workspace = true
+eventsource-stream.workspace = true
+
+# Wire-типы
+serde.workspace = true
+serde_json.workspace = true
+
+# Async
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+
+# Ошибки и логи
+thiserror.workspace = true
+tracing.workspace = true
