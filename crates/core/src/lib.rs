@@ -21,6 +21,7 @@ pub mod tools;
 
 pub use agent::{Agent, AgentConfig, AgentHandle};
 pub use compact::{CompactionConfig, CompactionError, CompactionOutcome};
+pub use config::{AgentSettings, Config, ConfigError, ModelConfig, ModelSettings, ProviderConfig};
 pub use event::{ApprovalDecision, Event, Op, StopReason};
 pub use message::{ContentBlock, Message, MessageMetadata, Role, Usage};
 pub use permission::{PermissionCheck, PermissionPolicy};
