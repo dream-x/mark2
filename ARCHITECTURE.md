@@ -1,0 +1,78 @@
+# Архитектура mark2
+
+Дизайн собран из ресёрча существующих харнесов (codex-rs, goose, pi, aider, opencode, mini-swe-agent) — взяты работающие паттерны, отброшена продуктовая сложность. Полный план с обоснованиями: `docs/plans/completed/20260824-rust-agent-harness.md`.
+
+## Главная идея
+
+Модель — стохастическое ядро; харнесс — детерминированная обвязка, превращающая вероятностный вывод в контрактный результат. Всё, что можно сделать чистой функцией — сделано чистой функцией. Ядро не знает про UI.
+
+## Поток данных (SQ/EQ)
+
+Единственная абстракция, на которой держится всё: в ядро входят **`Op`** (submissions), наружу идёт плоский стрим **`Event`**. CLI — первый потребитель; TUI, ACP-адаптер, сервер — будущие потребители того же канала без изменений ядра.
+
+```mermaid
+flowchart LR
+    CLI[cli: interactive / print] -- "Op: UserInput, Interrupt,\nApprove, Compact" --> H[AgentHandle]
+    H --> A[Agent loop\ncore/agent.rs]
+    A -- "Event: TextDelta, ToolCall*,\nApprovalRequired, Compacted,\nTurnFinished…" --> CLI
+    A -- ProviderRequest --> P[Provider trait]
+    P --> O[openai_compat\nSSE-стриминг]
+    O --> S[(ollama / llama-server /\nLM Studio / OpenRouter)]
+    A -- "execute(name, input)" --> T[ToolRegistry\nbash · read · write · edit]
+    A -- SessionItem --> J[SessionRecorder\nJSONL append-only]
+```
+
+## Крейты и модули
+
+| Путь | Что делает |
+|---|---|
+| `crates/core` | Ядро-библиотека, ноль знаний о UI и HTTP |
+| — `message.rs` | Нейтральный формат: `Message`, `ContentBlock` (Text/Thinking/ToolUse/ToolResult), `MessageMetadata` (флаги видимости `agent_visible`/`user_visible`), `Usage` |
+| — `event.rs` | `Event` и `Op` — serde-tagged, snake_case, стабильные wire-имена |
+| — `provider.rs` | `trait Provider` (один обязательный метод `stream()`), `ProviderRequest`, `StreamChunk`, `ToolDef`, `ProviderError` (в т.ч. `ContextLengthExceeded` — на нём висит компакция) |
+| — `agent.rs` | Цикл: `Agent::spawn() → (AgentHandle, Receiver<Event>)`; сэмплинг → тул-коллы → результаты → повтор; permission-гейт, отмена, интеграция компакции и сессий |
+| — `tools/` | `trait Tool` + `ToolRegistry` (schemars-схемы, jsonschema-валидация, retry-with-error); bash/read/write/edit |
+| — `permission.rs` | `PermissionPolicy`: Yolo / AskWrites / ReadOnly |
+| — `prompt.rs` | Системный промпт (≤1000 токенов вместе со схемами тулов) + поиск AGENTS.md вверх от cwd (ближайший выигрывает) |
+| — `compact.rs` | Компакция: оценка токенов, суммаризация через провайдера, скрытие истории флагами |
+| — `session.rs` | `SessionRecorder`/`load_session`: JSONL, фоновый писатель, толерантная загрузка |
+| — `config.rs` | Слоёный TOML-конфиг: user → project → CLI; per-model настройки |
+| `crates/providers` | HTTP-реализации. `openai_compat.rs` — wire-типы Chat Completions (толерантный serde), сборка стрим-дельт (текст, reasoning, тул-коллы по index), ретраи до стрима, маппинг переполнения контекста; `sse.rs` — байтовый поток → SSE-события; `json_repair.rs` — спасение обрезанного JSON |
+| `crates/cli` | Бинарь `mark2`: `main.rs` (сборка из конфига), `render.rs` (чистая функция Event → строка), `interactive.rs`, `print.rs` |
+
+## Один ход агента
+
+1. `Op::UserInput` → `Event::TurnStarted`; проактивная проверка компакции (порог 0.8 × `context_limit`) **до** добавления нового ввода.
+2. Сборка `ProviderRequest`: системный промпт (+ AGENTS.md проекта), история с фильтром `agent_visible`, схемы тулов в фиксированном порядке.
+3. `provider.stream()` → трансляция дельт (`TextDelta`/`ThinkingDelta`) наружу → `Complete{message, usage}` в историю.
+4. Если в ответе нет `ToolUse` — `TurnFinished{Completed}`. Иначе для каждого тул-колла по порядку: permission-гейт (`ApprovalRequired` → ждём `Op::Approve`; отказ = обычный tool result с `is_error`) → `registry.execute` (валидация схемой; ошибка валидации уходит модели текстом — retry-with-error) → результаты одним сообщением в историю → следующая итерация сэмплинга.
+5. Предохранители: `max_turns`; `ProviderError::ContextLengthExceeded` → компакция → ровно один повтор; `Op::Interrupt` в любой точке → `TurnFinished{Cancelled}`, при этом каждому начатому `tool_use` дописывается парный `tool_result` (строгие серверы ломаются на «висящих» tool calls).
+
+## Ключевые инварианты (не ломать)
+
+1. **История append-only.** Сообщения никогда не переписываются и не удаляются — только дописываются или помечаются флагами видимости. На этом стоят KV-кэш, сессии и компакция.
+2. **Байт-стабильная сериализация.** Одинаковый вход → байт-в-байт одинаковый JSON (fixed field order, `preserve_order`). Стабильный префикс промпта = живой KV-кэш llama-server / prompt cache облаков. Есть тесты на это.
+3. **Провайдер «глупый».** Ему приносят готовый запрос — фильтрация видимости, политики, компакция происходят в агенте.
+4. **Ядро без UI.** `core` не печатает и не спрашивает — только `Event` наружу и `Op` внутрь. Рендер — чистая функция в потребителе.
+5. **Каждому `tool_use` — парный `tool_result`**, даже при отказе, прерывании и таймауте.
+6. **Толерантный wire-парсинг.** OpenAI-compat — диалект, не стандарт: `#[serde(default)]` везде, незнакомые поля игнорируются, reasoning-каналы (`reasoning_content`/`reasoning`) поддержаны оба.
+7. **Отмена — один примитив**: `CancellationToken` (корень → ход → тул-колл). Стрим провайдера при отмене бросается, тул — дожидается (bash должен успеть убить process group).
+
+## Надёжность tool calls на слабых моделях
+
+Слои: (1) нативный chat-template сервера (`--jinja` у llama-server); (2) jsonschema-валидация против schemars-схем → ошибка возвращается модели как tool result; (3) json_repair для обрезанных аргументов; неспасаемые помечаются `__mark2_unparsed` и отсекаются валидацией. Грамматики (GBNF) и toolshim — фаза 2.
+
+## Компакция
+
+Три триггера: проактивно (оценка > 0.8 × лимита; оценка = последний `Usage`, фолбэк — байты/4), реактивно (`ContextLengthExceeded` — и до стрима, и error-фреймом внутри), вручную (`Op::Compact`). Механика: agent-visible история суммаризируется отдельным коротким промптом → старые сообщения получают `agent_visible=false` (для пользователя и сессии остаются), саммари входит user-сообщением с `user_visible=false`. Наружу — `Event::Compacted{before, after}`.
+
+## Тестирование
+
+- Юнит-тесты в модулях; агент тестируется через `MockProvider` со скриптованными очередями `StreamChunk` — проверяются точные последовательности `Event` и содержимое запросов к провайдеру.
+- Парсер стрима — на inline-фикстурах реальных SSE-чанков (OpenAI, llama-server, ollama, OpenRouter), собранных из живых форматов.
+- e2e (`crates/cli/tests/e2e_local.rs`, `#[ignore]`) — против живого локального сервера: `cargo test -p mark2-cli --test e2e_local -- --ignored` (env: `MARK2_E2E_BASE_URL`, `MARK2_E2E_MODEL`).
+- Бенчмарк моделей — `bench/STRATEGY.md`.
+
+## Чего нет сознательно
+
+MCP, субагенты, песочница, TUI, память — по фазам (см. роадмап в README). Урок ресёрча: codex вырос до ~130 крейтов и turn.rs на 2800 строк, goose — до agent.rs на 6000 строк. Ядро mark2 остаётся маленьким; всё новое подключается как потребитель Op/Event, а не врастает в цикл.
