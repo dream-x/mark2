@@ -1,3 +1,6 @@
 target/
 .DS_Store
 .claude/worktrees/
+
+# Сессии прогонов бенча: тяжёлые JSONL, в git идут только report.md и results.json.
+bench/results/*/sessions/
