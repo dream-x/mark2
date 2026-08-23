@@ -109,19 +109,19 @@ mark2/
 
 ### Task 7: Компакция контекста
 **Files:** Create: `core/src/compact.rs`; Modify: `core/src/{agent,message,session}.rs`
-- [ ] оценка занятости контекста: usage из последнего ответа провайдера + фолбэк-эстимейт по байтам; `context_limit` из конфига модели
-- [ ] pre-turn проверка порога (0.8, конфигурируемо) → суммаризация истории через провайдера (промпт-шаблон: что делали, какие файлы, что дальше)
-- [ ] не удалять: старым сообщениям `agent_visible=false`, саммари — `user_visible=false`; сборка промпта фильтрует по `agent_visible`; сессия хранит всё
-- [ ] retry-на-`ContextLengthExceeded`: компакция + один повтор запроса
-- [ ] событие `Compacted{tokens_before, tokens_after}` наружу; ручной `Op::Compact`
-- [ ] тесты: MockProvider — триггер по порогу, фильтрация видимости, retry-путь, round-trip сессии с метаданными видимости
+- [x] оценка занятости контекста: usage из последнего ответа провайдера + фолбэк-эстимейт по байтам; `context_limit` из конфига модели
+- [x] pre-turn проверка порога (0.8, конфигурируемо) → суммаризация истории через провайдера (промпт-шаблон: что делали, какие файлы, что дальше)
+- [x] не удалять: старым сообщениям `agent_visible=false`, саммари — `user_visible=false`; сборка промпта фильтрует по `agent_visible`; сессия хранит всё
+- [x] retry-на-`ContextLengthExceeded`: компакция + один повтор запроса
+- [x] событие `Compacted{tokens_before, tokens_after}` наружу; ручной `Op::Compact`
+- [x] тесты: MockProvider — триггер по порогу, фильтрация видимости, retry-путь, round-trip сессии с метаданными видимости
 
 ### Task 8: CLI
 **Files:** Create: `cli/src/main.rs`, `core/src/config.rs`
-- [ ] `mark2 "задача"` — интерактив: стрим текста, спиннеры тулов, y/n аппрувы; `mark2 -p "задача"` — print mode (без вопросов, policy из конфига); `--model`, `--base-url`, `--api-key-env`, `--yolo`
-- [ ] конфиг TOML: `~/.config/mark2/config.toml` → `./.mark2.toml` → флаги CLI (по возрастанию приоритета); секция `[provider]`, `[model."<id>"]` (edit_strategy, context_limit)
-- [ ] рендер Event-стрима в ANSI-текст (отдельный модуль — это «первый фронтенд», не логика)
-- [ ] тесты: мёржинг слоёв конфига; smoke-тест `-p` с MockProvider (feature-гейт)
+- [x] `mark2 "задача"` — интерактив: стрим текста, спиннеры тулов, y/n аппрувы; `mark2 -p "задача"` — print mode (без вопросов, policy из конфига); `--model`, `--base-url`, `--api-key-env`, `--yolo`
+- [x] конфиг TOML: `~/.config/mark2/config.toml` → `./.mark2.toml` → флаги CLI (по возрастанию приоритета); секция `[provider]`, `[model."<id>"]` (edit_strategy, context_limit)
+- [x] рендер Event-стрима в ANSI-текст (отдельный модуль — это «первый фронтенд», не логика)
+- [x] тесты: мёржинг слоёв конфига; smoke-тест `-p` с MockProvider (feature-гейт)
 
 ### Task 9: E2E против живой локалки + приёмка фазы
 - [ ] ignored-тест/скрипт: llama-server или ollama с Qwen3-Coder → «создай файл X с содержимым Y» в tmpdir → файл существует

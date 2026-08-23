@@ -218,7 +218,6 @@ async fn run(args: Args) -> Result<ExitCode> {
          (~/.config/mark2/config.toml или ./.mark2.toml)",
     )?;
     let settings = config.resolve(&model);
-    // context_limit пока только логируем: его потребитель — компакция (task 7).
     tracing::debug!(
         %model,
         edit_strategy = ?settings.edit_strategy,
@@ -243,6 +242,10 @@ async fn run(args: Args) -> Result<ExitCode> {
     }
     agent_config.max_tokens = config.agent.max_tokens;
     agent_config.temperature = config.agent.temperature;
+    if let Some(limit) = settings.context_limit {
+        agent_config = agent_config
+            .with_compaction(mark2_core::CompactionConfig::new().with_context_limit(limit));
+    }
 
     let mut agent = Agent::new(
         Arc::new(provider) as Arc<dyn Provider>,
