@@ -1,0 +1,18 @@
+# gpt-oss:20b локально исключён: битый блоб (см. docs/notes/e2e-findings-20260824.md)
+[[models]]
+alias = "qwen9"
+model = "qwen3.5:9b"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 1.0
+
+[[models]]
+alias = "qwen27"
+model = "qwen3.8:27b"
+base_url = "http://white.local:11434/v1"
+timeout_multiplier = 2.5
+
+[[models]]
+alias = "oss120"
+model = "gpt-oss:120b-cloud"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.5
