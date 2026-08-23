@@ -124,10 +124,10 @@ mark2/
 - [x] тесты: мёржинг слоёв конфига; smoke-тест `-p` с MockProvider (feature-гейт)
 
 ### Task 9: E2E против живой локалки + приёмка фазы
-- [ ] ignored-тест/скрипт: llama-server или ollama с Qwen3-Coder → «создай файл X с содержимым Y» в tmpdir → файл существует
-- [ ] прогнать 3–5 реальных мини-задач (создать файл, поправить функцию, найти баг в маленьком репо), зафиксировать проблемы в docs/
-- [ ] `cargo fmt --check && cargo clippy -- -D warnings && cargo test` зелёные
-- [ ] обновить AGENTS.md (команды сборки/тестов), план перенести в `docs/plans/20260824-rust-agent-harness.md` и отметить прогресс
+- [x] ignored-тест/скрипт: llama-server или ollama с Qwen3-Coder → «создай файл X с содержимым Y» в tmpdir → файл существует (`crates/cli/tests/e2e_local.rs`, ollama + qwen3.5:9b)
+- [x] прогнать 3–5 реальных мини-задач (создать файл, поправить функцию, найти баг в маленьком репо), зафиксировать проблемы в docs/ (`docs/notes/e2e-findings-20260824.md`)
+- [x] `cargo fmt --check && cargo clippy -- -D warnings && cargo test` зелёные
+- [x] обновить AGENTS.md (команды сборки/тестов), план перенести в `docs/plans/20260824-rust-agent-harness.md` и отметить прогресс
 
 ## Дорожная карта после MVP (отдельные планы на каждую фазу)
 
