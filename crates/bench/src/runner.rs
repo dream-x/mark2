@@ -61,20 +61,19 @@ pub struct Runner {
 }
 
 impl Runner {
-    /// Собрать ранер. `run_dir` приводится к абсолютному пути: `verify.sh`
-    /// запускается в чужой cwd и получает путь к stdout через окружение.
-    pub fn new(mark2: impl AsRef<Path>, run_dir: impl AsRef<Path>) -> Result<Self> {
-        let mark2 = std::path::absolute(mark2.as_ref())
-            .with_context(|| format!("не удалось развернуть путь {}", mark2.as_ref().display()))?;
-        let run_dir = std::path::absolute(run_dir.as_ref()).with_context(|| {
-            format!("не удалось развернуть путь {}", run_dir.as_ref().display())
-        })?;
-        Ok(Self {
-            mark2,
-            run_dir,
+    /// Собрать ранер.
+    ///
+    /// Оба пути разворачиваются в абсолютные: mark2 запускается с
+    /// `current_dir` = tmp-cwd прогона (относительный путь к бинарю резолвился
+    /// бы уже от неё), а из `run_dir` растут пути логов и `MARK2_STDOUT`,
+    /// который читает `verify.sh` — тоже из чужой cwd.
+    pub fn new(mark2: impl AsRef<Path>, run_dir: impl AsRef<Path>) -> Self {
+        Self {
+            mark2: crate::resolve_path(mark2),
+            run_dir: crate::resolve_path(run_dir),
             repeats_override: None,
             warmup: true,
-        })
+        }
     }
 
     /// Прогнать матрицу: модели снаружи, задачи внутри, повторы подряд.
