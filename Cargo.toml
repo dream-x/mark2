@@ -51,5 +51,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Прочее
 dirs = "6"
+jiff = "0.2"
 uuid = { version = "1", features = ["v4", "serde"] }
 tempfile = "3"
