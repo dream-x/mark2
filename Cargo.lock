@@ -1134,9 +1134,13 @@ name = "mark2-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
+ "futures",
  "mark2-core",
  "mark2-providers",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
