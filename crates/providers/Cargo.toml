@@ -1,0 +1,10 @@
+[package]
+name = "mark2-providers"
+description = "Реализации Provider для mark2: OpenAI-compatible (llama-server, ollama, LM Studio, OpenRouter)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mark2-core.workspace = true

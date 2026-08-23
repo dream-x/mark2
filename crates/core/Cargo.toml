@@ -1,0 +1,9 @@
+[package]
+name = "mark2-core"
+description = "Ядро agent harness mark2: типы сообщений, событий, agent loop, тулы, сессии"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
