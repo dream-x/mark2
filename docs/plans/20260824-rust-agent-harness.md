@@ -94,12 +94,12 @@ mark2/
 
 ### Task 5: Agent loop
 **Files:** Create: `core/src/agent.rs`, `core/src/permission.rs`, `core/src/prompt.rs`
-- [ ] цикл: system prompt (+ AGENTS.md проекта, nearest-wins) → `provider.stream()` → эмит Event-дельт → на tool_use: permission-гейт → выполнить тулы (последовательно в MVP; интерфейс не мешает FuturesOrdered позже) → tool results в историю → повторять, пока есть tool calls; `max_turns` предохранитель
-- [ ] история append-only в нейтральном формате; ничего не переписывать (кэш)
-- [ ] `PermissionPolicy`: `Yolo` / `AskWrites` (write, edit, bash требуют аппрува через событие `ApprovalRequired` + `Op::Approve`) / `ReadOnly`
-- [ ] `CancellationToken` через все await (helper `or_cancel`); `Op::Interrupt` корректно завершает ход событием `TurnFinished{Cancelled}`
-- [ ] системный промпт ≤ 1000 токенов вместе с описаниями тулов
-- [ ] тесты: MockProvider со скриптованными ответами — полный ход с 2 тул-коллами; interrupt посреди стрима; policy блокирует write; retry-with-error при невалидных аргументах
+- [x] цикл: system prompt (+ AGENTS.md проекта, nearest-wins) → `provider.stream()` → эмит Event-дельт → на tool_use: permission-гейт → выполнить тулы (последовательно в MVP; интерфейс не мешает FuturesOrdered позже) → tool results в историю → повторять, пока есть tool calls; `max_turns` предохранитель
+- [x] история append-only в нейтральном формате; ничего не переписывать (кэш)
+- [x] `PermissionPolicy`: `Yolo` / `AskWrites` (write, edit, bash требуют аппрува через событие `ApprovalRequired` + `Op::Approve`) / `ReadOnly`
+- [x] `CancellationToken` через все await (helper `or_cancel`); `Op::Interrupt` корректно завершает ход событием `TurnFinished{Cancelled}`
+- [x] системный промпт ≤ 1000 токенов вместе с описаниями тулов
+- [x] тесты: MockProvider со скриптованными ответами — полный ход с 2 тул-коллами; interrupt посреди стрима; policy блокирует write; retry-with-error при невалидных аргументах
 
 ### Task 6: Сессии (запись)
 **Files:** Create: `core/src/session.rs`

@@ -19,8 +19,10 @@ pub mod provider;
 pub mod session;
 pub mod tools;
 
+pub use agent::{Agent, AgentConfig, AgentHandle};
 pub use event::{ApprovalDecision, Event, Op, StopReason};
 pub use message::{ContentBlock, Message, MessageMetadata, Role, Usage};
+pub use permission::{PermissionCheck, PermissionPolicy};
 
 /// Версия ядра.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
