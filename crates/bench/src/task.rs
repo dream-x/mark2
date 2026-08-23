@@ -113,7 +113,11 @@ fn parse_task_file(raw: &str, origin: &str) -> Result<TaskSection> {
 }
 
 /// Загрузить одну задачу из её директории.
+///
+/// Путь директории разворачивается в абсолютный сразу: `verify.sh` и `setup/`
+/// нужны из tmp-cwd прогона, где относительный `bench/tasks/…` не резолвится.
 pub fn load_task(dir: &Path) -> Result<Task> {
+    let dir = &crate::resolve_path(dir);
     let name = dir
         .file_name()
         .and_then(|n| n.to_str())
@@ -244,8 +248,11 @@ pub(crate) mod tests {
         assert_eq!(task.timeout_seconds, 120);
         assert_eq!(task.repeats, 5);
         assert_eq!(task.tags, ["edit", "bash"]);
-        assert_eq!(task.setup_dir(), Some(dir.join(SETUP_DIR)));
-        assert_eq!(task.verify_script(), dir.join(VERIFY_SCRIPT));
+        // Пути развёрнуты при загрузке (на macOS /var → /private/var).
+        let canonical = std::fs::canonicalize(&dir).unwrap();
+        assert_eq!(task.dir, canonical);
+        assert_eq!(task.setup_dir(), Some(canonical.join(SETUP_DIR)));
+        assert_eq!(task.verify_script(), canonical.join(VERIFY_SCRIPT));
     }
 
     #[test]
@@ -257,6 +264,48 @@ pub(crate) mod tests {
         assert_eq!(task.repeats_with_override(None), 3);
         assert_eq!(task.repeats_with_override(Some(1)), 1);
         assert!(task.tags.is_empty());
+    }
+
+    /// Пути задачи используются из tmp-cwd прогона (`sh verify.sh`, копия
+    /// `setup/`), поэтому загрузка обязана вернуть абсолютные и нормализованные.
+    #[test]
+    fn paths_are_absolute_after_loading() {
+        let root = TempDir::new().unwrap();
+        let dir = write_task(root.path(), "T01-x", "[task]\ntimeout_seconds = 60\n");
+
+        // Путь с `..` — как если бы задачу нашли обходом директории.
+        let indirect = dir.join("..").join("T01-x");
+        let task = load_task(&indirect).unwrap();
+
+        assert_eq!(task.dir, std::fs::canonicalize(&dir).unwrap());
+        assert!(task.verify_script().is_absolute());
+        assert!(task.verify_script().is_file());
+        assert!(task.setup_dir().is_some_and(|path| path.is_absolute()));
+        assert!(
+            !task.dir.components().any(|c| c.as_os_str() == ".."),
+            "{}",
+            task.dir.display()
+        );
+        // ID и slug берутся из уже развёрнутого пути, а не из «..».
+        assert_eq!(task.id, "T01");
+        assert_eq!(task.slug, "x");
+    }
+
+    /// Тот же контракт при обходе директории заданной относительным путём.
+    #[test]
+    fn discovery_returns_absolute_paths_for_a_relative_tasks_dir() {
+        let root = TempDir::new().unwrap();
+        write_task(root.path(), "T01-a", "[task]\ntimeout_seconds = 60\n");
+
+        // Относительный путь строим от временной директории, не трогая cwd
+        // процесса: тесты идут параллельно.
+        let relative = root
+            .path()
+            .join("..")
+            .join(root.path().file_name().unwrap());
+        let tasks = discover_tasks(&relative).unwrap();
+        assert!(tasks[0].dir.is_absolute(), "{}", tasks[0].dir.display());
+        assert!(tasks[0].verify_script().is_file());
     }
 
     #[test]

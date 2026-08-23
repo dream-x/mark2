@@ -19,6 +19,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use jiff::{Timestamp, Zoned};
 use mark2_bench::models::{DEFAULT_MODELS_FILE, load_models, select_models};
+use mark2_bench::resolve_path;
 use mark2_bench::results::{Results, RunConfig, SCHEMA_VERSION, TaskRecord};
 use mark2_bench::runner::{
     PROJECT_CONFIG, Runner, VERIFY_TIMEOUT_SECONDS, WARMUP_PROMPT, run_id, write_outputs,
@@ -131,15 +132,17 @@ async fn run(args: Args) -> Result<()> {
     std::fs::create_dir_all(&run_dir)
         .with_context(|| format!("не удалось создать {}", run_dir.display()))?;
 
-    let mut runner = Runner::new(&args.mark2, &run_dir)?;
+    let mut runner = Runner::new(&args.mark2, &run_dir);
     runner.repeats_override = args.repeats;
     runner.warmup = !args.no_warmup;
 
+    // В сырьё уезжают развёрнутые пути: `results.json` должен читаться и через
+    // месяц из другой директории, а не только из того cwd, где гоняли бенч.
     let config = RunConfig {
         bench_version: mark2_bench::VERSION.to_string(),
         mark2: runner.mark2.display().to_string(),
-        tasks_dir: args.tasks_dir.display().to_string(),
-        models_file: args.models_file.display().to_string(),
+        tasks_dir: resolve_path(&args.tasks_dir).display().to_string(),
+        models_file: resolve_path(&args.models_file).display().to_string(),
         repeats_override: args.repeats,
         verify_timeout_seconds: VERIFY_TIMEOUT_SECONDS,
         warmup_prompt: WARMUP_PROMPT.to_string(),

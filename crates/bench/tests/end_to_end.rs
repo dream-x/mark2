@@ -119,8 +119,8 @@ impl Fixture {
     }
 
     fn bench(&self, args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_mark2-bench"))
-            .args([
+        self.bench_with_paths(
+            &[
                 "--mark2",
                 self.mark2.to_str().unwrap(),
                 "--tasks-dir",
@@ -129,7 +129,16 @@ impl Fixture {
                 self.models.to_str().unwrap(),
                 "--out",
                 self.out.to_str().unwrap(),
-            ])
+            ],
+            args,
+        )
+    }
+
+    /// Прогон с произвольным набором путей — в том числе относительных.
+    /// cwd процесса всегда корень фикстуры, как у смоука cwd = корень репо.
+    fn bench_with_paths(&self, paths: &[&str], args: &[&str]) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_mark2-bench"))
+            .args(paths)
             .args(args)
             .current_dir(self.root.path())
             .env("FAKE_MARK2_LOG", &self.log)
@@ -363,6 +372,88 @@ fn filters_and_repeats_override_narrow_the_matrix() {
         progress.contains("[fake2] T01 run 1/1 … pass"),
         "{progress}"
     );
+}
+
+/// Регрессия: относительные пути в флагах (как при `mark2-bench --tasks T01`
+/// из корня репозитория с дефолтным `--tasks-dir bench/tasks`).
+///
+/// `verify.sh` и mark2 запускаются с cwd = tmp-директория прогона, поэтому
+/// относительный путь оттуда не резолвится: до фикса verify отдавал exit 127 и
+/// `sh: tasks/T01-create-file/verify.sh: No such file or directory`, а решённая
+/// задача засчитывалась как провал.
+#[test]
+fn relative_paths_still_resolve_from_the_run_cwd() {
+    let fixture = Fixture::new();
+    fixture.task(
+        "T01-create-file",
+        "Создай hello.txt с содержимым ровно: mark2 works\n",
+        "[task]\ntimeout_seconds = 60\nrepeats = 1\n",
+        "#!/bin/sh\ntest \"$(cat hello.txt)\" = 'mark2 works' || exit 1\ntest -f given.txt || exit 1\ngrep -q 'Готово' \"$MARK2_STDOUT\" || exit 1\n",
+    );
+
+    let output = fixture.bench_with_paths(
+        &[
+            "--mark2",
+            "./fake-mark2",
+            "--tasks-dir",
+            "tasks",
+            "--models-file",
+            "models.toml",
+            "--out",
+            "results",
+        ],
+        &[
+            "--models",
+            "fake1",
+            "--tasks",
+            "T01",
+            "--repeats",
+            "1",
+            "--no-warmup",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let results = fixture.results();
+    let run = &results["runs"][0];
+    assert_eq!(run["exit_code"], 0);
+    assert_eq!(
+        run["verify"]["exit_code"], 0,
+        "verify не нашёл свой скрипт: {}",
+        run["verify"]
+    );
+    assert_eq!(run["verify"]["stderr"], "");
+    assert_eq!(
+        run["pass"], true,
+        "решённая задача обязана быть pass: {run}"
+    );
+
+    // Пути в сырье развёрнуты — results.json читается не только из cwd прогона.
+    let config = &results["config"];
+    for key in ["mark2", "tasks_dir", "models_file"] {
+        let path = config[key].as_str().unwrap();
+        assert!(Path::new(path).is_absolute(), "{key} = {path}");
+    }
+    assert!(
+        Path::new(config["tasks"][0]["dir"].as_str().unwrap()).is_absolute(),
+        "{}",
+        config["tasks"][0]["dir"]
+    );
+
+    // Артефакты нашлись по путям из сырья (они относительны run_dir).
+    let run_dir = fixture.run_dir();
+    for key in ["stdout_path", "stderr_path", "session_path"] {
+        let relative = run[key].as_str().unwrap_or_else(|| panic!("{key} пуст"));
+        assert!(
+            run_dir.join(relative).is_file(),
+            "{key} = {relative} не найден в {}",
+            run_dir.display()
+        );
+    }
 }
 
 /// Зависший прогон убивается по таймауту и помечается в результатах.
