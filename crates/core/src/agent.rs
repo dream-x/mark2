@@ -36,7 +36,8 @@
 //! * **История append-only.** Сообщения только дописываются, никогда не
 //!   переписываются: префикс промпта обязан быть стабильным, иначе KV-кэш
 //!   локального сервера инвалидируется на каждом запросе. Фильтр сборки
-//!   запроса — `agent_visible` (фундамент компакции из task 7).
+//!   запроса — `agent_visible`; компакция ничего не удаляет, а лишь снимает
+//!   этот флаг (см. [`crate::compact`]).
 //! * **У каждого `tool_use` есть парный `tool_result`.** Даже если ход прерван
 //!   или тул запрещён политикой: строгие OpenAI-совместимые сервера отвергают
 //!   запрос с «висящим» тул-коллом.
@@ -48,12 +49,28 @@
 //!   токен, у каждого тул-колла — дочерний от него. [`AgentHandle::cancel_token`]
 //!   отдаёт корневой: его отмена гасит и текущий ход, и все следующие.
 //!
+//! # Компакция
+//!
+//! Три входа в [`crate::compact::compact`], все — вокруг сэмплинга:
+//!
+//! * **проактивно**, до того как ввод пользователя попадёт в историю: если
+//!   оценка занятости перевалила `threshold × context_limit`
+//!   ([`crate::compact::CompactionConfig`]). Порядок важен — свежая просьба
+//!   пользователя обязана пережить сжатие видимой;
+//! * **реактивно**, на [`ProviderError::ContextLengthExceeded`] — как до
+//!   стрима, так и error-фреймом внутри него: сжать и повторить запрос
+//!   **ровно один раз**; второе переполнение подряд (или переполнение на самой
+//!   суммаризации) завершает ход `Error`;
+//! * **вручную**, по [`Op::Compact`] вне хода.
+//!
+//! Наружу это видно как [`Event::Compacted`], в сессию — как
+//! [`SessionItem::Compacted`], скрытые копии сообщений и саммари.
+//!
 //! # Что ядро НЕ делает в MVP
 //!
 //! `StreamChunk::ToolCallDelta` наружу не транслируется (аргументы всё равно
-//! показываются целиком в `ToolCallStarted`), тул-коллы исполняются строго
-//! последовательно, а [`Op::Compact`] пока игнорируется — компакция придёт в
-//! task 7.
+//! показываются целиком в `ToolCallStarted`), а тул-коллы исполняются строго
+//! последовательно.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -67,6 +84,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::compact::{self, CompactionConfig, CompactionError};
 use crate::event::{ApprovalDecision, Event, Op, StopReason};
 use crate::message::{ContentBlock, Message, Usage};
 use crate::permission::{self, PermissionCheck, PermissionPolicy};
@@ -94,6 +112,8 @@ pub struct AgentConfig {
     /// Рабочая директория: от неё резолвятся пути тулов и в ней ищется
     /// `AGENTS.md`.
     pub cwd: PathBuf,
+    /// Когда и как сжимать историю.
+    pub compaction: CompactionConfig,
 }
 
 impl Default for AgentConfig {
@@ -105,6 +125,7 @@ impl Default for AgentConfig {
             temperature: None,
             policy: PermissionPolicy::default(),
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            compaction: CompactionConfig::default(),
         }
     }
 }
@@ -150,6 +171,13 @@ impl AgentConfig {
     #[must_use]
     pub fn with_temperature(mut self, temperature: f32) -> Self {
         self.temperature = Some(temperature);
+        self
+    }
+
+    /// Задать настройки компакции.
+    #[must_use]
+    pub fn with_compaction(mut self, compaction: CompactionConfig) -> Self {
+        self.compaction = compaction;
         self
     }
 }
@@ -242,6 +270,7 @@ impl Agent {
             system: self.system,
             tool_defs: self.tool_defs,
             history: self.history,
+            last_usage: None,
             events: event_tx,
             ops: OpChannel {
                 rx: op_rx,
@@ -502,9 +531,23 @@ struct AgentLoop {
     system: String,
     tool_defs: Vec<ToolDef>,
     history: Vec<Message>,
+    /// Счётчики последнего ответа провайдера — основной сигнал занятости
+    /// контекста. Сбрасывается компакцией: старый `usage` описывает промпт,
+    /// которого больше нет.
+    last_usage: Option<Usage>,
     events: UnboundedSender<Event>,
     ops: OpChannel,
     cancel: CancellationToken,
+}
+
+/// Исход компакции внутри цикла.
+enum Compaction {
+    /// История сжата; событие и записи сессии уже отданы.
+    Done,
+    /// Компакция прервана ([`Op::Interrupt`] или отмена снаружи).
+    Interrupted,
+    /// Сжать не удалось.
+    Failed(CompactionError),
 }
 
 impl AgentLoop {
@@ -517,8 +560,7 @@ impl AgentLoop {
                 Op::Approve { id, .. } => {
                     tracing::debug!(%id, "Approve без ожидающего тул-колла — игнорируем");
                 }
-                // TODO(task 7): ручная компакция истории через провайдера.
-                Op::Compact => tracing::debug!("Op::Compact появится в task 7"),
+                Op::Compact => self.run_manual_compaction().await,
             }
         }
 
@@ -536,12 +578,105 @@ impl AgentLoop {
             turn_id: turn_id.clone(),
         });
         self.record(SessionItem::turn_started(turn_id.as_str()));
+
+        // Проактивная компакция — до того, как ввод попадёт в историю: иначе
+        // свежая просьба пользователя тут же уехала бы в скрытые.
+        if self.needs_compaction() {
+            match self.compact_history(&turn_cancel).await {
+                Compaction::Done => {}
+                Compaction::Interrupted => {
+                    let reason = StopReason::Cancelled;
+                    self.emit(Event::TurnFinished { reason });
+                    self.record(SessionItem::turn_finished(turn_id.as_str(), reason));
+                    return;
+                }
+                // Сжать не вышло — ход всё равно идёт: оценка могла ошибаться,
+                // а настоящее переполнение поймает реактивная ветка.
+                Compaction::Failed(error) => {
+                    tracing::warn!(%error, "компакция по порогу не удалась");
+                    self.emit(Event::Error {
+                        message: error.to_string(),
+                    });
+                }
+            }
+        }
+
         self.push_message(Message::user(text));
 
         let reason = self.sample_loop(&turn_cancel).await;
 
         self.emit(Event::TurnFinished { reason });
         self.record(SessionItem::turn_finished(turn_id.as_str(), reason));
+    }
+
+    /// Ручная компакция вне хода ([`Op::Compact`]).
+    async fn run_manual_compaction(&mut self) {
+        if !self.history.iter().any(Message::is_agent_visible) {
+            tracing::debug!("Op::Compact: в истории нет видимых модели сообщений");
+            return;
+        }
+
+        let cancel = self.cancel.child_token();
+        match self.compact_history(&cancel).await {
+            Compaction::Done => {}
+            Compaction::Interrupted => tracing::debug!("ручная компакция прервана"),
+            Compaction::Failed(error) => {
+                tracing::warn!(%error, "ручная компакция не удалась");
+                self.emit(Event::Error {
+                    message: error.to_string(),
+                });
+            }
+        }
+    }
+
+    /// Перевалила ли оценка занятости порог из конфига.
+    fn needs_compaction(&self) -> bool {
+        self.history.iter().any(Message::is_agent_visible)
+            && self
+                .config
+                .compaction
+                .should_compact(compact::estimate_tokens(&self.history, self.last_usage))
+    }
+
+    /// Сжать историю: суммаризация через провайдера, скрытие старых сообщений,
+    /// событие наружу и записи в сессию.
+    ///
+    /// Сессия остаётся append-only: маркер [`SessionItem::Compacted`], затем
+    /// скрытые копии сообщений и саммари **дописываются** в JSONL — уже
+    /// записанные строки не переписываются.
+    async fn compact_history(&mut self, turn_cancel: &CancellationToken) -> Compaction {
+        let provider = Arc::clone(&self.provider);
+        let model = self.config.model.clone();
+        let last_usage = self.last_usage;
+        let summarize = compact::compact(
+            provider.as_ref(),
+            &model,
+            compact::SUMMARY_SYSTEM_PROMPT,
+            &mut self.history,
+            last_usage,
+        );
+
+        let outcome = match race_ops(summarize, &mut self.ops, turn_cancel).await {
+            Raced::Interrupted => return Compaction::Interrupted,
+            Raced::Done(Ok(outcome)) => outcome,
+            Raced::Done(Err(error)) => return Compaction::Failed(error),
+        };
+
+        self.last_usage = None;
+        self.emit(Event::Compacted {
+            tokens_before: outcome.tokens_before,
+            tokens_after: outcome.tokens_after,
+        });
+        self.record(SessionItem::Compacted {
+            tokens_before: outcome.tokens_before,
+            tokens_after: outcome.tokens_after,
+        });
+        for message in outcome.hidden {
+            self.record(SessionItem::message(message));
+        }
+        self.record(SessionItem::message(outcome.summary));
+
+        Compaction::Done
     }
 
     /// Цикл сэмплинга: запрос → дельты → тулы → снова запрос.
@@ -551,42 +686,72 @@ impl AgentLoop {
                 return StopReason::Cancelled;
             }
 
-            let provider = Arc::clone(&self.provider);
-            let request = self.build_request();
-            let raced = race_ops(provider.stream(request), &mut self.ops, turn_cancel).await;
-            let mut stream = match raced {
-                Raced::Interrupted => return StopReason::Cancelled,
-                Raced::Done(Ok(stream)) => stream,
-                Raced::Done(Err(error)) => return self.fail(error),
-            };
-
-            let mut complete: Option<(Message, Usage)> = None;
-            loop {
-                let raced = race_ops(stream.next(), &mut self.ops, turn_cancel).await;
-                match raced {
+            // Один ответ модели. Переполнение контекста — что до стрима, что
+            // внутри него (llama-server отдаёт его error-фреймом уже в SSE) —
+            // лечится компакцией и ровно одним повтором на итерацию: второе
+            // переполнение подряд валит ход, иначе цикл «сжали, снова не
+            // влезло» не кончился бы никогда.
+            let mut compacted = false;
+            let (message, usage) = 'request: loop {
+                let provider = Arc::clone(&self.provider);
+                let request = self.build_request();
+                let raced = race_ops(provider.stream(request), &mut self.ops, turn_cancel).await;
+                let mut stream = match raced {
                     Raced::Interrupted => return StopReason::Cancelled,
-                    Raced::Done(None) => break,
-                    Raced::Done(Some(Err(error))) => return self.fail(error),
-                    Raced::Done(Some(Ok(chunk))) => match chunk {
-                        StreamChunk::TextDelta(text) => self.emit(Event::TextDelta { text }),
-                        StreamChunk::ThinkingDelta(text) => {
-                            self.emit(Event::ThinkingDelta { text })
+                    Raced::Done(Ok(stream)) => stream,
+                    Raced::Done(Err(ProviderError::ContextLengthExceeded)) if !compacted => {
+                        compacted = true;
+                        match self.compact_history(turn_cancel).await {
+                            Compaction::Done => continue 'request,
+                            Compaction::Interrupted => return StopReason::Cancelled,
+                            Compaction::Failed(error) => return self.fail(error),
                         }
-                        // В MVP наружу не транслируется: аргументы всё равно
-                        // уедут целиком в ToolCallStarted.
-                        StreamChunk::ToolCallDelta { .. } => {}
-                        StreamChunk::Complete { message, usage } => {
-                            complete = Some((message, usage))
-                        }
-                    },
-                }
-            }
+                    }
+                    Raced::Done(Err(error)) => return self.fail(error),
+                };
 
-            let Some((message, usage)) = complete else {
-                self.emit(Event::Error {
-                    message: "провайдер закрыл поток, не отдав готовое сообщение".to_string(),
-                });
-                return StopReason::Error;
+                let mut complete: Option<(Message, Usage)> = None;
+                loop {
+                    let raced = race_ops(stream.next(), &mut self.ops, turn_cancel).await;
+                    match raced {
+                        Raced::Interrupted => return StopReason::Cancelled,
+                        Raced::Done(None) => break,
+                        Raced::Done(Some(Err(ProviderError::ContextLengthExceeded)))
+                            if !compacted =>
+                        {
+                            compacted = true;
+                            match self.compact_history(turn_cancel).await {
+                                // Повтор после уже отданных дельт может
+                                // повторить кусок текста в UI — это дешевле
+                                // мёртвого хода.
+                                Compaction::Done => continue 'request,
+                                Compaction::Interrupted => return StopReason::Cancelled,
+                                Compaction::Failed(error) => return self.fail(error),
+                            }
+                        }
+                        Raced::Done(Some(Err(error))) => return self.fail(error),
+                        Raced::Done(Some(Ok(chunk))) => match chunk {
+                            StreamChunk::TextDelta(text) => self.emit(Event::TextDelta { text }),
+                            StreamChunk::ThinkingDelta(text) => {
+                                self.emit(Event::ThinkingDelta { text })
+                            }
+                            // В MVP наружу не транслируется: аргументы всё
+                            // равно уедут целиком в ToolCallStarted.
+                            StreamChunk::ToolCallDelta { .. } => {}
+                            StreamChunk::Complete { message, usage } => {
+                                complete = Some((message, usage))
+                            }
+                        },
+                    }
+                }
+
+                let Some(complete) = complete else {
+                    self.emit(Event::Error {
+                        message: "провайдер закрыл поток, не отдав готовое сообщение".to_string(),
+                    });
+                    return StopReason::Error;
+                };
+                break 'request complete;
             };
 
             let calls: Vec<PendingCall> = message
@@ -598,6 +763,7 @@ impl AgentLoop {
                 })
                 .collect();
 
+            self.last_usage = Some(usage);
             self.push_message(message.clone());
             self.emit(Event::MessageComplete { message });
             self.emit(Event::Usage { usage });
@@ -725,13 +891,8 @@ impl AgentLoop {
         }
     }
 
-    /// Ошибка провайдера: наружу — [`Event::Error`], ход — `TurnFinished{Error}`.
-    fn fail(&self, error: ProviderError) -> StopReason {
-        if matches!(error, ProviderError::ContextLengthExceeded) {
-            // TODO(task 7): точка компакции — сжать историю и повторить запрос
-            // один раз, вместо того чтобы валить ход.
-            tracing::warn!("контекст модели переполнен; компакция появится в task 7");
-        }
+    /// Ход не вытянул: наружу — [`Event::Error`], ход — `TurnFinished{Error}`.
+    fn fail(&self, error: impl std::fmt::Display) -> StopReason {
         self.emit(Event::Error {
             message: error.to_string(),
         });
@@ -787,6 +948,11 @@ mod tests {
         Hang(Vec<StreamChunk>),
         /// Провалиться до начала стрима.
         Fail(String),
+        /// Отказать переполнением контекста — вход в реактивную компакцию.
+        ContextOverflow,
+        /// Отдать чанки и оборвать поток переполнением: так ведёт себя
+        /// llama-server, который шлёт ошибку error-фреймом уже внутри SSE.
+        StreamOverflow(Vec<StreamChunk>),
     }
 
     /// Провайдер со скриптованными ответами. Последний сценарий повторяется,
@@ -838,17 +1004,29 @@ mod tests {
                         .chain(futures::stream::pending()),
                 )),
                 Script::Fail(message) => Err(ProviderError::Network(message)),
+                Script::ContextOverflow => Err(ProviderError::ContextLengthExceeded),
+                Script::StreamOverflow(chunks) => Ok(Box::pin(
+                    futures::stream::iter(chunks.into_iter().map(Ok)).chain(futures::stream::once(
+                        async { Err(ProviderError::ContextLengthExceeded) },
+                    )),
+                )),
             }
         }
     }
 
     /// Ответ одним текстом, без тулов.
     fn text_script(text: &str) -> Script {
+        text_script_with_usage(text, Usage::new(10, 5))
+    }
+
+    /// То же, но с заданным расходом токенов: им управляется оценка занятости
+    /// контекста, то есть порог компакции.
+    fn text_script_with_usage(text: &str, usage: Usage) -> Script {
         Script::Chunks(vec![
             StreamChunk::TextDelta(text.to_string()),
             StreamChunk::Complete {
                 message: Message::assistant(text),
-                usage: Usage::new(10, 5),
+                usage,
             },
         ])
     }
@@ -884,6 +1062,15 @@ mod tests {
 
     impl Harness {
         async fn new(scripts: Vec<Script>, policy: PermissionPolicy, max_turns: usize) -> Self {
+            Self::with_compaction(scripts, policy, max_turns, CompactionConfig::default()).await
+        }
+
+        async fn with_compaction(
+            scripts: Vec<Script>,
+            policy: PermissionPolicy,
+            max_turns: usize,
+            compaction: CompactionConfig,
+        ) -> Self {
             let dir = tempfile::tempdir().unwrap();
             let provider = MockProvider::new(scripts);
             let recorder = SessionRecorder::create(
@@ -897,7 +1084,8 @@ mod tests {
             let config = AgentConfig::new("mock-model")
                 .with_cwd(dir.path())
                 .with_policy(policy)
-                .with_max_turns(max_turns);
+                .with_max_turns(max_turns)
+                .with_compaction(compaction);
             let (handle, events) = Agent::new(
                 provider.clone(),
                 ToolRegistry::with_defaults(EditStrategy::SearchReplace),
@@ -1013,6 +1201,25 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// `(tokens_before, tokens_after)` единственной компакции в потоке.
+    fn compaction(events: &[Event]) -> (u64, u64) {
+        events
+            .iter()
+            .find_map(|event| match event {
+                Event::Compacted {
+                    tokens_before,
+                    tokens_after,
+                } => Some((*tokens_before, *tokens_after)),
+                _ => None,
+            })
+            .expect("компакция не выполнялась")
+    }
+
+    /// Текст саммари в сообщении, если это оно.
+    fn is_summary(message: &Message) -> bool {
+        message.text().starts_with(compact::SUMMARY_PREFIX)
     }
 
     fn approval_id(events: &[Event]) -> String {
@@ -1656,6 +1863,374 @@ mod tests {
         assert!(format!("{agent:?}").contains("mock"));
     }
 
+    // ─────────────────────────── компакция ───────────────────────────
+
+    /// Порог: перед сэмплингом история сжимается, и в следующий запрос уходит
+    /// саммари вместо переписки.
+    #[tokio::test]
+    async fn threshold_compacts_before_sampling_and_the_next_request_carries_the_summary() {
+        let mut harness = Harness::with_compaction(
+            vec![
+                // Ход 1 набивает контекст: 4096 токенов при лимите 5000.
+                text_script_with_usage("первый ответ", Usage::new(4000, 96)),
+                text_script("Task: разобраться. Next: продолжить"),
+                text_script("второй ответ"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+            CompactionConfig::new().with_context_limit(5000),
+        )
+        .await;
+
+        let events = harness.turn("первый вопрос").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert!(
+            !tags(&events).contains(&"compacted".to_string()),
+            "на пустой истории сжимать нечего"
+        );
+
+        let events = harness.turn("второй вопрос").await;
+        assert_eq!(
+            tags(&events),
+            [
+                "turn_started",
+                "compacted",
+                "text_delta",
+                "message_complete",
+                "usage",
+                "turn_finished",
+            ]
+        );
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+
+        let (before, after) = compaction(&events);
+        assert_eq!(before, 4096, "оценка из последнего usage");
+        assert!(before > after, "{before} → {after}");
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 3);
+
+        // Запрос суммаризации: свой короткий system, вся видимая история и
+        // инструкция последним сообщением, без тулов.
+        assert_eq!(requests[1].system, compact::SUMMARY_SYSTEM_PROMPT);
+        assert!(requests[1].tools.is_empty());
+        assert_eq!(requests[1].messages.len(), 3);
+        assert_eq!(requests[1].messages[0], Message::user("первый вопрос"));
+        assert_eq!(requests[1].messages[1], Message::assistant("первый ответ"));
+        assert_eq!(
+            requests[1].messages[2],
+            Message::user(compact::SUMMARY_INSTRUCTIONS)
+        );
+
+        // Следующий запрос агента: саммари плюс свежий ввод, старое отфильтровано.
+        assert_eq!(requests[2].system, "тестовый системный промпт");
+        assert!(!requests[2].tools.is_empty(), "тулы на месте");
+        assert_eq!(requests[2].messages.len(), 2);
+        assert!(is_summary(&requests[2].messages[0]));
+        assert!(requests[2].messages[0].text().contains("Next: продолжить"));
+        assert_eq!(requests[2].messages[1], Message::user("второй вопрос"));
+
+        harness.finish().await;
+    }
+
+    /// Без `context_limit` порог молчит, каким бы длинным ни был диалог.
+    #[tokio::test]
+    async fn without_a_context_limit_the_threshold_never_fires() {
+        let mut harness = Harness::new(
+            vec![text_script_with_usage("ответ", Usage::new(1_000_000, 0))],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        harness.turn("первый вопрос").await;
+        let events = harness.turn("второй вопрос").await;
+        assert!(!tags(&events).contains(&"compacted".to_string()));
+        assert_eq!(harness.provider.calls(), 2, "суммаризации не было");
+        harness.finish().await;
+    }
+
+    /// Фолбэк оценки: провайдер не вернул счётчики — считаем по байтам истории.
+    #[tokio::test]
+    async fn byte_estimate_triggers_compaction_when_the_provider_reports_no_usage() {
+        let mut harness = Harness::with_compaction(
+            vec![
+                text_script_with_usage("ок", Usage::default()),
+                text_script("саммари"),
+                text_script("второй ответ"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+            CompactionConfig::new().with_context_limit(1000),
+        )
+        .await;
+
+        // ~4000 байт истории ≈ 1000 токенов при пороге 800.
+        harness.turn(&"щ".repeat(2000)).await;
+        let events = harness.turn("второй вопрос").await;
+
+        let (before, after) = compaction(&events);
+        assert!(before > 1000, "байтовая оценка: {before}");
+        assert!(before > after, "{before} → {after}");
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 3);
+        assert!(is_summary(&requests[2].messages[0]));
+        harness.finish().await;
+    }
+
+    /// Реактивный путь: переполнение → компакция → один повтор → успех.
+    #[tokio::test]
+    async fn context_length_exceeded_compacts_and_retries_once() {
+        let mut harness = Harness::new(
+            vec![
+                text_script_with_usage("первый ответ", Usage::new(4000, 96)),
+                Script::ContextOverflow,
+                text_script("Task: разобраться. Next: продолжить"),
+                text_script("второй ответ"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        harness.turn("первый вопрос").await;
+        let events = harness.turn("второй вопрос").await;
+        assert_eq!(
+            tags(&events),
+            [
+                "turn_started",
+                "compacted",
+                "text_delta",
+                "message_complete",
+                "usage",
+                "turn_finished",
+            ],
+            "ошибки наружу нет — переполнение вылечено компакцией"
+        );
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        let (before, after) = compaction(&events);
+        assert!(before > after, "{before} → {after}");
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 4, "запрос, суммаризация, повтор");
+        // Реактивная компакция случается, когда ввод уже в истории, — он тоже
+        // уходит в скрытые, а его содержание живёт в саммари.
+        assert_eq!(requests[1].messages.len(), 3);
+        assert_eq!(requests[2].system, compact::SUMMARY_SYSTEM_PROMPT);
+        assert_eq!(requests[3].messages.len(), 1);
+        assert!(is_summary(&requests[3].messages[0]));
+
+        // Скрытые сообщения остались в истории — их видно в сессии.
+        let items = harness.finish().await;
+        let history = messages(&items);
+        assert!(history.iter().any(is_summary));
+        assert!(
+            history
+                .iter()
+                .any(|m| m.text() == "второй вопрос" && !m.is_agent_visible())
+        );
+    }
+
+    /// Переполнение, пришедшее error-фреймом посреди SSE (llama-server), —
+    /// тот же путь: компакция и один повтор.
+    #[tokio::test]
+    async fn context_overflow_mid_stream_compacts_and_retries_once() {
+        let mut harness = Harness::new(
+            vec![
+                text_script_with_usage("первый ответ", Usage::new(4000, 96)),
+                Script::StreamOverflow(vec![StreamChunk::TextDelta("начал и упёрся".into())]),
+                text_script("Task: разобраться. Next: продолжить"),
+                text_script("второй ответ"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        harness.turn("первый вопрос").await;
+        let events = harness.turn("второй вопрос").await;
+        assert_eq!(
+            tags(&events),
+            [
+                "turn_started",
+                "text_delta",
+                "compacted",
+                "text_delta",
+                "message_complete",
+                "usage",
+                "turn_finished",
+            ],
+            "дельты до обрыва уже отданы, повтор идёт после компакции"
+        );
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(harness.provider.calls(), 4);
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests[3].messages.len(), 1);
+        assert!(is_summary(&requests[3].messages[0]));
+        harness.finish().await;
+    }
+
+    /// Переполнение и после компакции — ход падает, но цикл не зацикливается.
+    #[tokio::test]
+    async fn a_second_overflow_after_compaction_fails_the_turn() {
+        let mut harness = Harness::new(
+            vec![
+                Script::ContextOverflow,
+                text_script("саммари"),
+                // Последний сценарий повторяется: если бы повтор был не один,
+                // тест висел бы вечно.
+                Script::ContextOverflow,
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        let events = harness.turn("вопрос").await;
+        assert_eq!(
+            tags(&events),
+            ["turn_started", "compacted", "error", "turn_finished"]
+        );
+        assert_eq!(stop_reason(&events), StopReason::Error);
+        assert!(matches!(
+            &events[2],
+            Event::Error { message } if message.contains("контекст модели переполнен")
+        ));
+        assert_eq!(harness.provider.calls(), 3, "запрос, суммаризация, повтор");
+
+        // Агент жив: следующий ход идёт своим чередом.
+        assert_eq!(
+            stop_reason(&harness.turn("ещё раз").await),
+            StopReason::Error
+        );
+        harness.finish().await;
+    }
+
+    /// Переполнение на самой суммаризации — тоже `Error`, без второго круга.
+    #[tokio::test]
+    async fn overflow_during_summarization_fails_the_turn() {
+        let mut harness = Harness::new(
+            vec![Script::ContextOverflow],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        let events = harness.turn("вопрос").await;
+        assert_eq!(tags(&events), ["turn_started", "error", "turn_finished"]);
+        assert_eq!(stop_reason(&events), StopReason::Error);
+        assert!(matches!(
+            &events[1],
+            Event::Error { message } if message.contains("суммаризация не удалась")
+        ));
+        assert_eq!(harness.provider.calls(), 2, "запрос и суммаризация");
+        harness.finish().await;
+    }
+
+    /// Ручная компакция вне хода: `Op::Compact` → событие и саммари в истории.
+    #[tokio::test]
+    async fn manual_compact_op_summarizes_the_history() {
+        let mut harness = Harness::new(
+            vec![
+                text_script_with_usage("первый ответ", Usage::new(4000, 96)),
+                text_script("Task: разобраться. Next: продолжить"),
+                text_script("второй ответ"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        harness.turn("первый вопрос").await;
+
+        harness.submit(Op::Compact);
+        let event = harness.next_event().await;
+        let (before, after) = compaction(&[event]);
+        assert_eq!(before, 4096);
+        assert!(before > after, "{before} → {after}");
+
+        let events = harness.turn("второй вопрос").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert!(
+            !tags(&events).contains(&"compacted".to_string()),
+            "порог выключен — второй компакции нет"
+        );
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[1].system, compact::SUMMARY_SYSTEM_PROMPT);
+        assert_eq!(requests[2].messages.len(), 2);
+        assert!(is_summary(&requests[2].messages[0]));
+        assert_eq!(requests[2].messages[1], Message::user("второй вопрос"));
+        harness.finish().await;
+    }
+
+    /// Пустую историю компактить нечем — `Op::Compact` молча ничего не делает.
+    #[tokio::test]
+    async fn manual_compact_on_an_empty_history_does_nothing() {
+        let mut harness = Harness::new(
+            vec![text_script("ответ")],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        harness.submit(Op::Compact);
+        let events = harness.turn("вопрос").await;
+        assert!(!tags(&events).contains(&"compacted".to_string()));
+        assert_eq!(harness.provider.calls(), 1, "суммаризации не было");
+        harness.finish().await;
+    }
+
+    /// Флаги видимости и append-only сессия: старое остаётся пользователю,
+    /// саммари — модели, ничего не переписано.
+    #[tokio::test]
+    async fn compaction_visibility_flags_survive_the_session_round_trip() {
+        let mut harness = Harness::new(
+            vec![
+                text_script_with_usage("первый ответ", Usage::new(4000, 96)),
+                text_script("Task: разобраться. Next: продолжить"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        harness.turn("первый вопрос").await;
+        harness.submit(Op::Compact);
+        let (before, after) = compaction(&[harness.next_event().await]);
+
+        let items = harness.finish().await;
+
+        // Маркер компакции в сессии повторяет событие.
+        assert!(items.contains(&SessionItem::Compacted {
+            tokens_before: before,
+            tokens_after: after,
+        }));
+
+        // Сессия дописана, а не переписана: сперва исходные сообщения, следом
+        // их скрытые копии и саммари.
+        let history = messages(&items);
+        assert_eq!(history.len(), 5);
+        assert_eq!(history[0], Message::user("первый вопрос"));
+        assert_eq!(history[1], Message::assistant("первый ответ"));
+
+        for (original, hidden) in history[..2].iter().zip(&history[2..4]) {
+            assert_eq!(original.content, hidden.content, "содержимое то же");
+            assert!(!hidden.is_agent_visible(), "модель больше это не видит");
+            assert!(hidden.is_user_visible(), "пользователь видит по-прежнему");
+        }
+
+        let summary = &history[4];
+        assert!(is_summary(summary));
+        assert!(summary.text().contains("Next: продолжить"));
+        assert!(summary.is_agent_visible(), "саммари — для модели");
+        assert!(!summary.is_user_visible(), "и не для пользователя");
+    }
+
     #[test]
     fn config_defaults_and_builders() {
         let config = AgentConfig::default();
@@ -1663,19 +2238,23 @@ mod tests {
         assert_eq!(config.policy, PermissionPolicy::AskWrites);
         assert!(config.max_tokens.is_none());
         assert!(config.temperature.is_none());
+        assert_eq!(config.compaction, CompactionConfig::default());
 
         let config = AgentConfig::new("qwen3-coder")
             .with_cwd(Path::new("/work"))
             .with_policy(PermissionPolicy::Yolo)
             .with_max_turns(7)
             .with_max_tokens(2048)
-            .with_temperature(0.2);
+            .with_temperature(0.2)
+            .with_compaction(CompactionConfig::new().with_context_limit(32_768));
         assert_eq!(config.model, "qwen3-coder");
         assert_eq!(config.cwd, PathBuf::from("/work"));
         assert_eq!(config.policy, PermissionPolicy::Yolo);
         assert_eq!(config.max_turns, 7);
         assert_eq!(config.max_tokens, Some(2048));
         assert_eq!(config.temperature, Some(0.2));
+        assert_eq!(config.compaction.context_limit, Some(32_768));
+        assert_eq!(config.compaction.threshold, compact::DEFAULT_THRESHOLD);
     }
 
     /// Настройки сэмплинга доезжают до провайдера.
