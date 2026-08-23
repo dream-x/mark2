@@ -77,20 +77,20 @@ mark2/
 
 ### Task 3: Provider trait + OpenAI-compatible провайдер
 **Files:** Create: `core/src/provider.rs`, `providers/src/{openai_compat,sse,json_repair}.rs`
-- [ ] `trait Provider { fn name(&self) -> &str; async fn stream(&self, req: ProviderRequest) -> Result<MessageStream> }`; `MessageStream = BoxStream<Result<StreamChunk>>`; `StreamChunk::{TextDelta, ThinkingDelta, ToolCallDelta, Complete{message, usage}}`
-- [ ] wire-типы Chat Completions с `#[serde(default)]`-толерантностью; `to_wire(neutral) -> request`, инкрементальная сборка tool-call аргументов из дельт
-- [ ] SSE через `resp.bytes_stream().eventsource()`; ретраи с бэкоффом на сетевые/5xx (не мид-стрим)
-- [ ] поля диалектов: `cache_prompt`, `id_slot` (llama-server) за опцией провайдера
-- [ ] `json_repair`: tolerant-парс аргументов после провала строгого
-- [ ] тесты: фикстуры реальных SSE-чанков (llama-server, ollama, OpenRouter) → parse; сборка стриминговых tool-аргументов; repair-кейсы (обрезанный JSON, trailing comma)
+- [x] `trait Provider { fn name(&self) -> &str; async fn stream(&self, req: ProviderRequest) -> Result<MessageStream> }`; `MessageStream = BoxStream<Result<StreamChunk>>`; `StreamChunk::{TextDelta, ThinkingDelta, ToolCallDelta, Complete{message, usage}}`
+- [x] wire-типы Chat Completions с `#[serde(default)]`-толерантностью; `to_wire(neutral) -> request`, инкрементальная сборка tool-call аргументов из дельт
+- [x] SSE через `resp.bytes_stream().eventsource()`; ретраи с бэкоффом на сетевые/5xx (не мид-стрим)
+- [x] поля диалектов: `cache_prompt`, `id_slot` (llama-server) за опцией провайдера
+- [x] `json_repair`: tolerant-парс аргументов после провала строгого
+- [x] тесты: фикстуры реальных SSE-чанков (llama-server, ollama, OpenRouter) → parse; сборка стриминговых tool-аргументов; repair-кейсы (обрезанный JSON, trailing comma)
 
 ### Task 4: Тулы
 **Files:** Create: `core/src/tools/{mod,bash,read,write,edit}.rs`
-- [ ] `trait Tool { name, description, schema (schemars), async execute(input, ctx) -> ToolOutput }`; `ToolRegistry` с валидацией входа через `jsonschema` → ошибка валидации возвращается модели как tool result
-- [ ] `bash`: timeout, обрезка вывода по лимиту байт/строк, cwd
-- [ ] `read`: лимиты строк/offset; `write`: создание директорий
-- [ ] `edit`: exact search/replace (уникальность вхождения, понятные ошибки «not found / not unique»); `EditStrategy::WholeFile` как альтернативная схема тула для слабых моделей (выбор по model id + override в конфиге)
-- [ ] тесты: happy-path и ошибки каждого тула; валидация схемы отклоняет мусорные аргументы
+- [x] `trait Tool { name, description, schema (schemars), async execute(input, ctx) -> ToolOutput }`; `ToolRegistry` с валидацией входа через `jsonschema` → ошибка валидации возвращается модели как tool result
+- [x] `bash`: timeout, обрезка вывода по лимиту байт/строк, cwd
+- [x] `read`: лимиты строк/offset; `write`: создание директорий
+- [x] `edit`: exact search/replace (уникальность вхождения, понятные ошибки «not found / not unique»); `EditStrategy::WholeFile` как альтернативная схема тула для слабых моделей (выбор по model id + override в конфиге)
+- [x] тесты: happy-path и ошибки каждого тула; валидация схемы отклоняет мусорные аргументы
 
 ### Task 5: Agent loop
 **Files:** Create: `core/src/agent.rs`, `core/src/permission.rs`, `core/src/prompt.rs`
@@ -103,9 +103,9 @@ mark2/
 
 ### Task 6: Сессии (запись)
 **Files:** Create: `core/src/session.rs`
-- [ ] JSONL: `~/.mark2/sessions/YYYY/MM/DD/<ts>-<id>.jsonl`; строка = `{ts, item}`, item = meta | message | event-маркеры ходов
-- [ ] асинхронный writer (канал), flush на завершении хода
-- [ ] тесты: запись→чтение round-trip; повреждённая строка не валит загрузку
+- [x] JSONL: `~/.mark2/sessions/YYYY/MM/DD/<ts>-<id>.jsonl`; строка = `{ts, item}`, item = meta | message | event-маркеры ходов
+- [x] асинхронный writer (канал), flush на завершении хода
+- [x] тесты: запись→чтение round-trip; повреждённая строка не валит загрузку
 
 ### Task 7: Компакция контекста
 **Files:** Create: `core/src/compact.rs`; Modify: `core/src/{agent,message,session}.rs`
