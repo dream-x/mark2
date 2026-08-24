@@ -1,0 +1,2662 @@
+{
+  "schema_version": 1,
+  "label": "full-v1",
+  "run_id": "20260824-025629-full-v1",
+  "started_at": "2026-08-23T23:56:29.58159Z",
+  "finished_at": "2026-08-24T00:12:08.105351Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": null,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "models": [
+      {
+        "alias": "qwen9",
+        "model": "qwen3.5:9b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 1.0
+      },
+      {
+        "alias": "qwen27",
+        "model": "qwen3.8:27b",
+        "base_url": "http://white.local:11434/v1",
+        "timeout_multiplier": 2.5
+      },
+      {
+        "alias": "oss120",
+        "model": "gpt-oss:120b-cloud",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.5
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T01",
+        "slug": "create-file",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T01-create-file",
+        "timeout_seconds": 120,
+        "repeats": 3,
+        "tags": [
+          "write",
+          "basic"
+        ],
+        "prompt": "Create a file named `hello.txt` in the current working directory.\n\nThe file must contain exactly these three lines, in this order:\n\n```\nmark2 benchmark\nline two\nport=4821\n```\n\nRules:\n\n- Write the three lines exactly as shown, with no leading or trailing spaces.\n- End the file with a single newline character after the last line.\n- Do not add anything else: no comments, no blank lines, no code fences, no extra files.\n- Do not modify any other file.\n"
+      },
+      {
+        "id": "T02",
+        "slug": "read-answer",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T02-read-answer",
+        "timeout_seconds": 120,
+        "repeats": 3,
+        "tags": [
+          "read",
+          "restraint"
+        ],
+        "prompt": "The current working directory contains a file `config.ini`.\n\nRead it and answer one question: what is the value of the `port` setting in the\n`[server]` section?\n\nNote that several sections define a `port` key. Report only the one that belongs\nto the `[server]` section.\n\nRules:\n\n- Print the answer as your final message, in the form: `port = <value>`\n- This is a read-only task. Do not create, modify, delete or move any file.\n"
+      },
+      {
+        "id": "T03",
+        "slug": "edit-exact",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T03-edit-exact",
+        "timeout_seconds": 180,
+        "repeats": 3,
+        "tags": [
+          "edit",
+          "precision",
+          "restraint"
+        ],
+        "prompt": "The file `bands.py` in the current working directory has one bug.\n\nThe docstring of `classify()` is the specification and it is correct. The code of\n`classify()` disagrees with it for exactly one band boundary, so some\ntemperatures are reported as \"hot\" when the specification says \"mild\".\n\nFix the code so that it matches the docstring.\n\nRules:\n\n- Change only the single wrong value in `classify()`. It is a one-token edit.\n- Do not touch the docstring, the other functions, the constants, the imports,\n  the blank lines or the formatting.\n- Do not rewrite or reformat the file, and do not create new files.\n"
+      },
+      {
+        "id": "T04",
+        "slug": "fix-bug-test",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T04-fix-bug-test",
+        "timeout_seconds": 240,
+        "repeats": 3,
+        "tags": [
+          "edit",
+          "bash",
+          "verify-loop"
+        ],
+        "prompt": "The current working directory contains `stats.py` and `test.py`.\n\nRunning `python3 test.py` currently fails. Make it pass.\n\nRules:\n\n- Fix the bug in `stats.py`. The docstrings in `stats.py` describe the intended\n  behaviour and are correct.\n- Do not modify `test.py` in any way, and do not delete or rename it.\n- Run `python3 test.py` yourself at the end and make sure it prints\n  `all tests passed` and exits successfully.\n"
+      },
+      {
+        "id": "T05",
+        "slug": "multi-file-rename",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T05-multi-file-rename",
+        "timeout_seconds": 240,
+        "repeats": 3,
+        "tags": [
+          "edit",
+          "multi-file",
+          "refactor"
+        ],
+        "prompt": "The current working directory contains two Python files: `lib.py` and `app.py`.\n\nRename the function `calc_total` to `compute_total`.\n\nRules:\n\n- Update every occurrence in both files: the definition, every call site, the\n  `from lib import ...` line, and the mention inside the docstring of\n  `report()` in `app.py`.\n- After the rename, the text `calc_total` must not appear anywhere in either\n  file.\n- Do not rename anything else and do not change any behaviour. Running\n  `python3 app.py` must still print exactly the same output as before.\n- Do not create backup copies of the files.\n"
+      },
+      {
+        "id": "T06",
+        "slug": "search-code",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T06-search-code",
+        "timeout_seconds": 240,
+        "repeats": 3,
+        "tags": [
+          "search",
+          "navigation",
+          "reasoning"
+        ],
+        "prompt": "The directory `src/` in the current working directory contains a small Python\ncodebase (6 files). Explore it and answer one question.\n\nQuestion: which function returns the final amount that a customer is actually\ncharged for an order, and what value does it return for 3 units of SKU `A-11`\nfor a customer in the `gold` tier?\n\nThere is more than one \"total\" function in this codebase; only one of them\nreturns the amount actually charged.\n\nRules:\n\n- Print your answer as the final line of your reply, in exactly this form:\n  `<function_name> = <value>`\n  for example: `some_function = 12.34`\n- Use the plain function name without a module prefix.\n- Give the numeric value the function returns, not a rounded-off guess.\n- Do not modify any file in `src/`.\n"
+      },
+      {
+        "id": "T07",
+        "slug": "bash-pipeline",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T07-bash-pipeline",
+        "timeout_seconds": 180,
+        "repeats": 3,
+        "tags": [
+          "bash",
+          "composition"
+        ],
+        "prompt": "Count how many lines under the `src/` directory contain the text `TODO`, then\nwrite that count to a file named `report.txt` in the current working directory.\n\nDetails:\n\n- Search `src/` recursively, including subdirectories and non-Python files.\n- Count lines, matching the plain uppercase text `TODO`. Every occurrence in\n  this tree sits on its own line, so the number of matching lines is the number\n  you want.\n- `report.txt` must contain ONLY the number, for example `42`, followed by a\n  newline. No labels, no explanation, no quotes, no other lines.\n- Do not modify anything inside `src/`.\n"
+      },
+      {
+        "id": "T08",
+        "slug": "write-run-script",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T08-write-run-script",
+        "timeout_seconds": 180,
+        "repeats": 3,
+        "tags": [
+          "write",
+          "bash",
+          "verify-loop"
+        ],
+        "prompt": "Write a Python script named `fizzbuzz.py` in the current working directory, then\nrun it and confirm its output.\n\nThe script must print the numbers 1 through 15, one value per line, with these\nsubstitutions:\n\n- print `Fizz` instead of the number when it is divisible by 3\n- print `Buzz` instead of the number when it is divisible by 5\n- print `FizzBuzz` instead of the number when it is divisible by both 3 and 5\n\nSo the expected output is exactly these 15 lines:\n\n```\n1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n```\n\nRules:\n\n- The script must be runnable as `python3 fizzbuzz.py` and print nothing else:\n  no header, no trailing summary.\n- It must use only the Python standard library.\n- Run `python3 fizzbuzz.py` yourself and check that the output matches the 15\n  lines above before you finish.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T01",
+      "repeat": 1,
+      "started_at": "2026-08-23T23:56:31.599466Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.53749225,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 5671,
+        "output": 356
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 113,
+      "stdout_path": "logs/qwen9/T01/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T01/1.stderr.txt",
+      "session_path": "sessions/qwen9/T01/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T01",
+      "repeat": 2,
+      "started_at": "2026-08-23T23:56:40.152962Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.792623625000001,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 5655,
+        "output": 354
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 113,
+      "stdout_path": "logs/qwen9/T01/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T01/2.stderr.txt",
+      "session_path": "sessions/qwen9/T01/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T01",
+      "repeat": 3,
+      "started_at": "2026-08-23T23:56:48.961014Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.710313667,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 4040,
+        "output": 217
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T01/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T01/3.stderr.txt",
+      "session_path": "sessions/qwen9/T01/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T02",
+      "repeat": 1,
+      "started_at": "2026-08-23T23:56:55.687771Z",
+      "pass": false,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 68.684092292,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 143051,
+        "output": 3124
+      },
+      "session": {
+        "assistant_messages": 50,
+        "tool_uses": 50,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "max_turns",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: stdout does not contain the answer 4821\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T02/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T02/1.stderr.txt",
+      "session_path": "sessions/qwen9/T02/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T02",
+      "repeat": 2,
+      "started_at": "2026-08-23T23:58:04.382029Z",
+      "pass": false,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 73.446407958,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 143051,
+        "output": 3130
+      },
+      "session": {
+        "assistant_messages": 50,
+        "tool_uses": 50,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "max_turns",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: stdout does not contain the answer 4821\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T02/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T02/2.stderr.txt",
+      "session_path": "sessions/qwen9/T02/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T02",
+      "repeat": 3,
+      "started_at": "2026-08-23T23:59:17.837977Z",
+      "pass": false,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 69.671537625,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 143051,
+        "output": 3128
+      },
+      "session": {
+        "assistant_messages": 50,
+        "tool_uses": 50,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "max_turns",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: stdout does not contain the answer 4821\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T02/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T02/3.stderr.txt",
+      "session_path": "sessions/qwen9/T02/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T03",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:00:27.51892Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 13.621317916,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 4846,
+        "output": 567
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 268,
+      "stdout_path": "logs/qwen9/T03/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T03/1.stderr.txt",
+      "session_path": "sessions/qwen9/T03/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T03",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:00:41.293971Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 11.214538875,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 4850,
+        "output": 445
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T03/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T03/2.stderr.txt",
+      "session_path": "sessions/qwen9/T03/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T03",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:00:52.652859Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 11.177768875,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 4850,
+        "output": 445
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T03/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T03/3.stderr.txt",
+      "session_path": "sessions/qwen9/T03/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T04",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:01:03.98161Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 18.54855025,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 9919,
+        "output": 773
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 251,
+      "stdout_path": "logs/qwen9/T04/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T04/1.stderr.txt",
+      "session_path": "sessions/qwen9/T04/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T04",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:01:22.656491Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 19.003104833,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 9871,
+        "output": 778
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 268,
+      "stdout_path": "logs/qwen9/T04/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T04/2.stderr.txt",
+      "session_path": "sessions/qwen9/T04/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T04",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:01:41.792943Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 25.613291209,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 19010,
+        "output": 1047
+      },
+      "session": {
+        "assistant_messages": 8,
+        "tool_uses": 10,
+        "tool_errors": 5,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 267,
+      "stdout_path": "logs/qwen9/T04/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T04/3.stderr.txt",
+      "session_path": "sessions/qwen9/T04/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T05",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:02:07.526101Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 35.7344315,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 21733,
+        "output": 1552
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 10,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 415,
+      "stdout_path": "logs/qwen9/T05/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T05/1.stderr.txt",
+      "session_path": "sessions/qwen9/T05/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T05",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:02:43.405794Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 37.421079875,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 21769,
+        "output": 1671
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 10,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 415,
+      "stdout_path": "logs/qwen9/T05/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T05/2.stderr.txt",
+      "session_path": "sessions/qwen9/T05/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T05",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:03:20.976387Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 34.922199416,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 21805,
+        "output": 1560
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 10,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 367,
+      "stdout_path": "logs/qwen9/T05/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T05/3.stderr.txt",
+      "session_path": "sessions/qwen9/T05/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T06",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:03:56.038346Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 52.777392166,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 47642,
+        "output": 2329
+      },
+      "session": {
+        "assistant_messages": 15,
+        "tool_uses": 14,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 347,
+      "stdout_path": "logs/qwen9/T06/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T06/1.stderr.txt",
+      "session_path": "sessions/qwen9/T06/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T06",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:04:48.828623Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 48.261152167,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 39196,
+        "output": 2067
+      },
+      "session": {
+        "assistant_messages": 13,
+        "tool_uses": 12,
+        "tool_errors": 4,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 426,
+      "stdout_path": "logs/qwen9/T06/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T06/2.stderr.txt",
+      "session_path": "sessions/qwen9/T06/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T06",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:05:37.10225Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 46.258997583,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 36976,
+        "output": 2032
+      },
+      "session": {
+        "assistant_messages": 13,
+        "tool_uses": 12,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 387,
+      "stdout_path": "logs/qwen9/T06/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T06/3.stderr.txt",
+      "session_path": "sessions/qwen9/T06/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T07",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:06:23.373598Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 5.938376916,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 4079,
+        "output": 185
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T07/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T07/1.stderr.txt",
+      "session_path": "sessions/qwen9/T07/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T07",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:06:29.324976Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 5.97015375,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 4075,
+        "output": 185
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T07/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T07/2.stderr.txt",
+      "session_path": "sessions/qwen9/T07/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T07",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:06:35.307782Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.0362415,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 4067,
+        "output": 185
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T07/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T07/3.stderr.txt",
+      "session_path": "sessions/qwen9/T07/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T08",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:06:41.357498Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 9.424622584,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 4549,
+        "output": 348
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T08/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T08/1.stderr.txt",
+      "session_path": "sessions/qwen9/T08/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T08",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:06:50.909558Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 9.484677833,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 4554,
+        "output": 348
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T08/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T08/2.stderr.txt",
+      "session_path": "sessions/qwen9/T08/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T08",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:07:00.525226Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 9.368843667,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 4554,
+        "output": 349
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T08/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T08/3.stderr.txt",
+      "session_path": "sessions/qwen9/T08/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T01",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:07:15.662217Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.728876416,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 5662,
+        "output": 207
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 110,
+      "stdout_path": "logs/qwen27/T01/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T01/1.stderr.txt",
+      "session_path": "sessions/qwen27/T01/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T01",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:07:23.404374Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.776085041,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 5662,
+        "output": 203
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 110,
+      "stdout_path": "logs/qwen27/T01/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T01/2.stderr.txt",
+      "session_path": "sessions/qwen27/T01/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T01",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:07:31.193814Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.695492125,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 5669,
+        "output": 207
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 110,
+      "stdout_path": "logs/qwen27/T01/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T01/3.stderr.txt",
+      "session_path": "sessions/qwen27/T01/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T02",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:07:38.903031Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.261415875,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 2723,
+        "output": 59
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 11,
+      "stdout_path": "logs/qwen27/T02/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T02/1.stderr.txt",
+      "session_path": "sessions/qwen27/T02/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T02",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:07:45.17741Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.254566709,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 2723,
+        "output": 59
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 11,
+      "stdout_path": "logs/qwen27/T02/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T02/2.stderr.txt",
+      "session_path": "sessions/qwen27/T02/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T02",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:07:51.443052Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.238317875,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 2723,
+        "output": 59
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 11,
+      "stdout_path": "logs/qwen27/T02/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T02/3.stderr.txt",
+      "session_path": "sessions/qwen27/T02/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T03",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:07:57.693891Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.714879416,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 6814,
+        "output": 326
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 258,
+      "stdout_path": "logs/qwen27/T03/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T03/1.stderr.txt",
+      "session_path": "sessions/qwen27/T03/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T03",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:08:06.532773Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 9.004208459,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 6834,
+        "output": 346
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 270,
+      "stdout_path": "logs/qwen27/T03/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T03/2.stderr.txt",
+      "session_path": "sessions/qwen27/T03/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T03",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:08:15.660154Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.806773791,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 6808,
+        "output": 330
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 267,
+      "stdout_path": "logs/qwen27/T03/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T03/3.stderr.txt",
+      "session_path": "sessions/qwen27/T03/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T04",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:08:24.599516Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.895330333,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 7077,
+        "output": 353
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 219,
+      "stdout_path": "logs/qwen27/T04/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T04/1.stderr.txt",
+      "session_path": "sessions/qwen27/T04/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T04",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:08:33.601837Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.727644875,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 7071,
+        "output": 313
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 219,
+      "stdout_path": "logs/qwen27/T04/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T04/2.stderr.txt",
+      "session_path": "sessions/qwen27/T04/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T04",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:08:42.438478Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.701488917,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 7077,
+        "output": 320
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 219,
+      "stdout_path": "logs/qwen27/T04/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T04/3.stderr.txt",
+      "session_path": "sessions/qwen27/T04/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T05",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:08:51.255559Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 9.1965195,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 9332,
+        "output": 320
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 5,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 270,
+      "stdout_path": "logs/qwen27/T05/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T05/1.stderr.txt",
+      "session_path": "sessions/qwen27/T05/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T05",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:09:00.588174Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 11.09607725,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 11778,
+        "output": 573
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 7,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 342,
+      "stdout_path": "logs/qwen27/T05/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T05/2.stderr.txt",
+      "session_path": "sessions/qwen27/T05/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T05",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:09:11.812903Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 11.174021208,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 11790,
+        "output": 586
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 7,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 342,
+      "stdout_path": "logs/qwen27/T05/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T05/3.stderr.txt",
+      "session_path": "sessions/qwen27/T05/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T06",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:09:23.125253Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 10.720055,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 8245,
+        "output": 640
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 8,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 628,
+      "stdout_path": "logs/qwen27/T06/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T06/1.stderr.txt",
+      "session_path": "sessions/qwen27/T06/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T06",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:09:33.856167Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 9.808307875,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 8055,
+        "output": 465
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 500,
+      "stdout_path": "logs/qwen27/T06/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T06/2.stderr.txt",
+      "session_path": "sessions/qwen27/T06/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T06",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:09:43.675838Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 10.523460917,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 8245,
+        "output": 621
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 8,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 594,
+      "stdout_path": "logs/qwen27/T06/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T06/3.stderr.txt",
+      "session_path": "sessions/qwen27/T06/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T07",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:09:54.210038Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 12.665612833,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 4154,
+        "output": 186
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 94,
+      "stdout_path": "logs/qwen27/T07/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T07/1.stderr.txt",
+      "session_path": "sessions/qwen27/T07/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T07",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:10:06.889706Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.591009709,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 4151,
+        "output": 207
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 148,
+      "stdout_path": "logs/qwen27/T07/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T07/2.stderr.txt",
+      "session_path": "sessions/qwen27/T07/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T07",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:10:14.492916Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.518173583,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 4157,
+        "output": 185
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 94,
+      "stdout_path": "logs/qwen27/T07/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T07/3.stderr.txt",
+      "session_path": "sessions/qwen27/T07/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T08",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:10:22.023259Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.78740825,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 4563,
+        "output": 261
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 212,
+      "stdout_path": "logs/qwen27/T08/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T08/1.stderr.txt",
+      "session_path": "sessions/qwen27/T08/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T08",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:10:29.940246Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.677348,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 4549,
+        "output": 254
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 212,
+      "stdout_path": "logs/qwen27/T08/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T08/2.stderr.txt",
+      "session_path": "sessions/qwen27/T08/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T08",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:10:37.735502Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.795586875,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 4549,
+        "output": 258
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 212,
+      "stdout_path": "logs/qwen27/T08/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T08/3.stderr.txt",
+      "session_path": "sessions/qwen27/T08/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T01",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:10:46.278911Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 0.932431709,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 1894,
+        "output": 77
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 61,
+      "stdout_path": "logs/oss120/T01/1.stdout.txt",
+      "stderr_path": "logs/oss120/T01/1.stderr.txt",
+      "session_path": "sessions/oss120/T01/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T01",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:10:47.224547Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 0.904255459,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 1894,
+        "output": 77
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 61,
+      "stdout_path": "logs/oss120/T01/2.stdout.txt",
+      "stderr_path": "logs/oss120/T01/2.stderr.txt",
+      "session_path": "sessions/oss120/T01/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T01",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:10:48.142813Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 0.91838125,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 1897,
+        "output": 77
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 61,
+      "stdout_path": "logs/oss120/T01/3.stdout.txt",
+      "stderr_path": "logs/oss120/T01/3.stderr.txt",
+      "session_path": "sessions/oss120/T01/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T02",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:10:49.075524Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 0.918686292,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 2004,
+        "output": 60
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 11,
+      "stdout_path": "logs/oss120/T02/1.stdout.txt",
+      "stderr_path": "logs/oss120/T02/1.stderr.txt",
+      "session_path": "sessions/oss120/T02/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T02",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:10:50.007135Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 0.898856,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 2002,
+        "output": 60
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 11,
+      "stdout_path": "logs/oss120/T02/2.stdout.txt",
+      "stderr_path": "logs/oss120/T02/2.stderr.txt",
+      "session_path": "sessions/oss120/T02/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T02",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:10:50.918115Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 0.959718709,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 2002,
+        "output": 60
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 11,
+      "stdout_path": "logs/oss120/T02/3.stdout.txt",
+      "stderr_path": "logs/oss120/T02/3.stderr.txt",
+      "session_path": "sessions/oss120/T02/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T03",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:10:51.890444Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3.361246416,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 5298,
+        "output": 417
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 123,
+      "stdout_path": "logs/oss120/T03/1.stdout.txt",
+      "stderr_path": "logs/oss120/T03/1.stderr.txt",
+      "session_path": "sessions/oss120/T03/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T03",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:10:55.377786Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 2.9917085,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 5277,
+        "output": 366
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 125,
+      "stdout_path": "logs/oss120/T03/2.stdout.txt",
+      "stderr_path": "logs/oss120/T03/2.stderr.txt",
+      "session_path": "sessions/oss120/T03/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T03",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:10:58.516852Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 2.763365417,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 5287,
+        "output": 408
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 157,
+      "stdout_path": "logs/oss120/T03/3.stdout.txt",
+      "stderr_path": "logs/oss120/T03/3.stderr.txt",
+      "session_path": "sessions/oss120/T03/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T04",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:11:01.408848Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3.6667525420000002,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 9089,
+        "output": 354
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 19,
+      "stdout_path": "logs/oss120/T04/1.stdout.txt",
+      "stderr_path": "logs/oss120/T04/1.stderr.txt",
+      "session_path": "sessions/oss120/T04/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T04",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:11:05.18647Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 4.649926583,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 9064,
+        "output": 462
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 19,
+      "stdout_path": "logs/oss120/T04/2.stdout.txt",
+      "stderr_path": "logs/oss120/T04/2.stderr.txt",
+      "session_path": "sessions/oss120/T04/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T04",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:11:09.946805Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3.787544958,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 9081,
+        "output": 361
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 19,
+      "stdout_path": "logs/oss120/T04/3.stdout.txt",
+      "stderr_path": "logs/oss120/T04/3.stderr.txt",
+      "session_path": "sessions/oss120/T04/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T05",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:11:13.842788Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.014759333,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 15037,
+        "output": 738
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 8,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 249,
+      "stdout_path": "logs/oss120/T05/1.stdout.txt",
+      "stderr_path": "logs/oss120/T05/1.stderr.txt",
+      "session_path": "sessions/oss120/T05/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T05",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:11:19.989544Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 4.0151885,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 6808,
+        "output": 730
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: 'calc_total' still present in:\n./lib.py\n./app.py\n"
+      },
+      "answer_chars": 174,
+      "stdout_path": "logs/oss120/T05/2.stdout.txt",
+      "stderr_path": "logs/oss120/T05/2.stderr.txt",
+      "session_path": "sessions/oss120/T05/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T05",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:11:24.015709Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 12.4826345,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 51101,
+        "output": 1497
+      },
+      "session": {
+        "assistant_messages": 20,
+        "tool_uses": 19,
+        "tool_errors": 4,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 212,
+      "stdout_path": "logs/oss120/T05/3.stdout.txt",
+      "stderr_path": "logs/oss120/T05/3.stderr.txt",
+      "session_path": "sessions/oss120/T05/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T06",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:11:36.64037Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 5.725019292,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 14443,
+        "output": 862
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 8,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 21,
+      "stdout_path": "logs/oss120/T06/1.stdout.txt",
+      "stderr_path": "logs/oss120/T06/1.stderr.txt",
+      "session_path": "sessions/oss120/T06/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T06",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:11:42.375739Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.291922792,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 16853,
+        "output": 827
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 9,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 21,
+      "stdout_path": "logs/oss120/T06/2.stdout.txt",
+      "stderr_path": "logs/oss120/T06/2.stderr.txt",
+      "session_path": "sessions/oss120/T06/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T06",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:11:50.678494Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 5.863448875,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 14597,
+        "output": 627
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 8,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 21,
+      "stdout_path": "logs/oss120/T06/3.stdout.txt",
+      "stderr_path": "logs/oss120/T06/3.stderr.txt",
+      "session_path": "sessions/oss120/T06/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T07",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:11:56.552357Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1.763028125,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 2998,
+        "output": 156
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 66,
+      "stdout_path": "logs/oss120/T07/1.stdout.txt",
+      "stderr_path": "logs/oss120/T07/1.stderr.txt",
+      "session_path": "sessions/oss120/T07/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T07",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:11:58.327367Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1.6718965,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 2994,
+        "output": 167
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 70,
+      "stdout_path": "logs/oss120/T07/2.stdout.txt",
+      "stderr_path": "logs/oss120/T07/2.stderr.txt",
+      "session_path": "sessions/oss120/T07/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T07",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:12:00.011452Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1.7131137079999998,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 2998,
+        "output": 167
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 66,
+      "stdout_path": "logs/oss120/T07/3.stdout.txt",
+      "stderr_path": "logs/oss120/T07/3.stderr.txt",
+      "session_path": "sessions/oss120/T07/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T08",
+      "repeat": 1,
+      "started_at": "2026-08-24T00:12:01.737467Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 2.050844333,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 3496,
+        "output": 256
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 82,
+      "stdout_path": "logs/oss120/T08/1.stdout.txt",
+      "stderr_path": "logs/oss120/T08/1.stderr.txt",
+      "session_path": "sessions/oss120/T08/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T08",
+      "repeat": 2,
+      "started_at": "2026-08-24T00:12:03.904316Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1.986173125,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 3445,
+        "output": 228
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 82,
+      "stdout_path": "logs/oss120/T08/2.stdout.txt",
+      "stderr_path": "logs/oss120/T08/2.stderr.txt",
+      "session_path": "sessions/oss120/T08/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "oss120",
+      "model_id": "gpt-oss:120b-cloud",
+      "task": "T08",
+      "repeat": 3,
+      "started_at": "2026-08-24T00:12:06.013216Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1.973275042,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 3429,
+        "output": 221
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 87,
+      "stdout_path": "logs/oss120/T08/3.stdout.txt",
+      "stderr_path": "logs/oss120/T08/3.stderr.txt",
+      "session_path": "sessions/oss120/T08/3.jsonl",
+      "error": null
+    }
+  ]
+}

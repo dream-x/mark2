@@ -4,3 +4,4 @@ target/
 
 # Сессии прогонов бенча: тяжёлые JSONL, в git идут только report.md и results.json.
 bench/results/*/sessions/
+bench/results/*/logs/
