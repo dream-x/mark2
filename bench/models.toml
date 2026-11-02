@@ -1,9 +1,24 @@
+# Матрица v2 (2026-11-03): обновлена на свежие модели ollama-библиотеки.
+# qwen9 оставлен якорем — по нему сравниваем v1 (август) и v2 прогоны харнеса.
 # gpt-oss:20b локально исключён: битый блоб (см. docs/notes/e2e-findings-20260824.md)
+
 [[models]]
 alias = "qwen9"
 model = "qwen3.5:9b"
 base_url = "http://localhost:11434/v1"
 timeout_multiplier = 1.0
+
+[[models]]
+alias = "bolt4"
+model = "nemotron-3.5-bolt:e4b"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 1.0
+
+[[models]]
+alias = "flint40"
+model = "flint:40b"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.0
 
 [[models]]
 alias = "qwen27"
@@ -12,7 +27,7 @@ base_url = "http://white.local:11434/v1"
 timeout_multiplier = 2.5
 
 [[models]]
-alias = "oss120"
-model = "gpt-oss:120b-cloud"
+alias = "dsflash"
+model = "deepseek-v4.1-flash:cloud"
 base_url = "http://localhost:11434/v1"
 timeout_multiplier = 2.5
