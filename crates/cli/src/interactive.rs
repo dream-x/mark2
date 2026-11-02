@@ -9,6 +9,10 @@
 //! * Ctrl+C прерывает ход ([`Op::Interrupt`]), второй Ctrl+C выходит из CLI,
 //!   не дожидаясь, пока ядро свернёт работу.
 //!
+//! Ответ, целиком положенный моделью в thinking, обрабатывается как в print
+//! mode: рассуждения печатаются вместо ответа (если `--show-thinking` их уже
+//! не показал), а в stderr — пометка [`render::THINKING_ONLY_NOTE`].
+//!
 //! Сам ход в MVP один: prompt обязателен, после `TurnFinished` CLI
 //! завершается. REPL появится вместе со steering-очередью (фаза 3) — здесь
 //! для него уже всё готово, ядро принимает [`Op`] в любой момент.
@@ -78,6 +82,27 @@ pub async fn run(
             Event::Error { message } => {
                 let mut stderr = std::io::stderr().lock();
                 let _ = writeln!(stderr, "{}", render::error_line(message, opts));
+            }
+            Event::MessageComplete { message } => {
+                if let Some(thinking) = render::thinking_only_answer(message) {
+                    // С `--show-thinking` рассуждения уже на экране —
+                    // достаточно пометки; без него они и есть ответ.
+                    if !opts.show_thinking {
+                        let mut stdout = std::io::stdout().lock();
+                        if !ends_with_newline {
+                            let _ = stdout.write_all(b"\n");
+                        }
+                        let _ = stdout.write_all(thinking.as_bytes());
+                        let _ = stdout.flush();
+                        ends_with_newline = thinking.ends_with('\n');
+                    }
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(
+                        stderr,
+                        "\n{}",
+                        render::warning_line(render::THINKING_ONLY_NOTE, opts)
+                    );
+                }
             }
             Event::Usage { usage: chunk } => accumulate(&mut usage, chunk),
             Event::TurnFinished { reason: finished } => reason = *finished,

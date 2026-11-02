@@ -133,6 +133,9 @@ pub struct AgentSettings {
     pub max_tokens: Option<u32>,
     /// Температура сэмплинга.
     pub temperature: Option<f32>,
+    /// Детектор зацикливания: с какого подряд идентичного тул-колла его
+    /// блокировать (`0` — выключить).
+    pub loop_detection: Option<usize>,
 }
 
 /// Настройки одной модели: `[models."qwen3-coder"]`.
@@ -203,6 +206,7 @@ impl Config {
                 policy: other.agent.policy.or(agent.policy),
                 max_tokens: other.agent.max_tokens.or(agent.max_tokens),
                 temperature: other.agent.temperature.or(agent.temperature),
+                loop_detection: other.agent.loop_detection.or(agent.loop_detection),
             },
             models,
         }
@@ -363,6 +367,7 @@ max_turns = 12
 policy = "yolo"
 max_tokens = 4096
 temperature = 0.2
+loop_detection = 4
 
 [models."qwen3-coder-30b"]
 edit_strategy = "search_replace"
@@ -394,6 +399,7 @@ context_limit = 8192
         assert_eq!(config.agent.policy, Some(PermissionPolicy::Yolo));
         assert_eq!(config.agent.max_tokens, Some(4096));
         assert_eq!(config.agent.temperature, Some(0.2));
+        assert_eq!(config.agent.loop_detection, Some(4));
 
         assert_eq!(
             config.resolve("qwen3-coder-30b"),
@@ -508,6 +514,7 @@ context_limit = 8192
             max_turns = 5
             policy = "read_only"
             temperature = 0.1
+            loop_detection = 5
             "#,
         );
         let project = layer(
@@ -518,6 +525,7 @@ context_limit = 8192
             [agent]
             model = "project-model"
             policy = "ask_writes"
+            loop_detection = 0
             "#,
         );
         let flags = layer(
@@ -534,6 +542,8 @@ context_limit = 8192
         // Средний слой победил пользовательский там, где высказался.
         assert_eq!(merged.base_url(), "http://project/v1");
         assert_eq!(merged.agent.policy, Some(PermissionPolicy::AskWrites));
+        // Явный 0 («выключить») — тоже высказывание, а не пропуск.
+        assert_eq!(merged.agent.loop_detection, Some(0));
         // Про что старшие слои молчали — досталось от пользовательского.
         assert_eq!(merged.provider.api_key_env.as_deref(), Some("USER_KEY"));
         assert_eq!(merged.provider.cache_prompt, Some(true));

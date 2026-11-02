@@ -16,9 +16,15 @@
 //! Диалектные поля прячутся за [`CompatOptions`]: `cache_prompt` и `id_slot`
 //! понимает только llama-server, остальные их игнорируют.
 //!
-//! Ретраи — только **до** начала стрима (connect/таймаут/429/5xx), максимум
-//! [`MAX_ATTEMPTS`] попыток: мид-стрим повтор продублировал бы уже отданные
-//! дельты.
+//! Ретраи — только **до** начала стрима и только того, что лечится временем:
+//! сетевые сбои и 408/429/502/503/504, максимум [`MAX_ATTEMPTS`] попыток.
+//! Мид-стрим повтор продублировал бы уже отданные дельты. 500 («модель не
+//! грузится») и 501 (по адресу сидит чужой веб-сервер) уходят наверх сразу:
+//! на живых прогонах их повтор только добавлял секунды ожидания.
+//!
+//! Тело ошибки уходит в [`ProviderError::Http`] обрезанным до
+//! [`ERROR_BODY_CHARS`] символов; HTML-страница схлопывается в одну строку и
+//! получает подсказку, что `base_url`, видимо, указывает не туда.
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -59,8 +65,14 @@ const BACKOFF_BASE: Duration = Duration::from_millis(250);
 /// Потолок паузы между попытками (в т.ч. по `Retry-After`).
 const BACKOFF_CAP: Duration = Duration::from_secs(20);
 
-/// Сколько байт тела ошибки сохраняем в [`ProviderError::Http`].
-const ERROR_BODY_LIMIT: usize = 2048;
+/// Сколько символов тела ошибки сохраняем в [`ProviderError::Http`] (и в
+/// payload'е [`ProviderError::Parse`]): ошибка печатается в stderr и в логи
+/// ретраев, простыня разметки там никому не нужна.
+pub const ERROR_BODY_CHARS: usize = 500;
+
+/// Подсказка к ошибке, если вместо API ответила HTML-страница.
+pub const HTML_BODY_HINT: &str =
+    "похоже, base_url указывает не на OpenAI-совместимый API (сервер ответил HTML-страницей)";
 
 /// Опции диалектов OpenAI-совместимых серверов.
 ///
@@ -158,13 +170,17 @@ impl OpenAiCompatProvider {
                 Ok(response) if response.status().is_success() => return Ok(response),
                 Ok(response) => {
                     let status = response.status().as_u16();
-                    let retry_after = response
-                        .headers()
-                        .get("retry-after")
-                        .and_then(|value| value.to_str().ok())
-                        .map(str::to_owned);
+                    let header = |name: &str| {
+                        response
+                            .headers()
+                            .get(name)
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_owned)
+                    };
+                    let retry_after = header("retry-after");
+                    let content_type = header("content-type");
                     let text = response.text().await.unwrap_or_default();
-                    let error = map_error_body(status, &text);
+                    let error = map_error_response(status, content_type.as_deref(), &text);
                     // Переполнение контекста не лечится повтором — это работа
                     // компакции (task 7), отдаём наверх сразу.
                     if !is_retryable_status(status)
@@ -209,17 +225,20 @@ impl Provider for OpenAiCompatProvider {
         let body = to_wire(&req, self.options);
         let response = self.send_with_retries(&body).await?;
 
-        // Часть серверов отвечает 200 и JSON-ошибкой вместо SSE. Без этой
-        // проверки такой ответ дал бы пустой стрим и пустое сообщение.
-        if is_json_response(
-            response
-                .headers()
-                .get("content-type")
-                .and_then(|value| value.to_str().ok()),
-        ) {
+        // Часть серверов отвечает 200 и JSON-ошибкой вместо SSE, а чужой
+        // веб-сервер — 200 и HTML-страницей. Без этой проверки такой ответ дал
+        // бы пустой стрим, пустое сообщение и «успешный» ход без ответа.
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        if is_json_response(content_type.as_deref())
+            || is_html_content_type(content_type.as_deref())
+        {
             let status = response.status().as_u16();
             let text = response.text().await.unwrap_or_default();
-            return Err(map_error_body(status, &text));
+            return Err(map_error_response(status, content_type.as_deref(), &text));
         }
 
         Ok(Box::pin(assemble(sse::response_data_stream(response))))
@@ -232,6 +251,11 @@ impl Provider for OpenAiCompatProvider {
 /// `content-type` считаем стримом, чтобы не ломаться на самодельных серверах.
 fn is_json_response(content_type: Option<&str>) -> bool {
     content_type.is_some_and(|value| value.to_ascii_lowercase().contains("application/json"))
+}
+
+/// `content-type: text/html` — верный признак того, что ответил не API.
+fn is_html_content_type(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|value| value.to_ascii_lowercase().contains("text/html"))
 }
 
 /// Дописать `/chat/completions` к базовому URL, не дублируя уже указанный путь.
@@ -516,11 +540,15 @@ impl StreamAssembler {
         if payload.is_empty() {
             return Ok(Vec::new());
         }
-        let chunk: ChatChunk = serde_json::from_str(payload)
-            .map_err(|err| ProviderError::Parse(format!("чанк стрима: {err}: {payload}")))?;
+        let chunk: ChatChunk = serde_json::from_str(payload).map_err(|err| {
+            ProviderError::Parse(format!(
+                "чанк стрима: {err}: {}",
+                truncate(payload, ERROR_BODY_CHARS)
+            ))
+        })?;
 
         if let Some(error) = chunk.error.filter(|error| !error.is_null()) {
-            return Err(map_error_body(200, &error.to_string()));
+            return Err(map_error_response(200, None, &error.to_string()));
         }
         self.absorb_usage(chunk.usage, chunk.timings);
 
@@ -627,11 +655,14 @@ impl StreamAssembler {
             tracing::warn!("ответ модели обрезан по лимиту токенов (finish_reason=length)");
         }
 
+        // Пустые и пробельные блоки в сообщение не кладём: qwen через ollama
+        // любит `"\n\n"` перед тул-коллом, а пустой блок только путает
+        // потребителя («есть текст или нет?») и уходит обратно на wire.
         let mut content = Vec::with_capacity(2 + self.calls.len());
-        if !self.thinking.is_empty() {
+        if !self.thinking.trim().is_empty() {
             content.push(ContentBlock::thinking(self.thinking.clone()));
         }
-        if !self.text.is_empty() {
+        if !self.text.trim().is_empty() {
             content.push(ContentBlock::text(self.text.clone()));
         }
         for (position, call) in self.calls.iter().enumerate() {
@@ -795,18 +826,43 @@ const CONTEXT_OVERFLOW_MARKERS: &[&str] = &[
     "input length exceeds the context length",
 ];
 
-/// HTTP-статус + тело → [`ProviderError`].
+/// HTTP-статус + `content-type` + тело → [`ProviderError`].
 ///
-/// Переполнение контекста вытаскивается отдельным вариантом: на нём построена
-/// компакция (task 7).
-fn map_error_body(status: u16, body: &str) -> ProviderError {
+/// Единственная точка, через которую тело ответа попадает в ошибку (а из неё —
+/// в stderr и в логи ретраев):
+///
+/// * переполнение контекста вытаскивается отдельным вариантом — на нём
+///   построена компакция (task 7); ищется по телу целиком, до обрезки;
+/// * остальное обрезается до [`ERROR_BODY_CHARS`] символов по границе
+///   символа;
+/// * HTML (по `content-type` или по началу тела) схлопывается в одну строку и
+///   предваряется [`HTML_BODY_HINT`].
+fn map_error_response(status: u16, content_type: Option<&str>, body: &str) -> ProviderError {
     if is_context_overflow(body) {
         return ProviderError::ContextLengthExceeded;
     }
-    ProviderError::Http {
-        status,
-        body: truncate(body, ERROR_BODY_LIMIT),
-    }
+    let body = if is_html_content_type(content_type) || looks_like_html(body) {
+        let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        format!(
+            "{HTML_BODY_HINT}; тело: {}",
+            truncate(&flat, ERROR_BODY_CHARS)
+        )
+    } else {
+        truncate(body, ERROR_BODY_CHARS)
+    };
+    ProviderError::Http { status, body }
+}
+
+/// Тело начинается как HTML-документ — на случай, если сервер не прислал
+/// `content-type` или соврал в нём.
+fn looks_like_html(body: &str) -> bool {
+    let head: String = body
+        .trim_start()
+        .chars()
+        .take(9)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    head.starts_with("<!doctype") || head.starts_with("<html")
 }
 
 fn is_context_overflow(body: &str) -> bool {
@@ -816,22 +872,22 @@ fn is_context_overflow(body: &str) -> bool {
         .any(|marker| body.contains(marker))
 }
 
+/// Обрезать до `limit` символов (не байт: тело бывает кириллицей).
 fn truncate(text: &str, limit: usize) -> String {
-    if text.len() <= limit {
+    let Some((end, _)) = text.char_indices().nth(limit) else {
         return text.to_string();
-    }
-    let mut end = limit;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
+    };
     let mut out = text[..end].to_string();
     let _ = write!(out, "… (обрезано, всего {} байт)", text.len());
     out
 }
 
-/// Ретраим только то, что имеет шанс пройти со второй попытки.
+/// Ретраим только то, что имеет шанс пройти со второй попытки: таймаут
+/// запроса, rate limit и сбои прокси/балансировщика перед сервером. 500 и 501
+/// от локального сервера — это «модель не грузится» и «тут не тот сервер»:
+/// повтор не поможет.
 fn is_retryable_status(status: u16) -> bool {
-    matches!(status, 408 | 409 | 425 | 429) || (500..600).contains(&status)
+    matches!(status, 408 | 429 | 502 | 503 | 504)
 }
 
 fn is_retryable_transport(err: &reqwest::Error) -> bool {
@@ -1302,6 +1358,52 @@ mod tests {
         );
     }
 
+    /// Пустые и пробельные `content`/`reasoning` не дают блоков в итоговом
+    /// сообщении: ни `"\n\n"` перед тул-коллом, ни пустого thinking.
+    #[tokio::test]
+    async fn blank_text_and_thinking_do_not_become_blocks() {
+        let raw = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning\":\"\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\n\\n\",\"reasoning\":\" \\n\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"ls\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let chunks = run_ok(raw).await;
+        let (message, _) = final_message(&chunks);
+        assert_eq!(
+            message.content,
+            vec![ContentBlock::tool_use(
+                "call_1",
+                "bash",
+                json!({"command": "ls"})
+            )]
+        );
+
+        // Ответ из одних пробелов — пустое сообщение, а не пустой Text.
+        let raw = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\n\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let chunks = run_ok(raw).await;
+        let (message, _) = final_message(&chunks);
+        assert!(message.content.is_empty(), "{:?}", message.content);
+
+        // Содержательный текст сохраняется как есть, со своими пробелами.
+        let raw = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"думаю\\n\",\"content\":\"\\nответ\\n\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let chunks = run_ok(raw).await;
+        let (message, _) = final_message(&chunks);
+        assert_eq!(
+            message.content,
+            vec![
+                ContentBlock::thinking("думаю\n"),
+                ContentBlock::text("\nответ\n")
+            ]
+        );
+    }
+
     /// Обрезанные аргументы чинятся json_repair, а не роняют ход.
     #[tokio::test]
     async fn truncated_tool_arguments_go_through_json_repair() {
@@ -1396,7 +1498,7 @@ mod tests {
         for body in bodies {
             assert!(
                 matches!(
-                    map_error_body(400, body),
+                    map_error_response(400, None, body),
                     ProviderError::ContextLengthExceeded
                 ),
                 "не распознано: {body}"
@@ -1412,7 +1514,7 @@ mod tests {
             r#"{"error":{"message":"model 'qwen3' not found","type":"api_error","param":null,"code":null}}"#,
         ];
         for body in bodies {
-            match map_error_body(401, body) {
+            match map_error_response(401, None, body) {
                 ProviderError::Http { status, body: got } => {
                     assert_eq!(status, 401);
                     assert_eq!(got, body);
@@ -1422,16 +1524,79 @@ mod tests {
         }
     }
 
+    /// Обрезка — по символам, не по байтам: кириллица не рвётся пополам, а
+    /// лимит одинаков для любого алфавита.
     #[test]
     fn huge_error_bodies_are_truncated_on_char_boundary() {
         let body = "я".repeat(4096);
-        match map_error_body(500, &body) {
+        match map_error_response(500, None, &body) {
             ProviderError::Http { body, .. } => {
-                assert!(body.len() < 4096 + 64);
-                assert!(body.contains("обрезано"));
+                let kept = "я".repeat(ERROR_BODY_CHARS);
+                assert!(body.starts_with(&format!("{kept}…")), "{body}");
+                assert!(body.contains("обрезано, всего 8192 байт"), "{body}");
+                assert!(body.chars().count() < ERROR_BODY_CHARS + 64, "{body}");
             }
             other => panic!("ожидалась Http, получена {other:?}"),
         }
+
+        // Ровно на лимите — без маркера.
+        let exact = "x".repeat(ERROR_BODY_CHARS);
+        assert_eq!(truncate(&exact, ERROR_BODY_CHARS), exact);
+    }
+
+    /// 58 строк HTML чужого сервера на :8080 — то, что видели на e2e. Теперь
+    /// это одна строка с подсказкой, а не простыня разметки в stderr.
+    #[test]
+    fn html_error_bodies_get_a_base_url_hint() {
+        let page = format!(
+            "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <title>Error response</title>\n    </head>\n{}</html>\n",
+            "    <p>Error code: 501</p>\n".repeat(56)
+        );
+
+        // По content-type…
+        let by_header = map_error_response(501, Some("text/html;charset=utf-8"), &page);
+        // …и по началу тела, если заголовка нет.
+        let by_body = map_error_response(501, None, &page);
+        for error in [by_header, by_body] {
+            let ProviderError::Http { status, body } = &error else {
+                panic!("ожидалась Http, получена {error:?}");
+            };
+            assert_eq!(*status, 501);
+            assert!(body.starts_with(HTML_BODY_HINT), "{body}");
+            assert!(
+                body.contains("<!DOCTYPE HTML> <html lang=\"en\"> <head>"),
+                "{body}"
+            );
+            assert!(!body.contains('\n'), "одна строка: {body}");
+            assert!(body.contains("обрезано"), "{body}");
+            assert!(
+                body.chars().count() < HTML_BODY_HINT.chars().count() + ERROR_BODY_CHARS + 64,
+                "{body}"
+            );
+            assert!(error.to_string().starts_with("HTTP 501: похоже, base_url"));
+        }
+
+        // Регистр и ведущие пробелы не мешают.
+        assert!(looks_like_html("  \n<html><body>nginx</body></html>"));
+        assert!(looks_like_html("<!doctype html>"));
+        // JSON-ошибка подсказки не получает и остаётся как есть.
+        let json = r#"{"error":{"message":"model failed to load"}}"#;
+        match map_error_response(500, Some("application/json"), json) {
+            ProviderError::Http { body, .. } => assert_eq!(body, json),
+            other => panic!("ожидалась Http, получена {other:?}"),
+        }
+        assert!(!looks_like_html(json));
+    }
+
+    #[tokio::test]
+    async fn huge_unparsable_chunk_is_truncated_in_the_parse_error() {
+        let raw = format!("data: <html>{}</html>\n\n", "x".repeat(10_000));
+        let out = run_sse(&raw).await;
+        let Err(ProviderError::Parse(message)) = &out[0] else {
+            panic!("ожидалась Parse, получено {out:?}");
+        };
+        assert!(message.contains("обрезано"), "{message}");
+        assert!(message.len() < ERROR_BODY_CHARS + 200, "{}", message.len());
     }
 
     #[test]
@@ -1445,14 +1610,183 @@ mod tests {
         assert!(!is_json_response(Some("text/plain")));
     }
 
+    /// Ретраится только то, что лечится временем. 500 («модель не
+    /// грузится», прогон c) и 501 (чужой сервер на :8080) — сразу наверх.
     #[test]
     fn retryable_statuses_are_transient_only() {
-        for status in [408, 409, 425, 429, 500, 502, 503, 504, 529] {
+        for status in [408, 429, 502, 503, 504] {
             assert!(is_retryable_status(status), "{status} должен ретраиться");
         }
-        for status in [400, 401, 403, 404, 422] {
+        for status in [
+            400, 401, 403, 404, 409, 422, 425, 500, 501, 505, 507, 529, 200,
+        ] {
             assert!(!is_retryable_status(status), "{status} ретраить нельзя");
         }
+    }
+
+    #[test]
+    fn html_content_type_is_recognized() {
+        assert!(is_html_content_type(Some("text/html")));
+        assert!(is_html_content_type(Some("Text/HTML; charset=utf-8")));
+        assert!(!is_html_content_type(Some("text/event-stream")));
+        assert!(!is_html_content_type(Some("application/json")));
+        assert!(!is_html_content_type(None));
+    }
+
+    // ─────────────────────── HTTP-путь целиком ───────────────────────
+
+    /// Мини-HTTP-сервер: на каждый запрос отвечает одним и тем же ответом и
+    /// считает, сколько запросов пришло. Хватает, чтобы проверить политику
+    /// ретраев на настоящем `reqwest`, без моков транспорта.
+    async fn serve(
+        status_line: &str,
+        headers: &str,
+        body: &str,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&hits);
+        let response = format!(
+            "HTTP/1.1 {status_line}\r\n{headers}content-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let response = response.clone();
+                let counter = Arc::clone(&counter);
+                tokio::spawn(async move {
+                    // Дочитать запрос целиком (заголовки + content-length),
+                    // иначе клиент может увидеть сброс соединения.
+                    let mut request = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        let Ok(n) = socket.read(&mut buf).await else {
+                            return;
+                        };
+                        if n == 0 {
+                            return;
+                        }
+                        request.extend_from_slice(&buf[..n]);
+                        let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                            continue;
+                        };
+                        let head = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                        let length = head
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .and_then(|value| value.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+
+        (format!("http://{addr}/v1"), hits)
+    }
+
+    fn hello_request() -> ProviderRequest {
+        ProviderRequest::new("m", "s").with_messages(vec![Message::user("hi")])
+    }
+
+    async fn stream_error(base_url: &str) -> ProviderError {
+        let provider = OpenAiCompatProvider::new(base_url, None, CompatOptions::default());
+        match provider.stream(hello_request()).await {
+            Ok(_) => panic!("ожидалась ошибка провайдера"),
+            Err(error) => error,
+        }
+    }
+
+    fn hits(counter: &std::sync::atomic::AtomicUsize) -> usize {
+        counter.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[tokio::test]
+    async fn server_errors_500_and_501_are_not_retried() {
+        for status_line in ["500 Internal Server Error", "501 Not Implemented"] {
+            let body = r#"{"error":{"message":"tensor size overflow"}}"#;
+            let (base_url, counter) =
+                serve(status_line, "content-type: application/json\r\n", body).await;
+
+            let error = stream_error(&base_url).await;
+            let ProviderError::Http { status, body: got } = &error else {
+                panic!("ожидалась Http, получена {error:?}");
+            };
+            assert_eq!(status.to_string(), status_line[..3]);
+            assert_eq!(got, body);
+            assert_eq!(hits(&counter), 1, "{status_line} не должен ретраиться");
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_errors_are_retried_up_to_max_attempts() {
+        // `retry-after: 0` — чтобы тест не ждал бэкоффа.
+        let (base_url, counter) = serve(
+            "503 Service Unavailable",
+            "content-type: text/plain\r\nretry-after: 0\r\n",
+            "loading model",
+        )
+        .await;
+
+        let error = stream_error(&base_url).await;
+        assert!(
+            matches!(&error, ProviderError::Http { status: 503, body } if body == "loading model"),
+            "{error:?}"
+        );
+        assert_eq!(hits(&counter), MAX_ATTEMPTS as usize);
+    }
+
+    /// Ровно сценарий «Грабли стенда»: на :8080 отвечает чужой веб-сервер.
+    #[tokio::test]
+    async fn foreign_html_server_fails_fast_with_a_hint() {
+        let page = format!(
+            "<!DOCTYPE HTML>\n<html lang=\"en\">\n<head><title>Error response</title></head>\n<body>\n{}</body>\n</html>\n",
+            "<p>Error code explanation: 501 - Server does not support this operation.</p>\n"
+                .repeat(50)
+        );
+        let (base_url, counter) = serve(
+            "501 Unsupported method ('POST')",
+            "content-type: text/html;charset=utf-8\r\n",
+            &page,
+        )
+        .await;
+
+        let error = stream_error(&base_url).await;
+        let message = error.to_string();
+        assert!(message.starts_with("HTTP 501: "), "{message}");
+        assert!(message.contains(HTML_BODY_HINT), "{message}");
+        assert!(!message.contains('\n'), "{message}");
+        assert!(message.chars().count() < 700, "{}", message.chars().count());
+        assert_eq!(hits(&counter), 1);
+    }
+
+    /// HTML со статусом 200 — тоже ошибка, а не пустой «успешный» ответ.
+    #[tokio::test]
+    async fn html_page_with_200_status_is_an_error_not_an_empty_answer() {
+        let (base_url, counter) = serve(
+            "200 OK",
+            "content-type: text/html\r\n",
+            "<html><body>It works!</body></html>",
+        )
+        .await;
+
+        let error = stream_error(&base_url).await;
+        assert!(
+            matches!(&error, ProviderError::Http { status: 200, body } if body.starts_with(HTML_BODY_HINT)),
+            "{error:?}"
+        );
+        assert_eq!(hits(&counter), 1);
     }
 
     #[test]

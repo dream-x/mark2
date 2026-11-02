@@ -2,7 +2,14 @@
 //!
 //! Режим существует для пайпов и скриптов, поэтому дисциплина потоков жёсткая:
 //! в **stdout** уходит только текст ответа модели (никаких `→ tool`, спиннеров
-//! и рассуждений), всё служебное — в **stderr**.
+//! и рассуждений), всё служебное — в **stderr**: по строке на каждый тул-колл
+//! (`→ bash …` / `✗ edit: …`), ошибки, предупреждения и итог токенов.
+//!
+//! Одно исключение из «рассуждений в stdout нет»: если ход закончился
+//! сообщением, в котором есть только thinking (ни текста, ни тул-коллов), —
+//! так qwen3.5 через ollama отвечает в половине прогонов — рассуждения
+//! печатаются в stdout **вместо** ответа, а в stderr уходит предупреждение.
+//! Пустой stdout с кодом 0 для скрипта хуже, чем ответ с пометкой.
 //!
 //! # Что делать с аппрувами
 //!
@@ -17,10 +24,12 @@
 //! только когда её задали явно (`--yolo` или `policy = "yolo"` в конфиге) —
 //! режим вывода никогда не расширяет права сам.
 
+use std::collections::HashMap;
 use std::io::Write;
 
 use mark2_core::message::Usage;
 use mark2_core::{AgentHandle, Event, Op, StopReason};
+use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::render::{self, RenderOptions};
@@ -41,9 +50,44 @@ pub async fn run(
     // Канал событий, закрывшийся без `TurnFinished`, — тоже конец хода:
     // считаем его прерванным, а не успешным.
     let mut reason = StopReason::Cancelled;
+    // Имя и аргументы тул-коллов по id: `ToolCallFinished` их не несёт, а
+    // `ToolCallStarted` бывает не у всех (запрет политики, блокировка
+    // детектором зацикливания). Источник — `MessageComplete`.
+    let mut calls: HashMap<String, (String, Value)> = HashMap::new();
 
     while let Some(event) = events.recv().await {
         match &event {
+            Event::MessageComplete { message } => {
+                for (id, name, input) in message.tool_uses() {
+                    calls.insert(id.to_string(), (name.to_string(), input.clone()));
+                }
+                if let Some(thinking) = render::thinking_only_answer(message) {
+                    let _ = writeln!(
+                        err,
+                        "{}",
+                        render::warning_line(render::THINKING_ONLY_NOTE, opts)
+                    );
+                    if !ends_with_newline {
+                        let _ = out.write_all(b"\n");
+                    }
+                    let _ = out.write_all(thinking.as_bytes());
+                    ends_with_newline = thinking.ends_with('\n');
+                }
+            }
+            Event::ToolCallFinished {
+                id,
+                content,
+                is_error,
+            } => {
+                let (name, input) = calls
+                    .remove(id)
+                    .unwrap_or_else(|| (id.clone(), Value::Null));
+                let _ = writeln!(
+                    err,
+                    "{}",
+                    render::tool_summary_line(&name, &input, content, *is_error, opts)
+                );
+            }
             Event::ApprovalRequired { id, name, input } => {
                 let _ = writeln!(
                     err,
@@ -187,6 +231,25 @@ mod tests {
         chunks
     }
 
+    /// Ответ, который модель положила целиком в thinking-канал.
+    fn thinking_only(text: &str) -> Vec<StreamChunk> {
+        vec![
+            StreamChunk::ThinkingDelta(text.to_string()),
+            StreamChunk::Complete {
+                message: Message::new(Role::Assistant, vec![ContentBlock::thinking(text)]),
+                usage: Usage::new(100, 20),
+            },
+        ]
+    }
+
+    /// Строки stderr, начинающиеся с префикса.
+    fn lines_with<'a>(stderr: &'a str, prefix: &str) -> Vec<&'a str> {
+        stderr
+            .lines()
+            .filter(|line| line.starts_with(prefix))
+            .collect()
+    }
+
     struct Harness {
         provider: Arc<MockProvider>,
         cwd: PathBuf,
@@ -262,6 +325,13 @@ mod tests {
             "{}",
             harness.stderr()
         );
+        // Обычный ответ — без пометок и без строк о тулах.
+        assert!(
+            !harness.stderr().contains(render::THINKING_ONLY_NOTE),
+            "{}",
+            harness.stderr()
+        );
+        assert!(lines_with(harness.stderr(), "→").is_empty());
 
         // Запрос дошёл до провайдера ровно один раз и с вводом пользователя.
         let requests = harness.provider.requests();
@@ -294,6 +364,11 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(harness.cwd.join(path)).unwrap(),
             "привет"
+        );
+        // Зато в stderr — строка о вызове.
+        assert_eq!(
+            lines_with(harness.stderr(), "→"),
+            [r#"→ write {"path":"note.txt","content":"привет"}"#]
         );
 
         // Второй запрос уже содержит результат тула.
@@ -330,6 +405,9 @@ mod tests {
         let stderr = harness.stderr();
         assert!(stderr.contains("auto-denied `write`"), "{stderr}");
         assert!(stderr.contains("--yolo"), "{stderr}");
+        let failed = lines_with(stderr, "✗");
+        assert_eq!(failed.len(), 1, "{stderr}");
+        assert!(failed[0].starts_with("✗ write: Denied by user"), "{stderr}");
 
         // Модель получила отказ как обычный tool result.
         let requests = harness.provider.requests();
@@ -358,6 +436,107 @@ mod tests {
         assert!(!harness.stderr().contains("auto-denied"));
         let requests = harness.provider.requests();
         assert!(tool_results(&requests[1].messages[2]).contains("read-only"));
+    }
+
+    /// P1 с бенча: финальное сообщение — один thinking. stdout не пуст, а
+    /// stderr честно говорит, что это рассуждения, а не ответ.
+    #[tokio::test]
+    async fn thinking_only_final_answer_goes_to_stdout_with_a_warning() {
+        let harness = run_turn(
+            vec![thinking_only("The port value is 4821.")],
+            PermissionPolicy::Yolo,
+            "какой порт?",
+        )
+        .await;
+
+        assert_eq!(harness.reason, StopReason::Completed);
+        assert_eq!(harness.stdout(), "The port value is 4821.\n");
+        let warnings = lines_with(harness.stderr(), "warning:");
+        assert_eq!(
+            warnings,
+            [format!("warning: {}", render::THINKING_ONLY_NOTE)],
+            "{}",
+            harness.stderr()
+        );
+    }
+
+    /// Рассуждения промежуточных шагов (рядом с тул-коллами) в stdout не
+    /// попадают — только финальные, и с новой строки после уже выведенного.
+    #[tokio::test]
+    async fn only_the_final_thinking_only_message_is_used_as_the_answer() {
+        let mut first = vec![
+            StreamChunk::ThinkingDelta("надо записать файл".into()),
+            StreamChunk::TextDelta("Пишу файл.".into()),
+        ];
+        first.push(StreamChunk::Complete {
+            message: Message::new(
+                Role::Assistant,
+                vec![
+                    ContentBlock::thinking("надо записать файл"),
+                    ContentBlock::text("Пишу файл."),
+                    ContentBlock::tool_use(
+                        "c1",
+                        "write",
+                        json!({"path": "note.txt", "content": "x"}),
+                    ),
+                ],
+            ),
+            usage: Usage::new(100, 20),
+        });
+
+        let harness = run_turn(
+            vec![first, thinking_only("Файл создан.")],
+            PermissionPolicy::Yolo,
+            "создай note.txt",
+        )
+        .await;
+
+        assert_eq!(harness.reason, StopReason::Completed);
+        assert_eq!(harness.stdout(), "Пишу файл.\nФайл создан.\n");
+        assert_eq!(lines_with(harness.stderr(), "warning:").len(), 1);
+    }
+
+    /// P3 + детектор зацикливания: в stderr по строке на каждый вызов,
+    /// включая заблокированный, — видно, что делал агент.
+    #[tokio::test]
+    async fn every_tool_call_gets_one_stderr_line() {
+        // Ровно цикл qwen с бенча: один и тот же echo раз за разом.
+        let echo = |id: &str| {
+            answer(
+                "",
+                Some((id, "bash", json!({"command": "echo \"port = 4821\""}))),
+            )
+        };
+        let harness = run_turn(
+            vec![
+                echo("c1"),
+                echo("c2"),
+                echo("c3"),
+                answer("", Some(("c4", "read", json!({"path": "missing.txt"})))),
+                answer("port = 4821", None),
+            ],
+            PermissionPolicy::Yolo,
+            "какой порт?",
+        )
+        .await;
+
+        assert_eq!(harness.reason, StopReason::Completed);
+        assert_eq!(harness.stdout(), "port = 4821\n");
+
+        let stderr = harness.stderr();
+        let summary: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.starts_with('→') || line.starts_with('✗'))
+            .collect();
+        assert_eq!(summary.len(), 4, "{stderr}");
+        assert_eq!(summary[0], r#"→ bash {"command":"echo \"port = 4821\""}"#);
+        assert_eq!(summary[1], summary[0]);
+        assert!(
+            summary[2].starts_with("✗ bash: You have already made this exact tool call 2 times"),
+            "{stderr}"
+        );
+        assert!(summary[3].starts_with("✗ read: "), "{stderr}");
+        assert!(summary[3].contains("missing.txt"), "{stderr}");
     }
 
     #[tokio::test]

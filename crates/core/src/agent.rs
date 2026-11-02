@@ -28,8 +28,15 @@
 //!   └───────── tool results одним сообщением в историю ◄────┘
 //! ```
 //!
-//! Предохранитель — `max_turns` итераций сэмплинга на ход
-//! (`TurnFinished{MaxTurns}`).
+//! Предохранители два:
+//!
+//! * `max_turns` итераций сэмплинга на ход (`TurnFinished{MaxTurns}`);
+//! * **детектор зацикливания** (`loop_detection`): N-й подряд идентичный
+//!   тул-колл (то же имя, тот же сериализованный `input`) не исполняется —
+//!   модель получает `is_error`-результат «не повторяй, ответь текстом»; на
+//!   2×N-м ход завершается `TurnFinished{Error}` с [`Event::Error`]. Слабые
+//!   локалки умеют найти ответ и затем звать один и тот же `echo` до
+//!   `max_turns`, сжигая весь контекст на каждой итерации.
 //!
 //! # Инварианты
 //!
@@ -96,6 +103,10 @@ use crate::tools::{ToolCtx, ToolRegistry};
 /// Сколько раз за один ход агент готов сходить к модели, если не задано иное.
 pub const DEFAULT_MAX_TURNS: usize = 50;
 
+/// Порог детектора зацикливания по умолчанию: третий подряд идентичный
+/// тул-колл не исполняется.
+pub const DEFAULT_LOOP_DETECTION: usize = 3;
+
 /// Настройки агента.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentConfig {
@@ -114,6 +125,11 @@ pub struct AgentConfig {
     pub cwd: PathBuf,
     /// Когда и как сжимать историю.
     pub compaction: CompactionConfig,
+    /// Детектор зацикливания: с какого подряд идентичного тул-колла перестать
+    /// его исполнять. На удвоенном пороге ход завершается ошибкой. `0` —
+    /// детектор выключен; `1` равносилен `2` (иначе блокировался бы любой
+    /// первый вызов).
+    pub loop_detection: usize,
 }
 
 impl Default for AgentConfig {
@@ -126,6 +142,7 @@ impl Default for AgentConfig {
             policy: PermissionPolicy::default(),
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             compaction: CompactionConfig::default(),
+            loop_detection: DEFAULT_LOOP_DETECTION,
         }
     }
 }
@@ -178,6 +195,13 @@ impl AgentConfig {
     #[must_use]
     pub fn with_compaction(mut self, compaction: CompactionConfig) -> Self {
         self.compaction = compaction;
+        self
+    }
+
+    /// Задать порог детектора зацикливания (`0` — выключить).
+    #[must_use]
+    pub fn with_loop_detection(mut self, threshold: usize) -> Self {
+        self.loop_detection = threshold;
         self
     }
 }
@@ -522,6 +546,93 @@ struct PendingCall {
     input: Value,
 }
 
+/// Что делать с очередным тул-коллом по мнению детектора зацикливания.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopVerdict {
+    /// Исполнять как обычно.
+    Run,
+    /// Не исполнять: это `repeats`-й идентичный вызов подряд.
+    Block { repeats: usize },
+    /// Не исполнять и завершить ход: повторы дошли до жёсткого предела.
+    Abort { repeats: usize },
+}
+
+/// Детектор подряд идущих идентичных тул-коллов.
+///
+/// Живёт один ход. Ключ вызова — имя плюс `input`, сериализованный в JSON
+/// (порядок ключей сохраняет `preserve_order`). Любой другой вызов между
+/// повторами — другой тул или другие аргументы — сбрасывает счётчик.
+#[derive(Debug)]
+struct LoopDetector {
+    /// Порог блокировки; `0` — детектор выключен.
+    threshold: usize,
+    last: Option<String>,
+    repeats: usize,
+}
+
+impl LoopDetector {
+    fn new(threshold: usize) -> Self {
+        Self {
+            // Порог 1 блокировал бы любой первый вызов — минимум два.
+            threshold: if threshold == 0 { 0 } else { threshold.max(2) },
+            last: None,
+            repeats: 0,
+        }
+    }
+
+    /// Учесть вызов и вынести вердикт.
+    fn observe(&mut self, name: &str, input: &Value) -> LoopVerdict {
+        if self.threshold == 0 {
+            return LoopVerdict::Run;
+        }
+        let key = format!(
+            "{name}\u{0}{}",
+            serde_json::to_string(input).unwrap_or_default()
+        );
+        if self.last.as_deref() == Some(key.as_str()) {
+            self.repeats += 1;
+        } else {
+            self.last = Some(key);
+            self.repeats = 1;
+        }
+
+        let repeats = self.repeats;
+        if repeats >= 2 * self.threshold {
+            LoopVerdict::Abort { repeats }
+        } else if repeats >= self.threshold {
+            LoopVerdict::Block { repeats }
+        } else {
+            LoopVerdict::Run
+        }
+    }
+}
+
+/// Tool result вместо исполнения зациклившегося вызова. Читает модель —
+/// поэтому по-английски и с прямой инструкцией, что делать вместо повтора.
+fn repeated_call_result(previous: usize) -> String {
+    format!(
+        "You have already made this exact tool call {previous} times in a row with the same \
+         result. Do not repeat it. If you have the answer, reply with plain text instead of \
+         calling tools."
+    )
+}
+
+/// Результат для тул-коллов того же ответа, до которых ход не дошёл, потому
+/// что детектор зацикливания его остановил.
+const LOOP_ABORTED_RESULT: &str =
+    "Not run: the turn was stopped because the same tool call kept repeating.";
+
+/// Исход исполнения тул-коллов одного ответа модели.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolRound {
+    /// Все результаты в истории — идём к модели снова.
+    Continue,
+    /// Ход прерван пользователем.
+    Interrupted,
+    /// Детектор зацикливания упёрся в жёсткий предел.
+    LoopAborted { name: String, repeats: usize },
+}
+
 /// Состояние запущенного агента: всё, что живёт внутри tokio-задачи.
 struct AgentLoop {
     provider: Arc<dyn Provider>,
@@ -681,6 +792,7 @@ impl AgentLoop {
 
     /// Цикл сэмплинга: запрос → дельты → тулы → снова запрос.
     async fn sample_loop(&mut self, turn_cancel: &CancellationToken) -> StopReason {
+        let mut loops = LoopDetector::new(self.config.loop_detection);
         for _ in 0..self.config.max_turns {
             if turn_cancel.is_cancelled() {
                 return StopReason::Cancelled;
@@ -771,8 +883,15 @@ impl AgentLoop {
             if calls.is_empty() {
                 return StopReason::Completed;
             }
-            if !self.run_tool_calls(calls, turn_cancel).await {
-                return StopReason::Cancelled;
+            match self.run_tool_calls(calls, &mut loops, turn_cancel).await {
+                ToolRound::Continue => {}
+                ToolRound::Interrupted => return StopReason::Cancelled,
+                ToolRound::LoopAborted { name, repeats } => {
+                    return self.fail(format!(
+                        "модель зациклилась: {repeats} одинаковых вызовов `{name}` подряд, \
+                         ход остановлен"
+                    ));
+                }
             }
         }
 
@@ -782,17 +901,38 @@ impl AgentLoop {
     /// Исполнить тул-коллы одного ответа модели — по порядку, по одному.
     ///
     /// Результаты уходят в историю **одним** сообщением из `ToolResult`-блоков,
-    /// по блоку на каждый `tool_use` — включая запрещённые, отклонённые и не
-    /// дошедшие до исполнения. Возвращает `false`, если ход прерван.
+    /// по блоку на каждый `tool_use` — включая запрещённые, отклонённые,
+    /// заблокированные детектором зацикливания и не дошедшие до исполнения.
     async fn run_tool_calls(
         &mut self,
         calls: Vec<PendingCall>,
+        loops: &mut LoopDetector,
         turn_cancel: &CancellationToken,
-    ) -> bool {
+    ) -> ToolRound {
         let mut results: Vec<ContentBlock> = Vec::with_capacity(calls.len());
-        let mut interrupted = false;
+        let mut round = ToolRound::Continue;
 
         for call in &calls {
+            // Детектор — до политики: спрашивать пользователя про вызов,
+            // который всё равно не будет исполнен, незачем.
+            match loops.observe(&call.name, &call.input) {
+                LoopVerdict::Run => {}
+                LoopVerdict::Block { repeats } => {
+                    let result = repeated_call_result(repeats - 1);
+                    self.finish_tool_call(&mut results, call, result, true);
+                    continue;
+                }
+                LoopVerdict::Abort { repeats } => {
+                    let result = repeated_call_result(repeats - 1);
+                    self.finish_tool_call(&mut results, call, result, true);
+                    round = ToolRound::LoopAborted {
+                        name: call.name.clone(),
+                        repeats,
+                    };
+                    break;
+                }
+            }
+
             match self.config.policy.check(&call.name) {
                 PermissionCheck::Allowed => {}
                 PermissionCheck::Denied { reason } => {
@@ -814,7 +954,7 @@ impl AgentLoop {
                             continue;
                         }
                         Approval::Interrupted => {
-                            interrupted = true;
+                            round = ToolRound::Interrupted;
                             break;
                         }
                     }
@@ -834,24 +974,28 @@ impl AgentLoop {
 
             self.finish_tool_call(&mut results, call, output.content, output.is_error);
             if cancelled {
-                interrupted = true;
+                round = ToolRound::Interrupted;
                 break;
             }
         }
 
         // Тул-коллы, до которых ход не дошёл, всё равно получают результат:
         // без пары `tool_use` ломает следующий запрос.
+        let unreached = match round {
+            ToolRound::LoopAborted { .. } => LOOP_ABORTED_RESULT.to_string(),
+            _ => permission::interrupted_result(),
+        };
         for call in calls.iter().skip(results.len()) {
             results.push(ContentBlock::tool_error(
                 call.id.as_str(),
-                permission::interrupted_result(),
+                unreached.clone(),
             ));
         }
         if !results.is_empty() {
             self.push_message(Message::tool(results));
         }
 
-        !interrupted
+        round
     }
 
     /// Событие завершения тул-колла плюс блок результата для истории.
@@ -1071,6 +1215,15 @@ mod tests {
             max_turns: usize,
             compaction: CompactionConfig,
         ) -> Self {
+            let config = AgentConfig::new("mock-model")
+                .with_policy(policy)
+                .with_max_turns(max_turns)
+                .with_compaction(compaction);
+            Self::with_config(scripts, config).await
+        }
+
+        /// Агент с произвольным конфигом; `cwd` всегда — временная директория.
+        async fn with_config(scripts: Vec<Script>, config: AgentConfig) -> Self {
             let dir = tempfile::tempdir().unwrap();
             let provider = MockProvider::new(scripts);
             let recorder = SessionRecorder::create(
@@ -1081,11 +1234,7 @@ mod tests {
             .unwrap();
             let session = recorder.path().to_path_buf();
 
-            let config = AgentConfig::new("mock-model")
-                .with_cwd(dir.path())
-                .with_policy(policy)
-                .with_max_turns(max_turns)
-                .with_compaction(compaction);
+            let config = config.with_cwd(dir.path());
             let (handle, events) = Agent::new(
                 provider.clone(),
                 ToolRegistry::with_defaults(EditStrategy::SearchReplace),
@@ -1787,6 +1936,265 @@ mod tests {
         harness.finish().await;
     }
 
+    // ─────────────────────── детектор зацикливания ───────────────────────
+
+    fn started_count(events: &[Event]) -> usize {
+        tags(events)
+            .iter()
+            .filter(|tag| *tag == "tool_call_started")
+            .count()
+    }
+
+    fn read_a(id: &str) -> Script {
+        tools_script("", &[(id, "read", json!({"path": "a.txt"}))])
+    }
+
+    /// Третий подряд идентичный вызов не исполняется: модель получает ошибку
+    /// с инструкцией ответить текстом — и отвечает.
+    #[tokio::test]
+    async fn third_identical_call_in_a_row_is_blocked_with_an_instruction() {
+        let mut harness = Harness::new(
+            vec![
+                read_a("call_1"),
+                read_a("call_2"),
+                read_a("call_3"),
+                text_script("port = 4821"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "port = 4821\n").unwrap();
+
+        let events = harness.turn("какой порт?").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(started_count(&events), 2, "третий вызов не исполнялся");
+
+        let results = tool_results(&events);
+        assert_eq!(results.len(), 3);
+        assert!(!results[0].2 && !results[1].2);
+        assert_eq!(results[2].0, "call_3");
+        assert!(results[2].2, "блокировка — ошибка тула");
+        assert_eq!(results[2].1, repeated_call_result(2));
+        assert!(
+            results[2]
+                .1
+                .starts_with("You have already made this exact tool call 2 times in a row"),
+            "{}",
+            results[2].1
+        );
+
+        // Модель увидела блокировку обычным tool result.
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 4);
+        let last = requests[3].messages.last().unwrap();
+        assert_eq!(
+            last.content,
+            vec![ContentBlock::tool_error("call_3", repeated_call_result(2))]
+        );
+        harness.finish().await;
+    }
+
+    /// Модель, которая не слушает предупреждений, останавливается на 2×порог:
+    /// ход — `Error`, а не 50 итераций до `max_turns`.
+    #[tokio::test]
+    async fn endless_identical_calls_stop_the_turn_at_twice_the_threshold() {
+        // Последний сценарий повторяется бесконечно — как qwen со своим echo.
+        let mut harness = Harness::new(
+            vec![read_a("call_1")],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "port = 4821\n").unwrap();
+
+        let events = harness.turn("какой порт?").await;
+        assert_eq!(stop_reason(&events), StopReason::Error);
+        assert_eq!(harness.provider.calls(), 6, "2 × DEFAULT_LOOP_DETECTION");
+        assert_eq!(started_count(&events), 2);
+
+        let errors: Vec<_> = tool_results(&events).iter().map(|r| r.2).collect();
+        assert_eq!(errors, [false, false, true, true, true, true]);
+        assert_eq!(
+            tags(&events).iter().rev().take(2).collect::<Vec<_>>(),
+            ["turn_finished", "error"]
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Error { message }
+                if message.contains("зациклилась") && message.contains("6") && message.contains("`read`")
+        )));
+
+        // Последний tool_use тоже получил парный результат.
+        let items = harness.finish().await;
+        let history = messages(&items);
+        let last = history.last().unwrap();
+        assert_eq!(last.role, Role::Tool);
+        assert_eq!(
+            last.content,
+            vec![ContentBlock::tool_error("call_1", repeated_call_result(5))]
+        );
+        assert_eq!(
+            items.last().unwrap(),
+            &SessionItem::turn_finished(turn_id(&items), StopReason::Error)
+        );
+    }
+
+    /// Другие аргументы или другой тул между повторами сбрасывают счётчик.
+    #[tokio::test]
+    async fn a_different_call_in_between_resets_the_counter() {
+        let mut harness = Harness::new(
+            vec![
+                read_a("call_1"),
+                read_a("call_2"),
+                tools_script("", &[("call_3", "read", json!({"path": "b.txt"}))]),
+                read_a("call_4"),
+                read_a("call_5"),
+                tools_script("", &[("call_6", "bash", json!({"command": "true"}))]),
+                read_a("call_7"),
+                read_a("call_8"),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "a\n").unwrap();
+        std::fs::write(harness.path("b.txt"), "b\n").unwrap();
+
+        let events = harness.turn("почитай").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(started_count(&events), 8, "ни один вызов не заблокирован");
+        assert!(tool_results(&events).iter().all(|r| !r.2), "{events:?}");
+        harness.finish().await;
+    }
+
+    /// `loop_detection = 0` выключает детектор целиком.
+    #[tokio::test]
+    async fn zero_threshold_disables_loop_detection() {
+        let mut harness = Harness::with_config(
+            vec![
+                read_a("call_1"),
+                read_a("call_2"),
+                read_a("call_3"),
+                read_a("call_4"),
+                read_a("call_5"),
+                read_a("call_6"),
+                read_a("call_7"),
+                text_script("готово"),
+            ],
+            AgentConfig::new("mock-model")
+                .with_policy(PermissionPolicy::Yolo)
+                .with_loop_detection(0),
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "a\n").unwrap();
+
+        let events = harness.turn("читай").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(started_count(&events), 7);
+        harness.finish().await;
+    }
+
+    /// Повторы внутри одного ответа считаются так же; остановка посреди
+    /// ответа оставляет парный результат и непройденным вызовам.
+    #[tokio::test]
+    async fn loop_abort_mid_message_still_pairs_the_remaining_calls() {
+        let mut calls: Vec<(String, &str, Value)> = (1..=4)
+            .map(|n| (format!("call_{n}"), "read", json!({"path": "a.txt"})))
+            .collect();
+        calls.push(("call_5".into(), "read", json!({"path": "b.txt"})));
+        let calls: Vec<(&str, &str, Value)> = calls
+            .iter()
+            .map(|(id, name, input)| (id.as_str(), *name, input.clone()))
+            .collect();
+
+        let mut harness = Harness::with_config(
+            vec![tools_script("", &calls)],
+            AgentConfig::new("mock-model")
+                .with_policy(PermissionPolicy::Yolo)
+                .with_loop_detection(2),
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "a\n").unwrap();
+        std::fs::write(harness.path("b.txt"), "b\n").unwrap();
+
+        let events = harness.turn("читай").await;
+        assert_eq!(stop_reason(&events), StopReason::Error);
+        assert_eq!(harness.provider.calls(), 1);
+        assert_eq!(started_count(&events), 1, "порог 2: исполнен только первый");
+
+        let items = harness.finish().await;
+        let history = messages(&items);
+        let last = history.last().unwrap();
+        assert_eq!(last.role, Role::Tool);
+        assert!(matches!(
+            &last.content[0],
+            ContentBlock::ToolResult { tool_use_id, is_error: false, .. } if tool_use_id == "call_1"
+        ));
+        assert_eq!(
+            last.content[1..],
+            [
+                ContentBlock::tool_error("call_2", repeated_call_result(1)),
+                ContentBlock::tool_error("call_3", repeated_call_result(2)),
+                ContentBlock::tool_error("call_4", repeated_call_result(3)),
+                ContentBlock::tool_error("call_5", LOOP_ABORTED_RESULT),
+            ]
+        );
+    }
+
+    #[test]
+    fn loop_detector_counts_consecutive_identical_calls() {
+        let a = json!({"path": "a"});
+        let b = json!({"path": "b"});
+
+        let mut detector = LoopDetector::new(3);
+        assert_eq!(detector.observe("read", &a), LoopVerdict::Run);
+        assert_eq!(detector.observe("read", &a), LoopVerdict::Run);
+        assert_eq!(
+            detector.observe("read", &a),
+            LoopVerdict::Block { repeats: 3 }
+        );
+        // То же имя, другие аргументы — сброс.
+        assert_eq!(detector.observe("read", &b), LoopVerdict::Run);
+        // Те же аргументы, другой тул — тоже сброс.
+        assert_eq!(detector.observe("cat", &b), LoopVerdict::Run);
+        for _ in 0..2 {
+            detector.observe("cat", &b);
+        }
+        assert_eq!(
+            detector.observe("cat", &b),
+            LoopVerdict::Block { repeats: 4 }
+        );
+        assert_eq!(
+            detector.observe("cat", &b),
+            LoopVerdict::Block { repeats: 5 }
+        );
+        assert_eq!(
+            detector.observe("cat", &b),
+            LoopVerdict::Abort { repeats: 6 }
+        );
+
+        // Порядок ключей — часть сериализованного ключа: это другой вызов.
+        let mut detector = LoopDetector::new(2);
+        detector.observe("write", &json!({"path": "a", "content": "x"}));
+        assert_eq!(
+            detector.observe("write", &json!({"content": "x", "path": "a"})),
+            LoopVerdict::Run
+        );
+
+        // 0 — выключено; 1 ведёт себя как 2.
+        let mut off = LoopDetector::new(0);
+        for _ in 0..10 {
+            assert_eq!(off.observe("read", &a), LoopVerdict::Run);
+        }
+        let mut one = LoopDetector::new(1);
+        assert_eq!(one.observe("read", &a), LoopVerdict::Run);
+        assert_eq!(one.observe("read", &a), LoopVerdict::Block { repeats: 2 });
+        assert_eq!(one.observe("read", &a), LoopVerdict::Block { repeats: 3 });
+        assert_eq!(one.observe("read", &a), LoopVerdict::Abort { repeats: 4 });
+    }
+
     /// Неизвестный тул не роняет ход: модель получает список доступных.
     #[tokio::test]
     async fn unknown_tool_is_reported_to_the_model() {
@@ -2239,6 +2647,8 @@ mod tests {
         assert!(config.max_tokens.is_none());
         assert!(config.temperature.is_none());
         assert_eq!(config.compaction, CompactionConfig::default());
+        assert_eq!(config.loop_detection, DEFAULT_LOOP_DETECTION);
+        assert_eq!(DEFAULT_LOOP_DETECTION, 3);
 
         let config = AgentConfig::new("qwen3-coder")
             .with_cwd(Path::new("/work"))
@@ -2246,7 +2656,9 @@ mod tests {
             .with_max_turns(7)
             .with_max_tokens(2048)
             .with_temperature(0.2)
-            .with_compaction(CompactionConfig::new().with_context_limit(32_768));
+            .with_compaction(CompactionConfig::new().with_context_limit(32_768))
+            .with_loop_detection(0);
+        assert_eq!(config.loop_detection, 0);
         assert_eq!(config.model, "qwen3-coder");
         assert_eq!(config.cwd, PathBuf::from("/work"));
         assert_eq!(config.policy, PermissionPolicy::Yolo);

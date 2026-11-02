@@ -15,16 +15,25 @@
 //! * [`Event::ApprovalRequired`] — вопрос пользователю живёт в интерактивном
 //!   цикле (для него есть чистая заготовка [`approval_prompt`]);
 //! * итог [`Event::Usage`] — печатается один раз в конце хода в stderr
-//!   ([`usage_summary`]).
+//!   ([`usage_summary`]);
+//! * ответ, который модель положила целиком в thinking-канал
+//!   ([`thinking_only_answer`]) — решение «показать рассуждения вместо
+//!   ответа» принимает фронтенд, здесь только распознавание и текст пометки;
+//! * сводка тул-коллов print mode ([`tool_summary_line`]) — она в stderr.
 
 use mark2_core::Event;
-use mark2_core::message::Usage;
+use mark2_core::message::{ContentBlock, Message, Role, Usage};
 use serde_json::Value;
 
 /// Приглушённый текст (рассуждения, служебные строки).
 const DIM: &str = "\x1b[2m";
 /// Ошибка.
 const RED: &str = "\x1b[31m";
+/// Предупреждение.
+const YELLOW: &str = "\x1b[33m";
+
+/// Пометка для ответа, собранного из рассуждений.
+pub const THINKING_ONLY_NOTE: &str = "модель не дала текстового ответа; показаны рассуждения";
 /// Сброс оформления.
 const RESET: &str = "\x1b[0m";
 
@@ -158,6 +167,54 @@ pub fn error_line(message: &str, opts: RenderOptions) -> String {
 /// stderr, но это не ошибка.
 pub fn note_line(text: &str, opts: RenderOptions) -> String {
     opts.paint(DIM, text)
+}
+
+/// Предупреждение для stderr: ход не сломан, но что-то не так, как ждали.
+pub fn warning_line(text: &str, opts: RenderOptions) -> String {
+    opts.paint(YELLOW, &format!("warning: {text}"))
+}
+
+/// Ответ модели, если она положила его целиком в thinking-канал.
+///
+/// `Some` — только для assistant-сообщения без тул-коллов, без непустого
+/// текста и с непустыми рассуждениями: такое сообщение завершает ход, и без
+/// подстановки ответ был бы пустым (qwen3.5 через ollama — половина прогонов
+/// бенча). Рассуждения склеиваются через пустую строку и обрезаются по краям.
+pub fn thinking_only_answer(message: &Message) -> Option<String> {
+    if message.role != Role::Assistant
+        || message.has_tool_uses()
+        || !message.text().trim().is_empty()
+    {
+        return None;
+    }
+    let thinking: Vec<&str> = message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Thinking { text } => Some(text.trim()),
+            _ => None,
+        })
+        .filter(|text| !text.is_empty())
+        .collect();
+    (!thinking.is_empty()).then(|| thinking.join("\n\n"))
+}
+
+/// Строка-сводка одного тул-колла для stderr print mode.
+///
+/// Ровно одна строка на вызов: `→ bash {"command":"ls"}` для успешного,
+/// `✗ edit: <начало ошибки>` для упавшего, запрещённого или заблокированного.
+pub fn tool_summary_line(
+    name: &str,
+    input: &Value,
+    content: &str,
+    is_error: bool,
+    opts: RenderOptions,
+) -> String {
+    if is_error {
+        opts.paint(RED, &format!("✗ {name}: {}", brief(content, ERROR_LIMIT)))
+    } else {
+        opts.paint(DIM, &format!("→ {name} {}", summarize_args(input)))
+    }
 }
 
 /// Аргументы тула одной короткой строкой.
@@ -393,6 +450,104 @@ mod tests {
         assert_eq!(
             error_line("нет связи", RenderOptions::interactive(false, true)),
             format!("{RED}error: нет связи{RESET}")
+        );
+    }
+
+    #[test]
+    fn thinking_only_answer_is_recognized_only_without_text_and_tools() {
+        // Ровно то, что qwen3.5 записала в сессию бенча.
+        let thinking_only = Message::new(
+            Role::Assistant,
+            vec![ContentBlock::thinking(
+                "\nDone. The count is 17, written to report.txt.\n",
+            )],
+        );
+        assert_eq!(
+            thinking_only_answer(&thinking_only).as_deref(),
+            Some("Done. The count is 17, written to report.txt.")
+        );
+
+        // Несколько блоков склеиваются, пустые пропускаются; пробельный
+        // текст текстом не считается.
+        let split = Message::new(
+            Role::Assistant,
+            vec![
+                ContentBlock::thinking("первое"),
+                ContentBlock::text("  \n"),
+                ContentBlock::thinking("   "),
+                ContentBlock::thinking("второе"),
+            ],
+        );
+        assert_eq!(
+            thinking_only_answer(&split).as_deref(),
+            Some("первое\n\nвторое")
+        );
+
+        for message in [
+            // Есть текст — это нормальный ответ.
+            Message::new(
+                Role::Assistant,
+                vec![ContentBlock::thinking("хм"), ContentBlock::text("ответ")],
+            ),
+            // Есть тул-колл — ход ещё не кончился.
+            Message::new(
+                Role::Assistant,
+                vec![
+                    ContentBlock::thinking("позову ls"),
+                    ContentBlock::tool_use("c1", "bash", json!({"command": "ls"})),
+                ],
+            ),
+            // Совсем пустое сообщение — подставлять нечего.
+            Message::new(Role::Assistant, vec![]),
+            Message::new(Role::Assistant, vec![ContentBlock::thinking(" \n ")]),
+            // Не ответ модели.
+            Message::new(Role::User, vec![ContentBlock::thinking("x")]),
+        ] {
+            assert_eq!(thinking_only_answer(&message), None, "{message:?}");
+        }
+    }
+
+    #[test]
+    fn tool_summary_is_one_compact_line_per_call() {
+        let opts = RenderOptions::print();
+        assert_eq!(
+            tool_summary_line("bash", &json!({"command": "ls -la"}), "src\n", false, opts),
+            "→ bash {\"command\":\"ls -la\"}"
+        );
+        assert_eq!(
+            tool_summary_line(
+                "edit",
+                &json!({"path": "a.rs"}),
+                "old_string not found in a.rs\nRead the file first",
+                true,
+                opts
+            ),
+            "✗ edit: old_string not found in a.rs Read the file first"
+        );
+        let long = tool_summary_line("bash", &json!({}), &"ошибка ".repeat(100), true, opts);
+        assert!(long.ends_with('…'), "{long}");
+        assert!(!long.contains('\n'), "{long}");
+        assert_eq!(
+            tool_summary_line(
+                "bash",
+                &json!({}),
+                "boom",
+                true,
+                RenderOptions::interactive(false, true)
+            ),
+            format!("{RED}✗ bash: boom{RESET}")
+        );
+    }
+
+    #[test]
+    fn warning_line_is_prefixed_and_colored_on_demand() {
+        assert_eq!(
+            warning_line(THINKING_ONLY_NOTE, interactive()),
+            format!("warning: {THINKING_ONLY_NOTE}")
+        );
+        assert_eq!(
+            warning_line("x", RenderOptions::interactive(false, true)),
+            format!("{YELLOW}warning: x{RESET}")
         );
     }
 

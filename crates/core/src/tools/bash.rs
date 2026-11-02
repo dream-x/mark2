@@ -62,7 +62,8 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Run a shell command with `sh -c` in the working directory. \
+        "Run a shell command with `sh -c`. It already runs in the agent's working directory: \
+         use relative paths, do not `cd` to absolute paths. \
          Returns stdout and stderr merged, truncated at 30000 bytes; \
          a non-zero exit code is reported and counts as an error. \
          Use it for builds, tests, git, and for finding files (ls, find, grep)."
@@ -483,5 +484,21 @@ mod tests {
         assert_eq!(schema["required"], json!(["command"]));
         assert!(schema["properties"]["command"]["description"].is_string());
         assert!(schema["properties"]["timeout_seconds"]["description"].is_string());
+    }
+
+    /// Живые прогоны: модели не верят, что команда уже идёт в cwd, и
+    /// подставляют `cd <абсолютный путь> && …`. Описание говорит об этом прямо.
+    #[test]
+    fn description_says_commands_already_run_in_the_cwd() {
+        let description = BashTool::new().description().to_string();
+        assert!(
+            description.contains("already runs in the agent's working directory"),
+            "{description}"
+        );
+        assert!(description.contains("relative paths"), "{description}");
+        assert!(
+            description.contains("do not `cd` to absolute paths"),
+            "{description}"
+        );
     }
 }

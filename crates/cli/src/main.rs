@@ -127,6 +127,7 @@ impl Args {
                 policy: self.policy_override(),
                 max_tokens: None,
                 temperature: None,
+                loop_detection: None,
             },
             models: BTreeMap::new(),
         }
@@ -239,6 +240,9 @@ async fn run(args: Args) -> Result<ExitCode> {
         .with_policy(config.agent.policy.unwrap_or_default());
     if let Some(max_turns) = config.agent.max_turns {
         agent_config.max_turns = max_turns;
+    }
+    if let Some(threshold) = config.agent.loop_detection {
+        agent_config.loop_detection = threshold;
     }
     agent_config.max_tokens = config.agent.max_tokens;
     agent_config.temperature = config.agent.temperature;
