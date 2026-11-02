@@ -26,8 +26,10 @@ model = "qwen3.8:27b"
 base_url = "http://white.local:11434/v1"
 timeout_multiplier = 2.5
 
+# deepseek-v4.1-flash:cloud требует платного плана Ollama Cloud (HTTP 402);
+# gemma4:31b-cloud — облачная модель из Free-плана.
 [[models]]
-alias = "dsflash"
-model = "deepseek-v4.1-flash:cloud"
+alias = "gemma31c"
+model = "gemma4:31b-cloud"
 base_url = "http://localhost:11434/v1"
 timeout_multiplier = 2.5
