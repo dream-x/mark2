@@ -3,6 +3,14 @@ timeout_seconds = 1800
 tags = ["project", "frontend", "backend", "hard"]
 # A whole project: flint:40b ran into the default 50 on this task.
 max_turns = 80
-# Three layers (protocol, headless browser, the model's own test, up to 60 s)
-# plus a one-time build of bench/uitest/.venv on the first run (~30 s).
+# Three layers (protocol, headless browser, the model's own test, up to 60 s).
+# bench/uitest/.venv is already built by the runner (uitest_env below), so the
+# bootstrap verify.sh calls is instant; ~30 s only for a standalone verify.
 verify_timeout_seconds = 300
+# The runner builds bench/uitest/.venv before the first model and starts mark2
+# with a per-run directory holding only `python3` (a wrapper that execs the
+# venv interpreter) first on PATH: the model's python3 has aiohttp and is the
+# same interpreter verify runs server.py and test_chat.py with, while pip and
+# the rest of the venv's bin/ stay out of the model's reach. Without it the
+# model's python3 is a bare pyenv and it burns the run on `pip install`.
+uitest_env = true

@@ -282,6 +282,7 @@ mod tests {
             context_limit: None,
             max_turns: None,
             verify_timeout_seconds: None,
+            uitest_env: false,
             prompt: "промпт".into(),
         }
     }

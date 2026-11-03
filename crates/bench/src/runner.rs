@@ -16,26 +16,34 @@
 //!   `policy = "read-only"` превращается в `--policy read-only` вместо
 //!   `--yolo`, `max_turns` — в строку секции `[agent]`, `context_limit` — в
 //!   секцию `[models."<id>"]` того же `.mark2.toml` (см. [`project_config`]);
+//! * **окружение uitest** — задаче с `uitest_env = true` ранер до первой
+//!   модели собирает `uitest/.venv` (`sh uitest/bootstrap.sh`, см.
+//!   [`prepare_envs`]) и запускает mark2 с директорией песочницы, где лежит
+//!   один `python3` (обёртка над интерпретатором venv, [`python_shim_script`]),
+//!   первой в `PATH` ([`path_with_first`]): `python3` модели — тот же
+//!   интерпретатор с aiohttp, которым `verify.sh` потом гоняет её сервер, а
+//!   `pip` и прочие бинари venv модели не видны. Прогрев и остальные задачи
+//!   получают `PATH` ранера как есть;
 //! * **таймаут** = `timeout_seconds` задачи × множитель модели, по истечении —
 //!   `kill` и пометка `timed_out` (прогон засчитывается как непройденный, но не
 //!   вешает бенч); у `verify.sh` свой бюджет — [`verify_timeout`].
 //!
 //! Ранер не интерпретирует ответ модели: приговор выносит `verify.sh`.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use jiff::{Timestamp, Zoned};
 use tokio::process::Command;
 
 use crate::metrics::{find_session_file, parse_tokens, read_session_metrics};
 use crate::models::ModelSpec;
 use crate::results::{Results, RunRecord, VerifyOutcome};
-use crate::task::{Task, TaskPolicy};
+use crate::task::{Task, TaskPolicy, UITEST_BOOTSTRAP};
 
 /// Промпт прогрева: тривиальный ответ без тулов, только чтобы поднять модель.
 pub const WARMUP_PROMPT: &str = "Reply with exactly: ok";
@@ -54,6 +62,19 @@ pub const PROJECT_CONFIG: &str = "[agent]\ntemperature = 0.0\n";
 
 /// Сколько символов вывода `verify.sh` сохраняем в `results.json`.
 const VERIFY_OUTPUT_LIMIT: usize = 4000;
+
+/// Бюджет `uitest/bootstrap.sh`. С готовым venv он мгновенный, полная сборка
+/// (PyPI, возможно — скачивание Chromium) укладывается в минуты. Дольше —
+/// значит, висит сеть, и узнать об этом надо до прогона, а не вместо него.
+pub const UITEST_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(900);
+
+/// Сколько последних строк вывода `bootstrap.sh` показываем в ошибке.
+const BOOTSTRAP_TAIL_LINES: usize = 15;
+
+/// Директория в песочнице прогона с единственным `python3` — её ранер ставит
+/// первой в `PATH` mark2 задачи с `uitest_env`. Сосед `cwd` и `home`, а не
+/// их часть: в артефакты модели и в её `$HOME` она не попадает.
+const PYTHON_SHIM_DIR: &str = "python-bin";
 
 /// Ранер: знает, чем запускать и куда складывать артефакты.
 #[derive(Debug, Clone)]
@@ -126,11 +147,13 @@ impl Runner {
         let sandbox = Sandbox::new()?;
         let stdout = sandbox.path().join("warmup.stdout");
         let stderr = sandbox.path().join("warmup.stderr");
-        // Прогрев не зовёт тулы, политика ему безразлична — берём обычную.
+        // Прогрев не зовёт тулы, политика ему безразлична — берём обычную;
+        // PATH — ранера как есть.
         self.execute_mark2(
             model,
             WARMUP_PROMPT,
             TaskPolicy::default(),
+            None,
             sandbox.cwd(),
             sandbox.home(),
             &stdout,
@@ -206,11 +229,21 @@ impl Runner {
         let stdout_path = logs_dir.join(format!("{repeat}.stdout.txt"));
         let stderr_path = logs_dir.join(format!("{repeat}.stderr.txt"));
 
+        let path_env = match task.uitest_dir() {
+            Some(dir) => Some(uitest_path(
+                &dir,
+                &sandbox.path().join(PYTHON_SHIM_DIR),
+                std::env::var_os("PATH").as_deref(),
+            )?),
+            None => None,
+        };
+
         let outcome = self
             .execute_mark2(
                 model,
                 &task.prompt,
                 task.policy,
+                path_env.as_deref(),
                 sandbox.cwd(),
                 sandbox.home(),
                 &stdout_path,
@@ -265,12 +298,16 @@ impl Runner {
     }
 
     /// Запустить mark2 и дождаться его — или убить по таймауту.
+    ///
+    /// `path_env` — свой `PATH` прогона (задача с `uitest_env`); `None` —
+    /// mark2 наследует `PATH` ранера.
     #[allow(clippy::too_many_arguments)]
     async fn execute_mark2(
         &self,
         model: &ModelSpec,
         prompt: &str,
         policy: TaskPolicy,
+        path_env: Option<&OsStr>,
         cwd: &Path,
         home: &Path,
         stdout_path: &Path,
@@ -293,6 +330,9 @@ impl Runner {
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
             .kill_on_drop(true);
+        if let Some(path) = path_env {
+            command.env("PATH", path);
+        }
 
         let started = Instant::now();
         let mut child = command
@@ -366,6 +406,187 @@ pub fn verify_timeout(task: &Task) -> Duration {
         task.verify_timeout_seconds
             .unwrap_or(VERIFY_TIMEOUT_SECONDS),
     )
+}
+
+/// Подготовить окружения, которых требуют задачи прогона, — до первой модели.
+///
+/// Сейчас это uitest: для каждой задачи с `uitest_env` — [`ensure_uitest_env`]
+/// её `uitest/`, по одному разу на директорию, сколько бы задач её ни
+/// требовали. Сломанное окружение — ошибка всего бенча до прогрева: иначе
+/// модель потратила бы весь таймаут задачи на `pip install`, а verify всё
+/// равно упал бы на том же bootstrap.
+pub async fn prepare_envs(tasks: &[Task], progress: &mut dyn Write) -> Result<()> {
+    let mut ready: Vec<PathBuf> = Vec::new();
+    for task in tasks {
+        let Some(dir) = task.uitest_dir() else {
+            continue;
+        };
+        if ready.contains(&dir) {
+            continue;
+        }
+        let _ = writeln!(
+            progress,
+            "uitest: готовлю окружение {} (нужно {})…",
+            dir.display(),
+            task.id
+        );
+        let _ = progress.flush();
+        ensure_uitest_env(&dir, UITEST_BOOTSTRAP_TIMEOUT)
+            .await
+            .with_context(|| format!("задача {} требует uitest_env", task.name()))?;
+        ready.push(dir);
+    }
+    Ok(())
+}
+
+/// Интерпретатор venv окружения uitest: им verify гоняет сервер модели, его
+/// же (через обёртку) модель видит как `python3`.
+pub fn uitest_python(uitest_dir: &Path) -> PathBuf {
+    uitest_dir.join(".venv").join("bin").join("python3")
+}
+
+/// Гарантировать готовый `uitest/.venv`: `sh <uitest>/bootstrap.sh`
+/// (идемпотентный: с актуальным штампом — мгновенный выход) и проверка, что
+/// `python3` на месте. Возвращает путь интерпретатора venv.
+///
+/// Провал — внятная ошибка с хвостом вывода bootstrap и командой для ручного
+/// запуска, как у `FAIL [env]` в verify T17.
+pub async fn ensure_uitest_env(uitest_dir: &Path, timeout: Duration) -> Result<PathBuf> {
+    let script = uitest_dir.join(UITEST_BOOTSTRAP);
+    let manual = format!("sh {} --force", script.display());
+
+    let child = Command::new("sh")
+        .arg(&script)
+        .current_dir(uitest_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("не удалось запустить sh {}", script.display()))?;
+
+    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(output) => output.with_context(|| format!("сбой sh {}", script.display()))?,
+        Err(_) => bail!(
+            "окружение uitest не готово: sh {} не уложился в {} с (висит сеть до PyPI \
+             или CDN Playwright?); запусти руками: {manual}",
+            script.display(),
+            timeout.as_secs()
+        ),
+    };
+
+    if !output.status.success() {
+        let mut log = String::from_utf8_lossy(&output.stdout).into_owned();
+        log.push_str(&String::from_utf8_lossy(&output.stderr));
+        let code = output
+            .status
+            .code()
+            .map_or_else(|| "убит сигналом".to_string(), |code| format!("код {code}"));
+        bail!(
+            "окружение uitest не готово: sh {} завершился с ошибкой ({code}; нужна сеть до \
+             PyPI и, возможно, CDN Playwright); запусти руками, чтобы увидеть причину: \
+             {manual}\n{}",
+            script.display(),
+            tail_lines(&log, BOOTSTRAP_TAIL_LINES)
+        );
+    }
+
+    let python = uitest_python(uitest_dir);
+    if !python.is_file() {
+        bail!(
+            "окружение uitest не готово: {} прошёл, но {} нет; пересобери: {manual}",
+            script.display(),
+            python.display()
+        );
+    }
+    Ok(python)
+}
+
+/// `PATH` прогона задачи с `uitest_env`: `shim_dir` с единственным
+/// `python3` (обёртка над интерпретатором venv) первым, дальше `current`.
+///
+/// В `PATH` модели попадает только интерпретатор — ни `pip`, ни прочие
+/// бинари venv: окружение, которым verify потом гоняет её сервер, не должно
+/// меняться от `pip install` модели. `shim_dir` — в песочнице прогона, своя у
+/// каждого прогона: сломать её для следующих модель не может.
+///
+/// Venv к этому моменту собран [`prepare_envs`]; если его нет — ошибка до
+/// запуска mark2, а не прогон, в котором `python3` модели без aiohttp.
+fn uitest_path(uitest_dir: &Path, shim_dir: &Path, current: Option<&OsStr>) -> Result<OsString> {
+    let python = uitest_python(uitest_dir);
+    if !python.is_file() {
+        bail!(
+            "окружение uitest не собрано: нет {}; ранер собирает его до первой модели \
+             (sh {})",
+            python.display(),
+            uitest_dir.join(UITEST_BOOTSTRAP).display()
+        );
+    }
+    write_python_shim(shim_dir, &python)?;
+    path_with_first(shim_dir, current)
+}
+
+/// Текст обёртки `python3`, которая запускает интерпретатор `python`.
+///
+/// Чистая функция. Именно `exec` по абсолютному пути, а не симлинк: venv
+/// узнаёт себя по `pyvenv.cfg` рядом с *запущенным* путём, и симлинк из
+/// чужой директории поднимает базовый интерпретатор без site-packages venv
+/// (на бенч-машине — homebrew python3.14 с `sys.executable` мимо venv).
+/// `exec` сохраняет и venv, и `sys.executable` (через него тест модели
+/// поднимает `server.py`), и аргументы, stdin, код выхода.
+pub fn python_shim_script(python: &Path) -> Result<String> {
+    let Some(raw) = python.to_str() else {
+        bail!(
+            "путь интерпретатора uitest не UTF-8, обёртку не написать: {}",
+            python.display()
+        );
+    };
+    // Одинарные кавычки sh: внутри ничего не раскрывается, сама кавычка — '\''.
+    let quoted = format!("'{}'", raw.replace('\'', "'\\''"));
+    Ok(format!("#!/bin/sh\nexec {quoted} \"$@\"\n"))
+}
+
+/// Положить в `dir` исполняемую обёртку `python3` над `python`.
+fn write_python_shim(dir: &Path, python: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("не удалось создать {}", dir.display()))?;
+    let shim = dir.join("python3");
+    std::fs::write(&shim, python_shim_script(python)?)
+        .with_context(|| format!("не удалось записать {}", shim.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("не удалось сделать исполняемым {}", shim.display()))?;
+    }
+    Ok(())
+}
+
+/// `PATH`, в котором `first` стоит первым, а остальное — `current` как было.
+///
+/// Чистая функция. Повтор `first` дальше по списку выкидывается (venv мог
+/// быть уже активирован у того, кто запускал бенч); пустые элементы
+/// `current` («текущая директория») сохраняются, а вот пустой или
+/// отсутствующий `PATH` целиком не превращается в лишний `:` в конце.
+pub fn path_with_first(first: &Path, current: Option<&OsStr>) -> Result<OsString> {
+    let mut entries = vec![first.to_path_buf()];
+    if let Some(current) = current.filter(|current| !current.is_empty()) {
+        entries.extend(std::env::split_paths(current).filter(|entry| entry != first));
+    }
+    std::env::join_paths(entries)
+        .with_context(|| format!("{} нельзя поставить в PATH", first.display()))
+}
+
+/// Последние `lines` строк текста (вывод bootstrap бывает длинным).
+fn tail_lines(text: &str, lines: usize) -> String {
+    let all: Vec<&str> = text.trim_end().lines().collect();
+    let start = all.len().saturating_sub(lines);
+    let tail = all[start..].join("\n");
+    if tail.is_empty() {
+        "(вывода нет)".to_string()
+    } else {
+        tail
+    }
 }
 
 /// Аргументы запуска mark2 для одного прогона.
@@ -616,7 +837,7 @@ mod tests {
     use super::*;
     use crate::results::VerifyOutcome;
     use crate::task::tests::write_task;
-    use crate::task::{SETUP_DIR, load_task};
+    use crate::task::{SETUP_DIR, UITEST_DIR, load_task};
     use jiff::civil::date;
     use tempfile::TempDir;
 
@@ -784,6 +1005,232 @@ mod tests {
             mark2_core::config::Config::parse(&project_config(odd, Some(4096), None), "x.toml")
                 .unwrap();
         assert_eq!(config.resolve(odd).context_limit, Some(4096));
+    }
+
+    fn path_string(first: &str, current: Option<&str>) -> String {
+        path_with_first(Path::new(first), current.map(OsStr::new))
+            .unwrap()
+            .into_string()
+            .unwrap()
+    }
+
+    #[test]
+    fn path_with_first_puts_the_dir_first_and_keeps_the_rest() {
+        assert_eq!(
+            path_string("/s/python-bin", Some("/usr/local/bin:/usr/bin:/bin")),
+            "/s/python-bin:/usr/local/bin:/usr/bin:/bin"
+        );
+        // Уже был в PATH — не дублируется, но первый.
+        assert_eq!(
+            path_string("/s/python-bin", Some("/usr/bin:/s/python-bin/:/bin")),
+            "/s/python-bin:/usr/bin:/bin"
+        );
+        // Пустой элемент посреди PATH — чужая семантика, её не трогаем.
+        assert_eq!(
+            path_string("/v/bin", Some("/usr/bin::/bin")),
+            "/v/bin:/usr/bin::/bin"
+        );
+        // Нет PATH вовсе или он пуст — без хвостового `:` (он значил бы cwd).
+        assert_eq!(path_string("/v/bin", None), "/v/bin");
+        assert_eq!(path_string("/v/bin", Some("")), "/v/bin");
+        // Двоеточие в пути в PATH не выразить — ошибка с путём, а не мусор.
+        let text = format!(
+            "{:#}",
+            path_with_first(Path::new("/a:b/bin"), Some(OsStr::new("/bin"))).unwrap_err()
+        );
+        assert!(text.contains("/a:b/bin"), "{text}");
+    }
+
+    /// Фейковый `uitest/bootstrap.sh` с телом `body`; `uitest/` — в `root`.
+    fn fake_uitest(root: &Path, body: &str) -> PathBuf {
+        let uitest = root.join(UITEST_DIR);
+        std::fs::create_dir_all(&uitest).unwrap();
+        std::fs::write(
+            uitest.join(UITEST_BOOTSTRAP),
+            format!("#!/bin/sh\nset -eu\n{body}"),
+        )
+        .unwrap();
+        uitest
+    }
+
+    /// Bootstrap, который собирает «venv» с `python3` и `pip` и считает свои
+    /// вызовы. Фейковый `python3` печатает свои аргументы по одному в строке
+    /// и выходит с кодом 7 — видно, что обёртка ничего не теряет.
+    const GOOD_BOOTSTRAP: &str = "echo run >> calls.log\nmkdir -p .venv/bin\n\
+         printf '#!/bin/sh\\nfor a in \"$@\"; do echo \"[$a]\"; done\\nexit 7\\n' > .venv/bin/python3\n\
+         printf '#!/bin/sh\\n' > .venv/bin/pip\n\
+         chmod +x .venv/bin/python3 .venv/bin/pip\n";
+
+    #[tokio::test]
+    async fn bootstrap_builds_the_venv_and_returns_its_python() {
+        let root = TempDir::new().unwrap();
+        let uitest = fake_uitest(root.path(), GOOD_BOOTSTRAP);
+
+        let python = ensure_uitest_env(&uitest, Duration::from_secs(30))
+            .await
+            .unwrap();
+        assert_eq!(python, uitest.join(".venv").join("bin").join("python3"));
+        assert!(python.is_file());
+    }
+
+    #[test]
+    fn python_shim_execs_the_venv_python_by_its_absolute_quoted_path() {
+        assert_eq!(
+            python_shim_script(Path::new("/b/uitest/.venv/bin/python3")).unwrap(),
+            "#!/bin/sh\nexec '/b/uitest/.venv/bin/python3' \"$@\"\n"
+        );
+        // Пробел, кавычка и `$` в пути: sh не должен их ни делить, ни раскрывать.
+        assert_eq!(
+            python_shim_script(Path::new("/it's $HOME/python3")).unwrap(),
+            "#!/bin/sh\nexec '/it'\\''s $HOME/python3' \"$@\"\n"
+        );
+    }
+
+    /// В `PATH` модели — директория ровно с одним `python3`, который и правда
+    /// запускает интерпретатор venv: аргументы и код выхода доходят как есть,
+    /// `pip` venv не виден.
+    #[tokio::test]
+    async fn uitest_path_puts_a_dir_with_only_python3_first() {
+        // Путь с пробелом и кавычкой — обёртка обязана его пережить.
+        let root = TempDir::new().unwrap();
+        let odd = root.path().join("it's a bench");
+        let uitest = fake_uitest(&odd, GOOD_BOOTSTRAP);
+        ensure_uitest_env(&uitest, Duration::from_secs(30))
+            .await
+            .unwrap();
+
+        let shim = root.path().join("sandbox").join(PYTHON_SHIM_DIR);
+        let path = uitest_path(&uitest, &shim, Some(OsStr::new("/usr/bin:/bin"))).unwrap();
+        assert_eq!(
+            path,
+            OsString::from(format!("{}:/usr/bin:/bin", shim.display()))
+        );
+        let listed: Vec<String> = std::fs::read_dir(&shim)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(listed, ["python3"], "ни pip, ни прочих бинарей venv");
+
+        let output = std::process::Command::new("python3")
+            .args(["a", "b c", ""])
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "[a]\n[b c]\n[]\n");
+        assert_eq!(output.status.code(), Some(7));
+
+        // Повторный прогон в той же директории переписывает обёртку, не падает.
+        uitest_path(&uitest, &shim, None).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failing_bootstrap_explains_itself_with_the_tail_and_the_manual_command() {
+        let root = TempDir::new().unwrap();
+        let uitest = fake_uitest(
+            root.path(),
+            "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do echo \"noise $i\"; done\n\
+             echo 'ERROR: Could not find a version that satisfies aiohttp' >&2\nexit 3\n",
+        );
+
+        let text = format!(
+            "{:#}",
+            ensure_uitest_env(&uitest, Duration::from_secs(30))
+                .await
+                .unwrap_err()
+        );
+        let script = uitest.join(UITEST_BOOTSTRAP).display().to_string();
+        assert!(text.contains("окружение uitest не готово"), "{text}");
+        assert!(text.contains("код 3"), "{text}");
+        assert!(text.contains(&format!("sh {script} --force")), "{text}");
+        assert!(text.contains("Could not find a version"), "{text}");
+        // Хвост, а не весь вывод.
+        assert!(text.contains("noise 20"), "{text}");
+        assert!(!text.contains("noise 1\n"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn bootstrap_that_leaves_no_python_or_hangs_is_an_error() {
+        let root = TempDir::new().unwrap();
+        let uitest = fake_uitest(root.path(), "exit 0\n");
+        let text = format!(
+            "{:#}",
+            ensure_uitest_env(&uitest, Duration::from_secs(30))
+                .await
+                .unwrap_err()
+        );
+        assert!(text.contains(".venv/bin/python3"), "{text}");
+        assert!(text.contains("--force"), "{text}");
+
+        // Без venv PATH прогону не собрать: ошибка до запуска mark2.
+        let shim = root.path().join(PYTHON_SHIM_DIR);
+        let text = format!("{:#}", uitest_path(&uitest, &shim, None).unwrap_err());
+        assert!(!shim.exists(), "обёртки над несуществующим python3 нет");
+        assert!(text.contains("не собрано"), "{text}");
+        assert!(text.contains(".venv/bin/python3"), "{text}");
+
+        let uitest = fake_uitest(root.path(), "sleep 30\n");
+        let started = Instant::now();
+        let text = format!(
+            "{:#}",
+            ensure_uitest_env(&uitest, Duration::from_millis(300))
+                .await
+                .unwrap_err()
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "не дождались бюджета"
+        );
+        assert!(text.contains("не уложился"), "{text}");
+        assert!(text.contains("--force"), "{text}");
+    }
+
+    /// Один bootstrap на директорию, сколько бы задач её ни требовали; задачи
+    /// без поля окружение не трогают.
+    #[tokio::test]
+    async fn prepare_bootstraps_each_uitest_dir_once_and_only_when_asked() {
+        let root = TempDir::new().unwrap();
+        let uitest = fake_uitest(root.path(), GOOD_BOOTSTRAP);
+        let tasks_dir = root.path().join("tasks");
+        let plain = write_task(&tasks_dir, "T01-plain", "[task]\ntimeout_seconds = 60\n");
+        let tasks: Vec<Task> = [plain.clone()]
+            .into_iter()
+            .chain(["T17-a", "T18-b"].map(|name| {
+                write_task(
+                    &tasks_dir,
+                    name,
+                    "[task]\ntimeout_seconds = 60\nuitest_env = true\n",
+                )
+            }))
+            .map(|dir| load_task(&dir).unwrap())
+            .collect();
+
+        let mut progress = Vec::new();
+        prepare_envs(&tasks[..1], &mut progress).await.unwrap();
+        assert!(
+            !uitest.join("calls.log").exists(),
+            "без uitest_env — ни одного вызова"
+        );
+        assert!(progress.is_empty());
+
+        prepare_envs(&tasks, &mut progress).await.unwrap();
+        let calls = std::fs::read_to_string(uitest.join("calls.log")).unwrap();
+        assert_eq!(calls, "run\n");
+        let progress = String::from_utf8(progress).unwrap();
+        assert!(progress.contains("uitest: готовлю окружение"), "{progress}");
+        assert!(progress.contains("T17"), "{progress}");
+
+        // Провал называет задачу и поле: ясно, кому и зачем понадобилась сеть.
+        fake_uitest(
+            root.path(),
+            "echo 'pip: network is unreachable' >&2\nexit 1\n",
+        );
+        let text = format!(
+            "{:#}",
+            prepare_envs(&tasks, &mut Vec::new()).await.unwrap_err()
+        );
+        assert!(text.contains("T17-a"), "{text}");
+        assert!(text.contains("uitest_env"), "{text}");
+        assert!(text.contains("network is unreachable"), "{text}");
     }
 
     #[test]

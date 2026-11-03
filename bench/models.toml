@@ -33,3 +33,69 @@ alias = "gemma31c"
 model = "gemma4:31b-cloud"
 base_url = "http://localhost:11434/v1"
 timeout_multiplier = 2.5
+
+# --- Матрица v3 (2026-11-04): проектный тир + эксперимент «квант × железо». ---
+# Одна модель qwen3.6:35b-a3b-coding в четырёх ипостасях: q4 на Mac и на white
+# (RTX 5090), MLX-fp4 и mxfp8/bf16 — только Mac (в 32GB VRAM не влезают).
+# Теги *-nvfp4 в ollama — это MLX-формат (Apple-only), на NVIDIA не идут.
+
+[[models]]
+alias = "qwen36c"
+model = "qwen3.6:35b-a3b-coding"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.0
+
+[[models]]
+alias = "qwen36c-5090"
+model = "qwen3.6:35b-a3b-coding"
+base_url = "http://white.local:11434/v1"
+timeout_multiplier = 1.5
+
+[[models]]
+alias = "qwen36c-mlx4"
+model = "qwen3.6:35b-a3b-coding-nvfp4"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.0
+
+[[models]]
+alias = "qwen36c-fp8"
+model = "qwen3.6:35b-a3b-coding-mxfp8"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.5
+
+[[models]]
+alias = "qwen36c-bf16"
+model = "qwen3.6:35b-a3b-coding-bf16"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.5
+
+[[models]]
+alias = "coder64k"
+model = "qwen-coder-next-64k:latest"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.5
+
+[[models]]
+alias = "lightning30"
+model = "nemotron-3.5-lightning:30b"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.0
+
+[[models]]
+alias = "laguna"
+model = "laguna-xs-2.1:latest"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.0
+
+[[models]]
+alias = "mimo9"
+model = "mimo-v2.6:9b"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 1.5
+
+# Бесплатная облачная агентная модель Reflection (проверена 2026-11-03).
+[[models]]
+alias = "beam"
+model = "beam:cloud"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.0

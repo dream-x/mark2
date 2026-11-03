@@ -88,9 +88,8 @@ Write your own automated test and ship it with the code:
 
 ## Environment
 
-aiohttp is installed in the Python that the checker uses to run `server.py`
-and `test_chat.py`. The `python3` on your PATH may not have it. If so, you may
-create a virtual environment inside the working directory (for example
-`python3 -m venv .venv && .venv/bin/pip install aiohttp`); do not install
-packages anywhere else. You may start the server and run your test while you
-work, but you don't have to. Stop any server you started before you finish.
+`python3` on your PATH has aiohttp available. It is the same Python the
+checker uses to run `server.py` and `test_chat.py`, so there is nothing to
+install. Do not install packages globally. You may start the server and run
+your test while you work, but you don't have to. Stop any server you started
+before you finish.

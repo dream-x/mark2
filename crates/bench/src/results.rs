@@ -94,6 +94,10 @@ pub struct TaskRecord {
     /// [`RunConfig::verify_timeout_seconds`]).
     #[serde(default)]
     pub verify_timeout_seconds: Option<u64>,
+    /// Запускался ли mark2 с `python3` интерпретатора `uitest/.venv` первым в
+    /// `PATH`. В старых `results.json` поля нет — тогда PATH не трогали никому.
+    #[serde(default)]
+    pub uitest_env: bool,
     /// Промпт целиком — прогон должен быть воспроизводим по одному файлу.
     pub prompt: String,
 }
@@ -246,6 +250,7 @@ mod tests {
             context_limit: None,
             max_turns: None,
             verify_timeout_seconds: None,
+            uitest_env: false,
             prompt: "…".into(),
         };
         assert_eq!(record.name(), "T01-create-file");

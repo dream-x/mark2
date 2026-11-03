@@ -164,16 +164,37 @@ mod tests {
         assert_eq!(models[0].timeout_multiplier, 1.0);
     }
 
-    /// Реальный файл репозитория обязан разбираться — иначе бенч не запустится.
-    /// Состав матрицы зафиксирован: меняется осознанно, вместе с этим тестом.
+    /// Реальный файл репозитория обязан разбираться текущим контрактом —
+    /// иначе бенч не запустится.
+    ///
+    /// Точный состав матрицы намеренно не прибит: она растёт от версии к
+    /// версии (v3 — квант-лесенка `qwen36c-*`, дуэль хостов, новые модели), и
+    /// тест не должен ломаться от каждой новой строки. Прибиты только якоря —
+    /// алиасы, через которые сравниваются прогоны v1/v2/v3: они обязаны
+    /// остаться в матрице и значить ту же модель, иначе старые `results.json`
+    /// перестают быть сравнимы с новыми.
     #[test]
     fn repository_models_file_is_valid() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join(DEFAULT_MODELS_FILE);
         let models = load_models(&path).unwrap();
+
         let aliases: Vec<&str> = models.iter().map(|m| m.alias.as_str()).collect();
-        assert_eq!(aliases, ["qwen9", "bolt4", "flint40", "qwen27", "gemma31c"]);
+        let unique: BTreeSet<&str> = aliases.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            aliases.len(),
+            "алиасы повторяются: {aliases:?}"
+        );
+
+        for (anchor, model_id) in [("qwen9", "qwen3.5:9b"), ("flint40", "flint:40b")] {
+            let spec = models
+                .iter()
+                .find(|m| m.alias == anchor)
+                .unwrap_or_else(|| panic!("нет якоря {anchor} в матрице: {aliases:?}"));
+            assert_eq!(spec.model, model_id, "якорь {anchor} сменил модель");
+        }
     }
 
     #[test]

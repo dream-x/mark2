@@ -22,7 +22,8 @@ use mark2_bench::models::{DEFAULT_MODELS_FILE, load_models, select_models};
 use mark2_bench::resolve_path;
 use mark2_bench::results::{Results, RunConfig, SCHEMA_VERSION, TaskRecord};
 use mark2_bench::runner::{
-    PROJECT_CONFIG, Runner, VERIFY_TIMEOUT_SECONDS, WARMUP_PROMPT, run_id, write_outputs,
+    PROJECT_CONFIG, Runner, VERIFY_TIMEOUT_SECONDS, WARMUP_PROMPT, prepare_envs, run_id,
+    write_outputs,
 };
 use mark2_bench::task::{DEFAULT_TASKS_DIR, discover_tasks, select_tasks};
 
@@ -127,6 +128,12 @@ async fn run(args: Args) -> Result<()> {
     let models = select_models(load_models(&args.models_file)?, &args.models)?;
     let tasks = select_tasks(discover_tasks(&args.tasks_dir)?, &args.tasks)?;
 
+    // Окружения задач (uitest/.venv) — до директории результатов и до первой
+    // модели: сломанный bootstrap обязан остановить бенч сразу, а не съесть
+    // таймаут задачи у каждой модели.
+    let mut progress = std::io::stderr();
+    prepare_envs(&tasks, &mut progress).await?;
+
     let run_id = run_id(&args.label, &Zoned::now());
     let run_dir = args.out.join(&run_id);
     std::fs::create_dir_all(&run_dir)
@@ -161,12 +168,12 @@ async fn run(args: Args) -> Result<()> {
                 context_limit: task.context_limit,
                 max_turns: task.max_turns,
                 verify_timeout_seconds: task.verify_timeout_seconds,
+                uitest_env: task.uitest_env,
                 prompt: task.prompt.clone(),
             })
             .collect(),
     };
 
-    let mut progress = std::io::stderr();
     let _ = writeln!(
         &mut progress,
         "bench {run_id}: {} моделей × {} задач → {}",
@@ -330,7 +337,7 @@ mod tests {
             ]
         }"#;
         let results: Results = serde_json::from_str(json).unwrap();
-        // Старый файл без policy/context_limit/max_turns/verify_timeout_seconds
+        // Старый файл без policy/context_limit/max_turns/verify_timeout_seconds/uitest_env
         // читается с дефолтами.
         assert_eq!(
             results.config.tasks[0].policy,
@@ -339,6 +346,7 @@ mod tests {
         assert_eq!(results.config.tasks[0].context_limit, None);
         assert_eq!(results.config.tasks[0].max_turns, None);
         assert_eq!(results.config.tasks[0].verify_timeout_seconds, None);
+        assert!(!results.config.tasks[0].uitest_env);
         let report = render_report(&results);
         assert!(report.contains("| qwen9 | 1/1 · 12.3s |"), "{report}");
         assert!(report.contains("1200 / 340"), "{report}");

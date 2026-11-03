@@ -27,6 +27,13 @@ if [ -n "$FAKE_MARK2_LOG" ]; then
         echo "argv: $*"
         echo "home: $HOME"
         echo "config: $(tr '\n' ' ' < .mark2.toml 2>/dev/null)"
+        echo "path: $PATH"
+        echo "python3: $(command -v python3 || echo none)"
+        echo "first holds: $(ls -A "${PATH%%:*}" 2>/dev/null | tr '\n' ' ')"
+        echo "pip: $(command -v pip || echo none)"
+        if [ -n "${FAKE_MARK2_PROBE:-}" ]; then
+            echo "python3 says: $(python3 --probe 2>&1)"
+        fi
     } >> "$FAKE_MARK2_LOG"
 fi
 
@@ -118,6 +125,19 @@ impl Fixture {
         std::fs::write(dir.join("setup").join("given.txt"), "исходные данные\n").unwrap();
     }
 
+    /// `uitest/` рядом с `tasks/`, как `bench/uitest` рядом с `bench/tasks`:
+    /// фейковый `bootstrap.sh` с телом `body`. Возвращает развёрнутый путь.
+    fn uitest(&self, body: &str) -> PathBuf {
+        let dir = self.root.path().join("uitest");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("bootstrap.sh"),
+            format!("#!/bin/sh\nset -eu\n{body}"),
+        )
+        .unwrap();
+        std::fs::canonicalize(dir).unwrap()
+    }
+
     fn bench(&self, args: &[&str]) -> std::process::Output {
         self.bench_with_paths(
             &[
@@ -137,13 +157,37 @@ impl Fixture {
     /// Прогон с произвольным набором путей — в том числе относительных.
     /// cwd процесса всегда корень фикстуры, как у смоука cwd = корень репо.
     fn bench_with_paths(&self, paths: &[&str], args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_mark2-bench"))
+        self.command(paths, args)
+            .output()
+            .expect("ранер должен запускаться")
+    }
+
+    /// Как [`Self::bench`], но фейк ещё и запускает `python3` из своего PATH.
+    fn bench_probing_python(&self, args: &[&str]) -> std::process::Output {
+        let paths = [
+            "--mark2",
+            self.mark2.to_str().unwrap(),
+            "--tasks-dir",
+            self.tasks.to_str().unwrap(),
+            "--models-file",
+            self.models.to_str().unwrap(),
+            "--out",
+            self.out.to_str().unwrap(),
+        ];
+        self.command(&paths, args)
+            .env("FAKE_MARK2_PROBE", "1")
+            .output()
+            .expect("ранер должен запускаться")
+    }
+
+    fn command(&self, paths: &[&str], args: &[&str]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_mark2-bench"));
+        command
             .args(paths)
             .args(args)
             .current_dir(self.root.path())
-            .env("FAKE_MARK2_LOG", &self.log)
-            .output()
-            .expect("ранер должен запускаться")
+            .env("FAKE_MARK2_LOG", &self.log);
+        command
     }
 
     /// Единственная директория прогона внутри `--out`.
@@ -613,5 +657,148 @@ fn setup_errors_are_explicit() {
     assert!(stderr.contains("T01-x"), "{stderr}");
 
     // Директория результатов не создаётся, пока не прошли проверки.
+    assert!(!fixture.out.exists(), "лишняя директория прогона");
+}
+
+/// Фейковый bootstrap: считает вызовы и собирает «venv» с `python3`, который
+/// представляется, и с `pip`, которого модель видеть не должна.
+const GOOD_BOOTSTRAP: &str = "echo run >> calls.log\nmkdir -p .venv/bin\n\
+     printf '#!/bin/sh\\necho \"fake-venv-python $*\"\\n' > .venv/bin/python3\n\
+     printf '#!/bin/sh\\n' > .venv/bin/pip\n\
+     chmod +x .venv/bin/python3 .venv/bin/pip\n";
+
+/// Значение строки `<key>: …` из блока лога фейка.
+fn logged<'a>(run: &'a str, key: &str) -> &'a str {
+    run.lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}: ")))
+        .unwrap_or_else(|| panic!("нет строки {key:?} в блоке:\n{run}"))
+}
+
+/// Задача с `uitest_env`: окружение собирается один раз до первой модели, а
+/// mark2 видит первым в PATH директорию песочницы ровно с одним `python3`,
+/// который запускает интерпретатор venv — тот же, что у verify; `pip` venv
+/// модели не виден. Прогрев и задачи без поля получают PATH ранера как есть.
+#[test]
+fn uitest_task_runs_mark2_with_only_the_venv_python_first_on_path() {
+    let fixture = Fixture::new();
+    let uitest = fixture.uitest(GOOD_BOOTSTRAP);
+    fixture.task(
+        "T01-plain",
+        "Создай hello.txt\n",
+        "[task]\ntimeout_seconds = 60\nrepeats = 1\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+    fixture.task(
+        "T17-chat",
+        "Собери чат\n",
+        "[task]\ntimeout_seconds = 60\nrepeats = 2\nuitest_env = true\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+
+    // С прогревом: он тоже не должен получить чужой PATH.
+    let output = fixture.bench_probing_python(&["--models", "fake1"]);
+    let progress = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{progress}");
+    assert!(progress.contains("uitest: готовлю окружение"), "{progress}");
+    assert_eq!(
+        std::fs::read_to_string(uitest.join("calls.log")).unwrap(),
+        "run\n",
+        "bootstrap — один раз на бенч, а не на прогон"
+    );
+
+    let runner_path = std::env::var("PATH").unwrap();
+    let uitest_text = uitest.display().to_string();
+    let log = fixture.log();
+    let runs: Vec<&str> = log.split("--- run").skip(1).collect();
+    assert_eq!(runs.len(), 4, "прогрев + T01 + T17 ×2:\n{log}");
+    let (warmup, plain, chat) = (runs[0], runs[1], &runs[2..]);
+
+    assert!(warmup.contains("Reply with exactly: ok"), "{warmup}");
+    for untouched in [warmup, plain] {
+        assert_eq!(logged(untouched, "path"), runner_path, "{untouched}");
+        assert!(!untouched.contains(&uitest_text), "{untouched}");
+        assert!(!untouched.contains("fake-venv-python"), "{untouched}");
+    }
+
+    let mut shims = Vec::new();
+    for run in chat {
+        assert!(run.contains("Собери чат"), "{run}");
+        let (first, rest) = logged(run, "path").split_once(':').unwrap();
+        assert_eq!(rest, runner_path, "остальное — PATH ранера:\n{run}");
+        assert!(first.ends_with("/python-bin"), "{run}");
+        assert!(
+            !first.starts_with(&uitest_text),
+            "в PATH не сам venv/bin:\n{run}"
+        );
+        assert_eq!(
+            logged(run, "first holds"),
+            "python3 ",
+            "только python3:\n{run}"
+        );
+        assert_eq!(logged(run, "python3"), format!("{first}/python3"), "{run}");
+        assert_eq!(
+            logged(run, "python3 says"),
+            "fake-venv-python --probe",
+            "python3 модели — интерпретатор venv:\n{run}"
+        );
+        assert!(
+            !logged(run, "pip").contains(&uitest_text),
+            "pip venv виден:\n{run}"
+        );
+        shims.push(first.to_string());
+    }
+    // У каждого прогона своя директория, и она уходит вместе с песочницей.
+    assert_ne!(shims[0], shims[1]);
+    for shim in &shims {
+        assert!(!Path::new(shim).exists(), "{shim} пережил прогон");
+    }
+
+    // В сырьё уезжает и это: прогон воспроизводим по одному файлу.
+    let results = fixture.results();
+    let tasks = results["config"]["tasks"].as_array().unwrap();
+    assert_eq!(tasks[0]["uitest_env"], false);
+    assert_eq!(tasks[1]["uitest_env"], true);
+    assert!(
+        results["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|run| run["pass"] == true && run["error"].is_null()),
+        "{results}"
+    );
+}
+
+/// Сломанный bootstrap останавливает бенч до прогрева: внятная ошибка с
+/// причиной и командой, ни одного запуска mark2, нет директории прогона.
+#[test]
+fn broken_uitest_bootstrap_stops_the_bench_before_any_model_runs() {
+    let fixture = Fixture::new();
+    fixture.uitest("echo 'ERROR: pip: network is unreachable' >&2\nexit 1\n");
+    fixture.task(
+        "T01-plain",
+        "Создай hello.txt\n",
+        "[task]\ntimeout_seconds = 60\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+    fixture.task(
+        "T17-chat",
+        "Собери чат\n",
+        "[task]\ntimeout_seconds = 1800\nuitest_env = true\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+
+    let output = fixture.bench(&["--models", "fake1"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for needle in [
+        "T17-chat",
+        "uitest_env",
+        "окружение uitest не готово",
+        "network is unreachable",
+        "bootstrap.sh --force",
+    ] {
+        assert!(stderr.contains(needle), "нет {needle:?}:\n{stderr}");
+    }
+    assert_eq!(fixture.log(), "", "mark2 не должен был запускаться");
     assert!(!fixture.out.exists(), "лишняя директория прогона");
 }

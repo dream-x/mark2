@@ -9,7 +9,7 @@
 //! ├── setup/      копируется в свежую tmp-cwd прогона (может отсутствовать)
 //! ├── verify.sh   `sh verify.sh` с cwd = cwd прогона; exit 0 = pass
 //! └── task.toml   [task] timeout_seconds, опц. repeats, tags, policy,
-//!                 context_limit, max_turns, verify_timeout_seconds
+//!                 context_limit, max_turns, verify_timeout_seconds, uitest_env
 //! ```
 //!
 //! Поля `[task]`:
@@ -29,7 +29,14 @@
 //!   (у mark2 по умолчанию 50 — проектным задачам этого мало);
 //! * `verify_timeout_seconds` — бюджет `verify.sh` (> 0) вместо общего
 //!   [`crate::runner::VERIFY_TIMEOUT_SECONDS`]: проверка, которая поднимает
-//!   сервер и headless-браузер, в 30 секунд не укладывается.
+//!   сервер и headless-браузер, в 30 секунд не укладывается;
+//! * `uitest_env` — задаче нужно окружение проектных verify, `uitest/` рядом с
+//!   директорией задач (`bench/uitest`, см. [`Task::uitest_dir`]): ранер до
+//!   первой модели собирает `.venv` его `bootstrap.sh` и запускает mark2 с
+//!   директорией, где лежит один `python3` (обёртка над интерпретатором
+//!   venv), первой в `PATH` — `python3` модели тот же, которым verify потом
+//!   гоняет её сервер (с aiohttp), сеть до PyPI модели не нужна, а `pip`
+//!   venv ей не виден.
 //!
 //! Всё, что можно проверить до запуска модели, проверяется до запуска модели:
 //! отсутствующий `verify.sh`, пустой `prompt.md`, опечатка в ключе или
@@ -55,6 +62,11 @@ pub const SETUP_DIR: &str = "setup";
 pub const VERIFY_SCRIPT: &str = "verify.sh";
 /// Имя файла настроек задачи.
 pub const TASK_FILE: &str = "task.toml";
+/// Окружение проектных verify: сосед директории задач (`bench/tasks` →
+/// `bench/uitest`).
+pub const UITEST_DIR: &str = "uitest";
+/// Скрипт, который собирает и проверяет `uitest/.venv` (идемпотентный).
+pub const UITEST_BOOTSTRAP: &str = "bootstrap.sh";
 
 /// Загруженная задача.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -81,6 +93,8 @@ pub struct Task {
     pub max_turns: Option<usize>,
     /// Бюджет `verify.sh` в секундах, если задача его задаёт.
     pub verify_timeout_seconds: Option<u64>,
+    /// Нужно ли задаче окружение uitest (см. [`Task::uitest_dir`]).
+    pub uitest_env: bool,
 }
 
 /// Политика доступа к тулам в `task.toml`.
@@ -119,6 +133,15 @@ impl Task {
         self.dir.join(VERIFY_SCRIPT)
     }
 
+    /// `uitest/` бенча, если задаче нужно это окружение (`uitest_env = true`).
+    ///
+    /// Директория задачи — `bench/tasks/<ID>-<slug>`, так что `uitest/` лежит
+    /// двумя уровнями выше: та же, которую находит `verify.sh` через
+    /// `$here/../../uitest` — модель и проверка видят один интерпретатор.
+    pub fn uitest_dir(&self) -> Option<PathBuf> {
+        self.uitest_env.then(|| uitest_dir_of(&self.dir))
+    }
+
     /// Эффективное число повторов: `--repeats` старше `task.toml`.
     pub fn repeats_with_override(&self, override_repeats: Option<usize>) -> usize {
         override_repeats.unwrap_or(self.repeats)
@@ -148,6 +171,19 @@ struct TaskSection {
     max_turns: Option<usize>,
     #[serde(default)]
     verify_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    uitest_env: bool,
+}
+
+/// `uitest/` для директории задачи: два уровня вверх (`bench/tasks/T17-…` →
+/// `bench/`) плюс [`UITEST_DIR`]. `task_dir` уже абсолютный и нормализованный
+/// ([`load_task`]), так что предки — настоящие директории, а не `..`.
+fn uitest_dir_of(task_dir: &Path) -> PathBuf {
+    task_dir
+        .ancestors()
+        .nth(2)
+        .unwrap_or(task_dir)
+        .join(UITEST_DIR)
 }
 
 /// Разобрать `task.toml`. `origin` попадает в текст ошибок.
@@ -209,6 +245,19 @@ pub fn load_task(dir: &Path) -> Result<Task> {
         .with_context(|| format!("не удалось прочитать {}", task_path.display()))?;
     let section = parse_task_file(&raw, &task_path.display().to_string())?;
 
+    // Окружение, которое не из чего собрать, — ошибка загрузки, а не прогон,
+    // в котором модель час ищет aiohttp.
+    if section.uitest_env {
+        let bootstrap = uitest_dir_of(dir).join(UITEST_BOOTSTRAP);
+        if !bootstrap.is_file() {
+            bail!(
+                "{}: uitest_env = true, но нет {} — окружение uitest не из чего собрать",
+                task_path.display(),
+                bootstrap.display()
+            );
+        }
+    }
+
     Ok(Task {
         id,
         slug,
@@ -221,6 +270,7 @@ pub fn load_task(dir: &Path) -> Result<Task> {
         context_limit: section.context_limit,
         max_turns: section.max_turns,
         verify_timeout_seconds: section.verify_timeout_seconds,
+        uitest_env: section.uitest_env,
     })
 }
 
@@ -334,6 +384,8 @@ pub(crate) mod tests {
         assert_eq!(task.context_limit, None);
         assert_eq!(task.max_turns, None);
         assert_eq!(task.verify_timeout_seconds, None);
+        assert!(!task.uitest_env);
+        assert_eq!(task.uitest_dir(), None);
     }
 
     #[test]
@@ -457,6 +509,86 @@ pub(crate) mod tests {
         assert!(text.contains("max_turn"), "{text}");
     }
 
+    /// Раскладка как в репозитории: `<root>/tasks/<задача>` и `<root>/uitest/`.
+    fn write_uitest(root: &Path) -> PathBuf {
+        let uitest = root.join(UITEST_DIR);
+        std::fs::create_dir_all(&uitest).unwrap();
+        std::fs::write(uitest.join(UITEST_BOOTSTRAP), "#!/bin/sh\nexit 0\n").unwrap();
+        uitest
+    }
+
+    #[test]
+    fn uitest_env_points_at_the_uitest_dir_next_to_the_tasks_dir() {
+        let root = TempDir::new().unwrap();
+        let uitest = write_uitest(root.path());
+        let dir = write_task(
+            &root.path().join("tasks"),
+            "T17-x",
+            "[task]\ntimeout_seconds = 60\nuitest_env = true\n",
+        );
+        let task = load_task(&dir).unwrap();
+        assert!(task.uitest_env);
+        // Тот же путь, что у verify.sh (`$here/../../uitest`), развёрнутый.
+        assert_eq!(
+            task.uitest_dir(),
+            Some(std::fs::canonicalize(&uitest).unwrap())
+        );
+        assert!(task.uitest_dir().unwrap().is_absolute());
+        // Соседние поля не задеты.
+        assert_eq!(task.policy, TaskPolicy::Yolo);
+        assert_eq!(task.max_turns, None);
+
+        // Явный false — то же, что отсутствие поля: окружения не нужно.
+        std::fs::write(
+            dir.join(TASK_FILE),
+            "[task]\ntimeout_seconds = 60\nuitest_env = false\n",
+        )
+        .unwrap();
+        let task = load_task(&dir).unwrap();
+        assert!(!task.uitest_env);
+        assert_eq!(task.uitest_dir(), None);
+    }
+
+    /// Окружение, которое не из чего собрать, и кривое значение — ошибка
+    /// загрузки с путём, а не прогон, в котором у модели нет aiohttp.
+    #[test]
+    fn uitest_env_without_bootstrap_or_mistyped_is_a_load_error() {
+        let root = TempDir::new().unwrap();
+        let dir = write_task(
+            &root.path().join("tasks"),
+            "T17-x",
+            "[task]\ntimeout_seconds = 60\nuitest_env = true\n",
+        );
+        let text = format!("{:#}", load_task(&dir).unwrap_err());
+        assert!(text.contains("uitest_env"), "{text}");
+        assert!(text.contains(UITEST_BOOTSTRAP), "{text}");
+        assert!(text.contains(&dir.display().to_string()), "{text}");
+
+        // Без поля bootstrap.sh не нужен вовсе.
+        std::fs::write(dir.join(TASK_FILE), "[task]\ntimeout_seconds = 60\n").unwrap();
+        assert!(load_task(&dir).is_ok());
+
+        write_uitest(root.path());
+        for bad in ["\"yes\"", "1", "\"true\""] {
+            std::fs::write(
+                dir.join(TASK_FILE),
+                format!("[task]\ntimeout_seconds = 60\nuitest_env = {bad}\n"),
+            )
+            .unwrap();
+            let text = format!("{:#}", load_task(&dir).unwrap_err());
+            assert!(text.contains("task.toml"), "uitest_env = {bad}: {text}");
+        }
+
+        // Опечатка в имени поля ловится deny_unknown_fields.
+        std::fs::write(
+            dir.join(TASK_FILE),
+            "[task]\ntimeout_seconds = 60\nuitest = true\n",
+        )
+        .unwrap();
+        let text = format!("{:#}", load_task(&dir).unwrap_err());
+        assert!(text.contains("uitest"), "{text}");
+    }
+
     /// Реальные задачи репозитория обязаны грузиться текущим контрактом —
     /// иначе бенч упадёт на старте. Старые task.toml без новых полей значат
     /// ровно то же, что и раньше.
@@ -475,6 +607,7 @@ pub(crate) mod tests {
         assert_eq!(first.context_limit, None);
         assert_eq!(first.max_turns, None);
         assert_eq!(first.verify_timeout_seconds, None);
+        assert!(!first.uitest_env, "базовым задачам PATH не трогаем");
 
         // Проектная задача: больше ходов и свой бюджет на трёхслойный verify.
         let project = tasks.iter().find(|task| task.id == "T17").unwrap();
@@ -484,6 +617,10 @@ pub(crate) mod tests {
         assert!(project.verify_timeout_seconds.is_some_and(|s| s > 30));
         assert!(project.tags.iter().any(|tag| tag == "project"));
         assert!(project.setup_dir().is_none(), "T17 стартует с пустой cwd");
+        // python3 модели — тот же, что у verify: bench/uitest/.venv.
+        let uitest = std::fs::canonicalize(dir.join("..").join(UITEST_DIR)).unwrap();
+        assert_eq!(project.uitest_dir(), Some(uitest.clone()));
+        assert!(uitest.join(UITEST_BOOTSTRAP).is_file());
     }
 
     /// Пути задачи используются из tmp-cwd прогона (`sh verify.sh`, копия
