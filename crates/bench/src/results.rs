@@ -56,8 +56,15 @@ pub struct RunConfig {
     /// Что писалось в `<cwd>/.mark2.toml` каждого прогона. Задача с
     /// `max_turns` (см. [`TaskRecord::max_turns`]) дописывает строку в
     /// `[agent]`, с `context_limit` (см. [`TaskRecord::context_limit`]) — секцию
-    /// `[models."<id модели>"]`.
+    /// `[models."<id модели>"]`; в ту же секцию уходит `edit_strategy` модели
+    /// (см. [`ModelSpec::edit_strategy`]).
     pub project_config: String,
+    /// Строки `--agent-override`, дописанные в `[agent]` `.mark2.toml` каждого
+    /// прогона после базы и `max_turns`: абляция настроек mark2
+    /// (`arg_coercion = false`, `write_churn = false`). Пусто — mark2 с
+    /// дефолтами; в старых `results.json` поля нет.
+    #[serde(default)]
+    pub agent_overrides: Vec<String>,
     /// Матрица моделей после фильтра `--models`.
     pub models: Vec<ModelSpec>,
     /// Задачи после фильтра `--tasks`.

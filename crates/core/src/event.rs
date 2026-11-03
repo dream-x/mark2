@@ -29,6 +29,19 @@ pub enum Event {
         /// Текст дельты.
         text: String,
     },
+    /// Аргументы тул-колла приведены к типам схемы тула (`"60"` → `60`, см.
+    /// [`crate::tools::ToolRegistry::coerce_input`]) — до истории, сессии и
+    /// исполнения; без приведения вызов отбила бы валидация. Приходит до
+    /// [`Event::MessageComplete`] с этим вызовом, по событию на вызов: по ним
+    /// потребитель считает, насколько приведение востребовано.
+    ArgumentsCoerced {
+        /// Идентификатор тул-колла.
+        id: String,
+        /// Имя тула.
+        name: String,
+        /// Приведённые свойства верхнего уровня, в порядке аргументов.
+        fields: Vec<String>,
+    },
     /// Тул начал выполняться (аргументы уже собраны и провалидированы).
     ToolCallStarted {
         /// Идентификатор тул-колла.
@@ -53,6 +66,19 @@ pub enum Event {
         content: String,
         /// Завершился ли тул ошибкой.
         is_error: bool,
+    },
+    /// Предохранитель agent loop заметил непродуктивный паттерн и подсказал
+    /// модели сменить тактику. Текст для модели уже лежит в tool result вызова
+    /// `id` (парный [`Event::ToolCallFinished`] пришёл раньше); здесь — сигнал
+    /// для человека и логов. Сам по себе ход не останавливает: жёсткий предел
+    /// `loop_detection` завершает ход отдельным [`Event::Error`].
+    Nudge {
+        /// Тул-колл, к результату которого относится подсказка.
+        id: String,
+        /// Какой предохранитель сработал.
+        guard: Guard,
+        /// Короткое описание для человека.
+        message: String,
     },
     /// Требуется решение пользователя по политике доступа; ход ждёт
     /// [`Op::Approve`] с тем же `id`.
@@ -105,6 +131,27 @@ pub enum StopReason {
     MaxTurns,
     /// Ход прерван ошибкой; подробности — в [`Event::Error`].
     Error,
+}
+
+/// Предохранитель agent loop, пославший [`Event::Nudge`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Guard {
+    /// Детектор зацикливания: N-й подряд идентичный тул-колл не исполнен.
+    LoopDetection,
+    /// Сенсор write-churn: N-я подряд запись в один файл без единого `bash`
+    /// между записями. Запись исполнена, к результату приложена подсказка.
+    WriteChurn,
+}
+
+impl Guard {
+    /// Wire-имя — то же, что ключ настройки в `[agent]`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::LoopDetection => "loop_detection",
+            Self::WriteChurn => "write_churn",
+        }
+    }
 }
 
 /// Команда, которую внешний мир отправляет ядру.
@@ -186,6 +233,11 @@ mod tests {
             Event::ThinkingDelta {
                 text: "думаю".into(),
             },
+            Event::ArgumentsCoerced {
+                id: "call_1".into(),
+                name: "bash".into(),
+                fields: vec!["timeout_seconds".into()],
+            },
             Event::ToolCallStarted {
                 id: "call_1".into(),
                 name: "bash".into(),
@@ -199,6 +251,11 @@ mod tests {
                 id: "call_1".into(),
                 content: "src\n".into(),
                 is_error: false,
+            },
+            Event::Nudge {
+                id: "call_1".into(),
+                guard: Guard::WriteChurn,
+                message: "3-я запись подряд в a.py без запуска".into(),
             },
             Event::ApprovalRequired {
                 id: "call_2".into(),
@@ -275,9 +332,11 @@ mod tests {
                 "turn_started",
                 "text_delta",
                 "thinking_delta",
+                "arguments_coerced",
                 "tool_call_started",
                 "tool_call_output",
                 "tool_call_finished",
+                "nudge",
                 "approval_required",
                 "message_complete",
                 "usage",
@@ -320,6 +379,29 @@ mod tests {
             let back: StopReason = serde_json::from_value(json!(expected)).unwrap();
             assert_eq!(reason, back);
         }
+    }
+
+    /// Имя предохранителя — и в JSON, и в маркере `[agent] <guard>` в stderr.
+    #[test]
+    fn guard_wire_names_are_stable() {
+        for (guard, expected) in [
+            (Guard::LoopDetection, "loop_detection"),
+            (Guard::WriteChurn, "write_churn"),
+        ] {
+            assert_eq!(serde_json::to_value(guard).unwrap(), json!(expected));
+            assert_eq!(guard.as_str(), expected);
+            let back: Guard = serde_json::from_value(json!(expected)).unwrap();
+            assert_eq!(guard, back);
+        }
+        assert_eq!(
+            serde_json::to_value(Event::Nudge {
+                id: "c1".into(),
+                guard: Guard::LoopDetection,
+                message: "m".into(),
+            })
+            .unwrap(),
+            json!({"type": "nudge", "id": "c1", "guard": "loop_detection", "message": "m"})
+        );
     }
 
     #[test]

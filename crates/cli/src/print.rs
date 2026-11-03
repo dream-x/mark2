@@ -3,7 +3,8 @@
 //! Режим существует для пайпов и скриптов, поэтому дисциплина потоков жёсткая:
 //! в **stdout** уходит только текст ответа модели (никаких `→ tool`, спиннеров
 //! и рассуждений), всё служебное — в **stderr**: по строке на каждый тул-колл
-//! (`→ bash …` / `✗ edit: …`), ошибки, предупреждения и итог токенов.
+//! (`→ bash …` / `✗ edit: …`), срабатывания предохранителей agent loop
+//! (`[agent] write_churn: …`), ошибки, предупреждения и итог токенов.
 //!
 //! Одно исключение из «рассуждений в stdout нет»: если ход закончился
 //! сообщением, в котором есть только thinking (ни текста, ни тул-коллов), —
@@ -46,6 +47,8 @@ pub async fn run(
 ) -> StopReason {
     let opts = RenderOptions::print();
     let mut usage = Usage::default();
+    // Сколько тул-коллов спасло приведение типов аргументов — в итоговую строку.
+    let mut coerced_calls = 0usize;
     let mut ends_with_newline = true;
     // Канал событий, закрывшийся без `TurnFinished`, — тоже конец хода:
     // считаем его прерванным, а не успешным.
@@ -106,7 +109,11 @@ pub async fn run(
             Event::Error { message } => {
                 let _ = writeln!(err, "{}", render::error_line(message, opts));
             }
+            Event::Nudge { guard, message, .. } => {
+                let _ = writeln!(err, "{}", render::nudge_line(*guard, message, opts));
+            }
             Event::Usage { usage: chunk } => accumulate(&mut usage, chunk),
+            Event::ArgumentsCoerced { .. } => coerced_calls += 1,
             Event::TurnFinished { reason: finished } => {
                 reason = *finished;
             }
@@ -131,7 +138,11 @@ pub async fn run(
         let _ = out.write_all(b"\n");
     }
     let _ = out.flush();
-    let _ = writeln!(err, "{}", render::usage_summary(&usage, opts));
+    let _ = writeln!(
+        err,
+        "{}",
+        render::usage_summary(&usage, coerced_calls, opts)
+    );
     let _ = err.flush();
 
     reason
@@ -378,6 +389,48 @@ mod tests {
         assert_eq!(requests[1].messages[2].role, Role::Tool);
     }
 
+    /// Приведённые аргументы видны в строке вызова, а счётчик приведений — в
+    /// итоговой строке рядом с токенами (и нулём, когда приводить было нечего).
+    #[tokio::test]
+    async fn coerced_calls_are_counted_in_the_final_stderr_line() {
+        let harness = run_turn(
+            vec![
+                answer(
+                    "Запускаю.",
+                    Some((
+                        "c1",
+                        "bash",
+                        json!({"command": "echo hi", "timeout_seconds": "60.0"}),
+                    )),
+                ),
+                answer("Готово.", None),
+            ],
+            PermissionPolicy::Yolo,
+            "скажи hi",
+        )
+        .await;
+
+        assert_eq!(harness.reason, StopReason::Completed);
+        assert_eq!(
+            lines_with(harness.stderr(), "→"),
+            [r#"→ bash {"command":"echo hi","timeout_seconds":60}"#]
+        );
+        assert_eq!(
+            harness.stderr().lines().last(),
+            Some("tokens: in 200 / out 40 · coerced 1"),
+            "{}",
+            harness.stderr()
+        );
+
+        let plain = run_turn(vec![answer("Ок.", None)], PermissionPolicy::Yolo, "привет").await;
+        assert_eq!(
+            plain.stderr().lines().last(),
+            Some("tokens: in 100 / out 20 · coerced 0"),
+            "{}",
+            plain.stderr()
+        );
+    }
+
     /// Ключевое решение режима: без интерактива подтверждение не выпрашивается,
     /// а отклоняется — тул не выполняется, модель узнаёт об этом tool result'ом.
     #[tokio::test]
@@ -537,6 +590,68 @@ mod tests {
         );
         assert!(summary[3].starts_with("✗ read: "), "{stderr}");
         assert!(summary[3].contains("missing.txt"), "{stderr}");
+        // Блокировка помечена маркером предохранителя — по нему грепают логи.
+        assert_eq!(
+            lines_with(stderr, "[agent]"),
+            ["[agent] loop_detection: 3-й подряд одинаковый вызов `bash` не исполнен"],
+            "{stderr}"
+        );
+    }
+
+    /// Write-churn в `-p`: запись исполнена (строка `→ write`), подсказка
+    /// модели — в tool result, а в stderr — строка с маркером
+    /// `[agent] write_churn`. stdout не тронут.
+    #[tokio::test]
+    async fn write_churn_nudge_lands_in_stderr_with_the_agent_marker() {
+        let write = |id: &str, content: &str| {
+            answer(
+                "",
+                Some((
+                    id,
+                    "write",
+                    json!({"path": "test_chat.py", "content": content}),
+                )),
+            )
+        };
+        let harness = run_turn(
+            vec![
+                write("c1", "v1"),
+                write("c2", "v2"),
+                write("c3", "v3"),
+                answer("Готово.", None),
+            ],
+            PermissionPolicy::Yolo,
+            "напиши тест",
+        )
+        .await;
+
+        assert_eq!(harness.reason, StopReason::Completed);
+        assert_eq!(harness.stdout(), "Готово.\n");
+        let stderr = harness.stderr();
+        assert_eq!(lines_with(stderr, "→ write").len(), 3, "{stderr}");
+        assert!(lines_with(stderr, "✗").is_empty(), "{stderr}");
+        assert_eq!(
+            lines_with(stderr, "[agent]"),
+            [
+                "[agent] write_churn: 3-я запись подряд в test_chat.py без запуска между ними \
+                 — подсказка запустить"
+            ],
+            "{stderr}"
+        );
+        // Маркер — сразу за строкой своего вызова.
+        let lines: Vec<&str> = stderr.lines().collect();
+        let marker = lines
+            .iter()
+            .position(|line| line.starts_with("[agent]"))
+            .unwrap();
+        assert!(lines[marker - 1].starts_with("→ write"), "{stderr}");
+
+        let requests = harness.provider.requests();
+        let tool_result = tool_results(&requests[3].messages[6]);
+        assert!(
+            tool_result.contains("write #3 to test_chat.py in a row"),
+            "{tool_result}"
+        );
     }
 
     #[tokio::test]

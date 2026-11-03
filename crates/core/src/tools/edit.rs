@@ -26,6 +26,57 @@ pub enum EditStrategy {
     WholeFile,
 }
 
+impl EditStrategy {
+    /// Все форматы — в порядке, в котором их перечисляют ошибки.
+    pub const ALL: [EditStrategy; 2] = [EditStrategy::SearchReplace, EditStrategy::WholeFile];
+
+    /// Каноническое имя в конфиге (`search_replace` | `whole_file`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EditStrategy::SearchReplace => "search_replace",
+            EditStrategy::WholeFile => "whole_file",
+        }
+    }
+}
+
+impl std::fmt::Display for EditStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Неизвестное имя формата правки; текст перечисляет допустимые.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownEditStrategy(pub String);
+
+impl std::fmt::Display for UnknownEditStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let known: Vec<&str> = EditStrategy::ALL.iter().map(|s| s.as_str()).collect();
+        write!(
+            f,
+            "неизвестная edit_strategy `{}`, ожидается {}",
+            self.0,
+            known.join(" или ")
+        )
+    }
+}
+
+impl std::error::Error for UnknownEditStrategy {}
+
+/// Разбор имени формата — единый для конфига mark2 и матрицы бенча. Терпит
+/// регистр, пробелы по краям и дефисы вместо подчёркиваний (`Whole-File`).
+impl std::str::FromStr for EditStrategy {
+    type Err = UnknownEditStrategy;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let canonical = raw.trim().to_ascii_lowercase().replace('-', "_");
+        EditStrategy::ALL
+            .into_iter()
+            .find(|strategy| strategy.as_str() == canonical)
+            .ok_or_else(|| UnknownEditStrategy(raw.to_string()))
+    }
+}
+
 /// Аргументы `edit` в режиме [`EditStrategy::SearchReplace`].
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SearchReplaceInput {
@@ -251,6 +302,23 @@ mod tests {
         assert_eq!(tool().strategy(), EditStrategy::SearchReplace);
         assert_eq!(EditStrategy::default(), EditStrategy::SearchReplace);
         assert_eq!(EditTool::default().strategy(), EditStrategy::SearchReplace);
+    }
+
+    #[test]
+    fn strategy_names_round_trip_and_unknown_names_list_the_known_ones() {
+        for strategy in EditStrategy::ALL {
+            assert_eq!(strategy.as_str().parse::<EditStrategy>(), Ok(strategy));
+            assert_eq!(strategy.to_string(), strategy.as_str());
+        }
+        assert_eq!(
+            " Whole-File ".parse::<EditStrategy>(),
+            Ok(EditStrategy::WholeFile)
+        );
+        let error = "diff".parse::<EditStrategy>().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "неизвестная edit_strategy `diff`, ожидается search_replace или whole_file"
+        );
     }
 
     #[test]

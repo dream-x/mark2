@@ -128,6 +128,8 @@ impl Args {
                 max_tokens: None,
                 temperature: None,
                 loop_detection: None,
+                write_churn: None,
+                arg_coercion: None,
             },
             models: BTreeMap::new(),
         }
@@ -244,6 +246,9 @@ async fn run(args: Args) -> Result<ExitCode> {
     if let Some(threshold) = config.agent.loop_detection {
         agent_config.loop_detection = threshold;
     }
+    if let Some(threshold) = config.agent.write_churn {
+        agent_config.write_churn = threshold;
+    }
     agent_config.max_tokens = config.agent.max_tokens;
     agent_config.temperature = config.agent.temperature;
     if let Some(limit) = settings.context_limit {
@@ -253,7 +258,8 @@ async fn run(args: Args) -> Result<ExitCode> {
 
     let mut agent = Agent::new(
         Arc::new(provider) as Arc<dyn Provider>,
-        ToolRegistry::with_defaults(settings.edit_strategy),
+        ToolRegistry::with_defaults(settings.edit_strategy)
+            .with_arg_coercion(config.agent.arg_coercion.unwrap_or(true)),
         agent_config,
     );
     if !args.no_session

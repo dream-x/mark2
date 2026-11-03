@@ -16,6 +16,12 @@
 //!   `policy = "read-only"` превращается в `--policy read-only` вместо
 //!   `--yolo`, `max_turns` — в строку секции `[agent]`, `context_limit` — в
 //!   секцию `[models."<id>"]` того же `.mark2.toml` (см. [`project_config`]);
+//!   туда же — `edit_strategy` модели из матрицы (свойство модели, а не
+//!   задачи);
+//! * **абляция** — строки `--agent-override 'key = value'` ([`Runner::agent_overrides`])
+//!   дописываются в `[agent]` каждого `.mark2.toml` после базы и `max_turns`;
+//!   каждая строка и каждый итоговый конфиг проверяются парсером ядра до
+//!   первого прогона ([`parse_agent_override`], [`check_project_configs`]);
 //! * **окружение uitest** — задаче с `uitest_env = true` ранер до первой
 //!   модели собирает `uitest/.venv` (`sh uitest/bootstrap.sh`, см.
 //!   [`prepare_envs`]) и запускает mark2 с директорией песочницы, где лежит
@@ -40,6 +46,9 @@ use anyhow::{Context, Result, bail};
 use jiff::{Timestamp, Zoned};
 use tokio::process::Command;
 
+use mark2_core::config::{AgentSettings, Config};
+use mark2_core::tools::EditStrategy;
+
 use crate::metrics::{find_session_file, parse_tokens, read_session_metrics};
 use crate::models::ModelSpec;
 use crate::results::{Results, RunRecord, VerifyOutcome};
@@ -57,7 +66,8 @@ pub const WARMUP_TIMEOUT: Duration = Duration::from_secs(300);
 pub const VERIFY_TIMEOUT_SECONDS: u64 = 30;
 
 /// Проектный конфиг, который кладётся в cwd каждого прогона (база; задача с
-/// `max_turns` или `context_limit` дописывает к нему — см. [`project_config`]).
+/// `max_turns` или `context_limit` и модель с `edit_strategy` дописывают к
+/// нему — см. [`project_config`]).
 pub const PROJECT_CONFIG: &str = "[agent]\ntemperature = 0.0\n";
 
 /// Сколько символов вывода `verify.sh` сохраняем в `results.json`.
@@ -87,6 +97,9 @@ pub struct Runner {
     pub repeats_override: Option<usize>,
     /// Делать ли прогрев модели (выключается только в тестах).
     pub warmup: bool,
+    /// Строки `--agent-override` (уже проверенные [`parse_agent_override`]):
+    /// дописываются в `[agent]` `.mark2.toml` каждого прогона.
+    pub agent_overrides: Vec<String>,
 }
 
 impl Runner {
@@ -102,6 +115,7 @@ impl Runner {
             run_dir: crate::resolve_path(run_dir),
             repeats_override: None,
             warmup: true,
+            agent_overrides: Vec::new(),
         }
     }
 
@@ -219,7 +233,13 @@ impl Runner {
         let project_config_path = sandbox.cwd().join(".mark2.toml");
         std::fs::write(
             &project_config_path,
-            project_config(&model.model, task.context_limit, task.max_turns),
+            project_config(
+                &model.model,
+                task.context_limit,
+                task.max_turns,
+                model.edit_strategy,
+                &self.agent_overrides,
+            ),
         )
         .with_context(|| format!("не удалось записать {}", project_config_path.display()))?;
 
@@ -623,28 +643,118 @@ pub fn mark2_args(
 
 /// Содержимое `<cwd>/.mark2.toml` для прогона модели `model_id`.
 ///
-/// Без настроек задачи — ровно [`PROJECT_CONFIG`], байт в байт как раньше.
-/// `max_turns` дописывается строкой сразу за базой: база — это секция
-/// `[agent]` целиком, так что строка попадает в неё же. `context_limit` —
-/// отдельной секцией `[models."<model_id>"]`: ключ — точный id модели, а
-/// точное совпадение в `mark2_core::config` важнее любого приблизительного,
-/// так что лимит гарантированно достаётся этой модели.
+/// Без настроек задачи, модели и overrides — ровно [`PROJECT_CONFIG`], байт в
+/// байт как раньше. `max_turns` и затем строки `agent_overrides` (как есть, по
+/// одной на строку) дописываются сразу за базой: база — это секция `[agent]`
+/// целиком, так что они попадают в неё же. `context_limit` задачи и
+/// `edit_strategy` модели — в одну секцию `[models."<model_id>"]` (TOML не
+/// терпит повторного заголовка): ключ — точный id модели, а точное совпадение
+/// в `mark2_core::config` важнее любого приблизительного, так что настройки
+/// гарантированно достаются этой модели.
 pub fn project_config(
     model_id: &str,
     context_limit: Option<u64>,
     max_turns: Option<usize>,
+    edit_strategy: Option<EditStrategy>,
+    agent_overrides: &[String],
 ) -> String {
     let mut text = PROJECT_CONFIG.to_string();
     if let Some(turns) = max_turns {
         text.push_str(&format!("max_turns = {turns}\n"));
     }
+    for line in agent_overrides {
+        text.push_str(line);
+        text.push('\n');
+    }
+
+    let mut model_settings = String::new();
     if let Some(limit) = context_limit {
+        model_settings.push_str(&format!("context_limit = {limit}\n"));
+    }
+    if let Some(strategy) = edit_strategy {
+        model_settings.push_str(&format!(
+            "edit_strategy = {}\n",
+            toml_basic_string(strategy.as_str())
+        ));
+    }
+    if !model_settings.is_empty() {
         text.push_str(&format!(
-            "\n[models.{}]\ncontext_limit = {limit}\n",
+            "\n[models.{}]\n{model_settings}",
             toml_basic_string(model_id)
         ));
     }
     text
+}
+
+/// Разобрать одно значение `--agent-override`: ровно одна пара `key = value`
+/// секции `[agent]`, которую понимает mark2. Возвращает строку для
+/// `.mark2.toml` (без пробелов по краям).
+///
+/// Проверок две, обе — до прогонов:
+///
+/// * это одна TOML-пара, а не заголовок секции, не dotted-ключ и не две строки:
+///   иначе override мог бы писать мимо `[agent]`;
+/// * `mark2_core::config` её понимает: значение подходит по типу, а ключ —
+///   настройка `[agent]`. Неизвестный ключ (опечатка) ядро молча
+///   проигнорировало бы — толерантный конфиг, — и абляция не выключила бы
+///   ничего; поэтому «разобралось, но ничего не поменяло» — тоже ошибка.
+pub fn parse_agent_override(raw: &str) -> Result<String> {
+    let line = raw.trim();
+    let table: toml::Table = toml::from_str(line).with_context(|| {
+        format!("--agent-override {raw:?}: ожидается одна строка TOML `key = value`")
+    })?;
+    let Some((key, value)) = table.iter().next() else {
+        bail!("--agent-override {raw:?}: пусто, ожидается `key = value`");
+    };
+    if table.len() != 1 || value.is_table() {
+        bail!(
+            "--agent-override {raw:?}: ожидается ровно одна пара `key = value` секции [agent] \
+             (без заголовков секций и dotted-ключей)"
+        );
+    }
+
+    let config = Config::parse(&format!("[agent]\n{line}\n"), "--agent-override")
+        .map_err(|error| anyhow::anyhow!("--agent-override {raw:?}: {}", error.chain()))?;
+    if config.agent == AgentSettings::default() {
+        bail!(
+            "--agent-override {raw:?}: `{key}` — не настройка [agent] mark2, ядро бы её \
+             проигнорировало"
+        );
+    }
+    Ok(line.to_string())
+}
+
+/// Проверить до первого прогона, что `.mark2.toml` каждой пары модель × задача
+/// разбирается парсером ядра. Отдельные строки override уже валидны, но могут
+/// столкнуться с тем, что пишет сам ранер: `temperature` базы или `max_turns`
+/// задачи — дубликат ключа в TOML. Такое обязано всплыть сразу, с текстом
+/// конфига и строкой-виновницей, а не провалом каждого прогона задачи.
+pub fn check_project_configs(
+    models: &[ModelSpec],
+    tasks: &[Task],
+    agent_overrides: &[String],
+) -> Result<()> {
+    for model in models {
+        for task in tasks {
+            let text = project_config(
+                &model.model,
+                task.context_limit,
+                task.max_turns,
+                model.edit_strategy,
+                agent_overrides,
+            );
+            if let Err(error) = Config::parse(&text, ".mark2.toml") {
+                bail!(
+                    ".mark2.toml для {} × {} не разбирается mark2 (--agent-override: {}): {}\n{text}",
+                    model.alias,
+                    task.id,
+                    agent_overrides.join("; "),
+                    error.chain()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Строка в кавычках по правилам TOML basic string: id моделей бывают с
@@ -848,6 +958,7 @@ mod tests {
             base_url: "http://localhost:11434/v1".into(),
             timeout_multiplier: multiplier,
             api_key_env: None,
+            edit_strategy: None,
         }
     }
 
@@ -933,9 +1044,12 @@ mod tests {
 
     #[test]
     fn project_config_without_task_settings_is_unchanged() {
-        assert_eq!(project_config("qwen3.5:9b", None, None), PROJECT_CONFIG);
         assert_eq!(
-            project_config("qwen3.5:9b", None, None),
+            project_config("qwen3.5:9b", None, None, None, &[]),
+            PROJECT_CONFIG
+        );
+        assert_eq!(
+            project_config("qwen3.5:9b", None, None, None, &[]),
             "[agent]\ntemperature = 0.0\n"
         );
     }
@@ -945,14 +1059,14 @@ mod tests {
     /// сломать соседние настройки.
     #[test]
     fn project_config_with_max_turns_reaches_the_agent_settings_of_mark2() {
-        let text = project_config("flint:40b", None, Some(80));
+        let text = project_config("flint:40b", None, Some(80), None, &[]);
         assert_eq!(text, "[agent]\ntemperature = 0.0\nmax_turns = 80\n");
         let config = mark2_core::config::Config::parse(&text, ".mark2.toml").unwrap();
         assert_eq!(config.agent.max_turns, Some(80));
         assert_eq!(config.agent.temperature, Some(0.0));
 
         // Вместе с context_limit: строка остаётся в [agent], лимит — у модели.
-        let text = project_config("flint:40b", Some(8192), Some(80));
+        let text = project_config("flint:40b", Some(8192), Some(80), None, &[]);
         assert_eq!(
             text,
             "[agent]\ntemperature = 0.0\nmax_turns = 80\n\n[models.\"flint:40b\"]\ncontext_limit = 8192\n"
@@ -961,6 +1075,180 @@ mod tests {
         assert_eq!(config.agent.max_turns, Some(80));
         assert_eq!(config.agent.temperature, Some(0.0));
         assert_eq!(config.resolve("flint:40b").context_limit, Some(8192));
+    }
+
+    #[test]
+    fn project_config_with_an_edit_strategy_reaches_the_model_settings_of_mark2() {
+        // Только стратегия модели: секция модели появляется ради неё одной.
+        let text = project_config("flint:40b", None, None, Some(EditStrategy::WholeFile), &[]);
+        assert_eq!(
+            text,
+            "[agent]\ntemperature = 0.0\n\n[models.\"flint:40b\"]\nedit_strategy = \"whole_file\"\n"
+        );
+        let config = mark2_core::config::Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.temperature, Some(0.0));
+        let settings = config.resolve("flint:40b");
+        assert_eq!(settings.edit_strategy, EditStrategy::WholeFile);
+        assert_eq!(settings.context_limit, None);
+        // Другие модели стратегию не наследуют.
+        assert_eq!(
+            config.resolve("qwen3.5:9b").edit_strategy,
+            EditStrategy::SearchReplace
+        );
+
+        // Всё сразу: заголовок модели один, обе настройки под ним, max_turns —
+        // по-прежнему в [agent].
+        let text = project_config(
+            "flint:40b",
+            Some(8192),
+            Some(80),
+            Some(EditStrategy::WholeFile),
+            &[],
+        );
+        assert_eq!(
+            text,
+            "[agent]\ntemperature = 0.0\nmax_turns = 80\n\n[models.\"flint:40b\"]\ncontext_limit = 8192\nedit_strategy = \"whole_file\"\n"
+        );
+        assert_eq!(text.matches("[models.").count(), 1, "{text}");
+        let config = mark2_core::config::Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.max_turns, Some(80));
+        let settings = config.resolve("flint:40b");
+        assert_eq!(settings.edit_strategy, EditStrategy::WholeFile);
+        assert_eq!(settings.context_limit, Some(8192));
+
+        // Явный дефолт тоже доезжает как есть.
+        let text = project_config("m", None, None, Some(EditStrategy::SearchReplace), &[]);
+        let config = mark2_core::config::Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(
+            config.model_config("m").unwrap().edit_strategy,
+            Some(EditStrategy::SearchReplace)
+        );
+    }
+
+    /// Абляция: строки `--agent-override` встают в [agent] после базы и
+    /// `max_turns`, до секции модели, — и ядро читает их как настройки агента.
+    #[test]
+    fn agent_overrides_land_in_the_agent_section_and_reach_mark2() {
+        let overrides = [
+            "arg_coercion = false".to_string(),
+            "write_churn = false".to_string(),
+        ];
+        let text = project_config(
+            "flint:40b",
+            Some(8192),
+            Some(80),
+            Some(EditStrategy::WholeFile),
+            &overrides,
+        );
+        assert_eq!(
+            text,
+            "[agent]\ntemperature = 0.0\nmax_turns = 80\narg_coercion = false\nwrite_churn = false\n\n[models.\"flint:40b\"]\ncontext_limit = 8192\nedit_strategy = \"whole_file\"\n"
+        );
+        let config = Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.temperature, Some(0.0));
+        assert_eq!(config.agent.max_turns, Some(80));
+        assert_eq!(config.agent.arg_coercion, Some(false));
+        assert_eq!(config.agent.write_churn, Some(0));
+        let settings = config.resolve("flint:40b");
+        assert_eq!(settings.context_limit, Some(8192));
+        assert_eq!(settings.edit_strategy, EditStrategy::WholeFile);
+
+        // Без настроек задачи и модели — сразу за базой.
+        assert_eq!(
+            project_config("m", None, None, None, &overrides[..1]),
+            "[agent]\ntemperature = 0.0\narg_coercion = false\n"
+        );
+    }
+
+    #[test]
+    fn agent_override_is_one_known_agent_setting() {
+        assert_eq!(
+            parse_agent_override("  arg_coercion = false ").unwrap(),
+            "arg_coercion = false"
+        );
+        assert_eq!(
+            parse_agent_override("write_churn = 5").unwrap(),
+            "write_churn = 5"
+        );
+        assert_eq!(
+            parse_agent_override("loop_detection = 0").unwrap(),
+            "loop_detection = 0"
+        );
+
+        for (raw, expected) in [
+            ("arg_coercion", "одна строка TOML"),
+            ("", "пусто"),
+            (
+                "arg_coercion = false\nwrite_churn = false",
+                "ровно одна пара",
+            ),
+            ("[models.x]", "ровно одна пара"),
+            ("models.x.context_limit = 1", "ровно одна пара"),
+            // Опечатка: ядро её бы молча проигнорировало — абляция в никуда.
+            (
+                "arg_coerciom = false",
+                "`arg_coerciom` — не настройка [agent]",
+            ),
+            ("arg_coercion = \"no\"", "boolean"),
+            ("write_churn = -1", "true, false или порог"),
+        ] {
+            let text = format!("{:#}", parse_agent_override(raw).unwrap_err());
+            assert!(text.contains(expected), "{raw:?}: {text}");
+            assert!(
+                text.contains(&format!("--agent-override {raw:?}")),
+                "строка-виновница: {text}"
+            );
+        }
+    }
+
+    /// Каждая пара модель × задача проверяется до прогонов: override, который
+    /// сам по себе валиден, может столкнуться с ключом, который пишет ранер.
+    #[test]
+    fn project_configs_are_checked_for_every_model_and_task() {
+        let root = TempDir::new().unwrap();
+        let plain = load_task(&write_task(
+            root.path(),
+            "T01-x",
+            "[task]\ntimeout_seconds = 60\n",
+        ))
+        .unwrap();
+        let capped = load_task(&write_task(
+            root.path(),
+            "T17-x",
+            "[task]\ntimeout_seconds = 60\nmax_turns = 80\n",
+        ))
+        .unwrap();
+        let mut flint = model(1.0);
+        flint.alias = "flint40".into();
+        flint.model = "flint:40b".into();
+        flint.edit_strategy = Some(EditStrategy::WholeFile);
+        let models = [model(1.0), flint];
+        let tasks = [plain, capped];
+
+        check_project_configs(&models, &tasks, &[]).unwrap();
+        check_project_configs(
+            &models,
+            &tasks,
+            &["arg_coercion = false".into(), "write_churn = false".into()],
+        )
+        .unwrap();
+
+        // Дубликат с max_turns задачи — только у T17, но всплывает сразу.
+        let text = format!(
+            "{:#}",
+            check_project_configs(&models, &tasks, &["max_turns = 10".into()]).unwrap_err()
+        );
+        assert!(text.contains("qwen9 × T17"), "{text}");
+        assert!(text.contains("max_turns = 10"), "{text}");
+        assert!(text.contains("duplicate key"), "{text}");
+
+        // Дубликат с базой — на первой же паре.
+        let text = format!(
+            "{:#}",
+            check_project_configs(&models, &tasks, &["temperature = 0.7".into()]).unwrap_err()
+        );
+        assert!(text.contains("qwen9 × T01"), "{text}");
+        assert!(text.contains("temperature = 0.7"), "{text}");
     }
 
     #[test]
@@ -986,7 +1274,7 @@ mod tests {
     /// mark2: разбираем сгенерированный файл парсером ядра, а не глазами.
     #[test]
     fn project_config_with_a_limit_reaches_the_model_settings_of_mark2() {
-        let text = project_config("qwen3.5:9b", Some(8192), None);
+        let text = project_config("qwen3.5:9b", Some(8192), None, None, &[]);
         assert_eq!(
             text,
             "[agent]\ntemperature = 0.0\n\n[models.\"qwen3.5:9b\"]\ncontext_limit = 8192\n"
@@ -1001,9 +1289,11 @@ mod tests {
 
         // Экзотический id: кавычки, слеши, обратный слеш — ключ экранирован.
         let odd = r#"hf.co/org/"model"\q4:latest"#;
-        let config =
-            mark2_core::config::Config::parse(&project_config(odd, Some(4096), None), "x.toml")
-                .unwrap();
+        let config = mark2_core::config::Config::parse(
+            &project_config(odd, Some(4096), None, None, &[]),
+            "x.toml",
+        )
+        .unwrap();
         assert_eq!(config.resolve(odd).context_limit, Some(4096));
     }
 

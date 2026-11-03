@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer, de};
 
+use crate::agent::DEFAULT_WRITE_CHURN;
 use crate::permission::PermissionPolicy;
 use crate::tools::EditStrategy;
 
@@ -136,6 +137,16 @@ pub struct AgentSettings {
     /// Детектор зацикливания: с какого подряд идентичного тул-колла его
     /// блокировать (`0` — выключить).
     pub loop_detection: Option<usize>,
+    /// Сенсор write-churn: с какой подряд записи в один файл без запуска между
+    /// записями подсказывать модели «запусти, прежде чем переписывать».
+    /// В TOML — `true` (включён с порогом по умолчанию), `false` (выключен,
+    /// для абляции в бенче) или сам порог; здесь уже порог, `0` — выключен.
+    #[serde(default, deserialize_with = "de_write_churn")]
+    pub write_churn: Option<usize>,
+    /// Приведение типов аргументов тулов к схеме до валидации (`"60"` → `60`
+    /// там, где ждут целое; см. [`crate::tools::ToolRegistry::coerce_input`]).
+    /// По умолчанию включено; `false` — для абляции в бенче.
+    pub arg_coercion: Option<bool>,
 }
 
 /// Настройки одной модели: `[models."qwen3-coder"]`.
@@ -207,6 +218,8 @@ impl Config {
                 max_tokens: other.agent.max_tokens.or(agent.max_tokens),
                 temperature: other.agent.temperature.or(agent.temperature),
                 loop_detection: other.agent.loop_detection.or(agent.loop_detection),
+                write_churn: other.agent.write_churn.or(agent.write_churn),
+                arg_coercion: other.agent.arg_coercion.or(agent.arg_coercion),
             },
             models,
         }
@@ -329,18 +342,35 @@ fn de_policy<'de, D: Deserializer<'de>>(de: D) -> Result<Option<PermissionPolicy
     }
 }
 
-/// Формат правки из строки: терпит и `whole_file`, и `whole-file`.
+/// Формат правки из строки: терпит и `whole_file`, и `whole-file`. Разбор —
+/// общий с матрицей бенча ([`EditStrategy`]'s `FromStr`).
 fn de_edit_strategy<'de, D: Deserializer<'de>>(de: D) -> Result<Option<EditStrategy>, D::Error> {
     let Some(raw) = Option::<String>::deserialize(de)? else {
         return Ok(None);
     };
-    match normalize(&raw).as_str() {
-        "search_replace" => Ok(Some(EditStrategy::SearchReplace)),
-        "whole_file" => Ok(Some(EditStrategy::WholeFile)),
-        _ => Err(de::Error::custom(format!(
-            "неизвестная edit_strategy `{raw}`, ожидается search_replace или whole_file"
-        ))),
+    raw.parse().map(Some).map_err(de::Error::custom)
+}
+
+/// Сенсор write-churn: переключатель или порог. `true` — порог по умолчанию
+/// ([`DEFAULT_WRITE_CHURN`]), `false` — `0` (выключен), число — порог как
+/// есть. Переключатель нужен абляции: прогон бенча с сенсором и без при тех
+/// же моделях меряет его вклад.
+fn de_write_churn<'de, D: Deserializer<'de>>(de: D) -> Result<Option<usize>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Switch {
+        On(bool),
+        Threshold(usize),
     }
+
+    let raw = Option::<Switch>::deserialize(de).map_err(|_: D::Error| {
+        de::Error::custom("write_churn: ожидается true, false или порог — целое число ≥ 0")
+    })?;
+    Ok(raw.map(|switch| match switch {
+        Switch::On(true) => DEFAULT_WRITE_CHURN,
+        Switch::On(false) => 0,
+        Switch::Threshold(threshold) => threshold,
+    }))
 }
 
 /// Привести написание значения к канону: нижний регистр, дефисы как
@@ -368,6 +398,7 @@ policy = "yolo"
 max_tokens = 4096
 temperature = 0.2
 loop_detection = 4
+write_churn = 5
 
 [models."qwen3-coder-30b"]
 edit_strategy = "search_replace"
@@ -400,6 +431,7 @@ context_limit = 8192
         assert_eq!(config.agent.max_tokens, Some(4096));
         assert_eq!(config.agent.temperature, Some(0.2));
         assert_eq!(config.agent.loop_detection, Some(4));
+        assert_eq!(config.agent.write_churn, Some(5));
 
         assert_eq!(
             config.resolve("qwen3-coder-30b"),
@@ -483,6 +515,47 @@ context_limit = 8192
         assert!(error.chain().contains("whole_file"), "{}", error.chain());
     }
 
+    /// `write_churn` — переключатель для абляции или порог.
+    #[test]
+    fn write_churn_takes_a_switch_or_a_threshold() {
+        let parsed = |value: &str| layer(&format!("[agent]\nwrite_churn = {value}\n"));
+        assert_eq!(parsed("true").agent.write_churn, Some(DEFAULT_WRITE_CHURN));
+        assert_eq!(parsed("false").agent.write_churn, Some(0));
+        assert_eq!(parsed("4").agent.write_churn, Some(4));
+        assert_eq!(parsed("0").agent.write_churn, Some(0));
+        // Не сказано — слой молчит, остаётся дефолт агента.
+        assert_eq!(layer("[agent]\n").agent.write_churn, None);
+
+        for bad in ["\"yes\"", "-1", "1.5"] {
+            let error =
+                Config::parse(&format!("[agent]\nwrite_churn = {bad}\n"), "cfg.toml").unwrap_err();
+            let text = error.chain();
+            assert!(text.contains("cfg.toml"), "{bad}: {text}");
+            assert!(text.contains("true, false или порог"), "{bad}: {text}");
+        }
+    }
+
+    /// `arg_coercion` — выключатель приведения типов аргументов (абляция):
+    /// не сказано — `None` (дефолт — включено), явный `false` старшего слоя
+    /// перекрывает младший.
+    #[test]
+    fn arg_coercion_is_a_switch_that_merges_by_priority() {
+        assert_eq!(layer("[agent]\n").agent.arg_coercion, None);
+        let on = layer("[agent]\narg_coercion = true\n");
+        let off = layer("[agent]\narg_coercion = false\n");
+        assert_eq!(on.agent.arg_coercion, Some(true));
+        assert_eq!(off.agent.arg_coercion, Some(false));
+        assert_eq!(
+            on.clone().merge(off.clone()).agent.arg_coercion,
+            Some(false)
+        );
+        assert_eq!(off.clone().merge(layer("")).agent.arg_coercion, Some(false));
+        assert_eq!(off.merge(on).agent.arg_coercion, Some(true));
+
+        let error = Config::parse("[agent]\narg_coercion = \"no\"\n", "cfg.toml").unwrap_err();
+        assert!(error.chain().contains("cfg.toml"), "{}", error.chain());
+    }
+
     #[test]
     fn enum_values_tolerate_hyphens_and_case() {
         let config = layer(
@@ -515,6 +588,7 @@ context_limit = 8192
             policy = "read_only"
             temperature = 0.1
             loop_detection = 5
+            write_churn = 4
             "#,
         );
         let project = layer(
@@ -526,6 +600,7 @@ context_limit = 8192
             model = "project-model"
             policy = "ask_writes"
             loop_detection = 0
+            write_churn = false
             "#,
         );
         let flags = layer(
@@ -544,6 +619,8 @@ context_limit = 8192
         assert_eq!(merged.agent.policy, Some(PermissionPolicy::AskWrites));
         // Явный 0 («выключить») — тоже высказывание, а не пропуск.
         assert_eq!(merged.agent.loop_detection, Some(0));
+        // `false` старшего слоя выключает сенсор, включённый младшим порогом.
+        assert_eq!(merged.agent.write_churn, Some(0));
         // Про что старшие слои молчали — досталось от пользовательского.
         assert_eq!(merged.provider.api_key_env.as_deref(), Some("USER_KEY"));
         assert_eq!(merged.provider.cache_prompt, Some(true));

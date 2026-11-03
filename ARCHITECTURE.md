@@ -14,7 +14,7 @@
 flowchart LR
     CLI[cli: interactive / print] -- "Op: UserInput, Interrupt,\nApprove, Compact" --> H[AgentHandle]
     H --> A[Agent loop\ncore/agent.rs]
-    A -- "Event: TextDelta, ToolCall*,\nApprovalRequired, Compacted,\nTurnFinished…" --> CLI
+    A -- "Event: TextDelta, ToolCall*, Nudge,\nApprovalRequired, Compacted,\nTurnFinished…" --> CLI
     A -- ProviderRequest --> P[Provider trait]
     P --> O[openai_compat\nSSE-стриминг]
     O --> S[(ollama / llama-server /\nLM Studio / OpenRouter)]
@@ -31,7 +31,7 @@ flowchart LR
 | — `event.rs` | `Event` и `Op` — serde-tagged, snake_case, стабильные wire-имена |
 | — `provider.rs` | `trait Provider` (один обязательный метод `stream()`), `ProviderRequest`, `StreamChunk`, `ToolDef`, `ProviderError` (в т.ч. `ContextLengthExceeded` — на нём висит компакция) |
 | — `agent.rs` | Цикл: `Agent::spawn() → (AgentHandle, Receiver<Event>)`; сэмплинг → тул-коллы → результаты → повтор; permission-гейт, отмена, интеграция компакции и сессий |
-| — `tools/` | `trait Tool` + `ToolRegistry` (schemars-схемы, jsonschema-валидация, retry-with-error); bash/read/write/edit |
+| — `tools/` | `trait Tool` + `ToolRegistry` (schemars-схемы, приведение типов аргументов к схеме — `coerce.rs`, jsonschema-валидация, retry-with-error); bash/read/write/edit |
 | — `permission.rs` | `PermissionPolicy`: Yolo / AskWrites / ReadOnly |
 | — `prompt.rs` | Системный промпт (≤1000 токенов вместе со схемами тулов) + поиск AGENTS.md вверх от cwd (ближайший выигрывает) |
 | — `compact.rs` | Компакция: оценка токенов, суммаризация через провайдера, скрытие истории флагами |
@@ -47,7 +47,7 @@ flowchart LR
 3. Сборка `ProviderRequest`: системный промпт (+ AGENTS.md проекта), история с фильтром `agent_visible`, схемы тулов в фиксированном порядке.
 4. `provider.stream()` → трансляция дельт (`TextDelta`/`ThinkingDelta`) наружу → `Complete{message, usage}` в историю.
 5. Если в ответе нет `ToolUse` — `TurnFinished{Completed}`. Иначе для каждого тул-колла по порядку: permission-гейт (`ApprovalRequired` → ждём `Op::Approve`; отказ = обычный tool result с `is_error`) → `registry.execute` (валидация схемой; ошибка валидации уходит модели текстом — retry-with-error) → результаты одним сообщением в историю → следующая итерация сэмплинга (п. 2).
-6. Предохранители: `max_turns`; `ProviderError::ContextLengthExceeded` → компакция → ровно один повтор (компакция в итерации одна: переполнение сразу после неё — `Error`); `Op::Interrupt` в любой точке → `TurnFinished{Cancelled}`, при этом каждому начатому `tool_use` дописывается парный `tool_result` (строгие серверы ломаются на «висящих» tool calls).
+6. Предохранители: `max_turns`; детектор зацикливания и сенсор write-churn (см. «Надёжность tool calls») — первый смотрит на вызов до исполнения и может его не пустить, второй после и только дописывает подсказку; `ProviderError::ContextLengthExceeded` → компакция → ровно один повтор (компакция в итерации одна: переполнение сразу после неё — `Error`); `Op::Interrupt` в любой точке → `TurnFinished{Cancelled}`, при этом каждому начатому `tool_use` дописывается парный `tool_result` (строгие серверы ломаются на «висящих» tool calls).
 
 ## Ключевые инварианты (не ломать)
 
@@ -61,7 +61,7 @@ flowchart LR
 
 ## Надёжность tool calls на слабых моделях
 
-Слои: (1) нативный chat-template сервера (`--jinja` у llama-server); (2) jsonschema-валидация против schemars-схем → ошибка возвращается модели как tool result; (3) json_repair для обрезанных аргументов; неспасаемые помечаются `__mark2_unparsed` и отсекаются валидацией; (4) детектор зацикливания в agent loop: N-й подряд идентичный тул-колл (имя + сериализованный `input`) не исполняется — модели уходит `is_error` «не повторяй, ответь текстом», на 2×N-м ход завершается `Error` (`loop_detection` в `[agent]`, дефолт 3, `0` — выкл). Грамматики (GBNF) и toolshim — фаза 2.
+Слои: (1) нативный chat-template сервера (`--jinja` у llama-server); (2) jsonschema-валидация против schemars-схем → ошибка возвращается модели как tool result; до неё — приведение типов без потерь на верхнем уровне аргументов (`"60"`/`"60.0"`/`60.0` → `60` для integer, `"1.5"` для number, `"true"`/`"false"` для boolean; мусор, дробь для integer, строковые поля не трогаются): агент приводит `tool_use` ещё до истории, так что сессия, события и тул видят одни и те же аргументы; каждое приведение — `Event::ArgumentsCoerced{id, name, fields}`, CLI суммирует их в итоговой строке stderr (`tokens: … · coerced N`), выключатель для абляции — `arg_coercion = false` в `[agent]`; (3) json_repair для обрезанных аргументов; неспасаемые помечаются `__mark2_unparsed` и отсекаются валидацией; (4) детектор зацикливания в agent loop: N-й подряд идентичный тул-колл (имя + сериализованный `input`) не исполняется — модели уходит `is_error` «не повторяй, ответь текстом», на 2×N-м ход завершается `Error` (`loop_detection` в `[agent]`, дефолт 3, `0` — выкл); (5) сенсор write-churn там же — ловит «метание», которое детектор зацикливания не видит (вызовы не идентичны): N-я подряд успешная запись (`write`/`edit` в любой смеси) в один и тот же путь без единого исполненного `bash` между записями **исполняется**, но к её результату (он остаётся успешным) дописывается подсказка «запусти и прочитай реальную ошибку, прежде чем переписывать, или упрости подход», с 2×N-й — жёсткая «смени стратегию: файл меньше, проверок за раз меньше». Ход сенсор не останавливает никогда — переписать файл законно. Сброс — любой исполненный `bash` (с любым кодом выхода) или запись в другой путь; `read`, упавшие и не исполненные записи нейтральны (чтение — не проверка); путь сравнивается после резолва от cwd и лексической свёртки `.`/`..`, содержимое не сравнивается. Счётчик свой, с детектором зацикливания не пересекается: заблокированный им повтор не исполнялся и сенсору не виден (`write_churn` в `[agent]`: `true` — дефолт, порог 3; `false` — выкл для абляции в бенче; число — свой порог). Срабатывание обоих предохранителей видно наружу как `Event::Nudge{id, guard, message}` сразу за `ToolCallFinished` своего вызова; CLI печатает его в stderr строкой `[agent] loop_detection: …` / `[agent] write_churn: …` — и в `-p`, и в интерактиве. Грамматики (GBNF) и toolshim — фаза 2.
 
 ## Компакция
 

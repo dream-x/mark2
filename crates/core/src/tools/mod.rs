@@ -1,10 +1,14 @@
 //! Тулы агента: контракт [`Tool`], реестр [`ToolRegistry`] и четыре базовых
 //! инструмента — [`BashTool`], [`ReadTool`], [`WriteTool`], [`EditTool`].
 //!
-//! Три свойства этого модуля важны за пределами «просто вызвать функцию»:
+//! Четыре свойства этого модуля важны за пределами «просто вызвать функцию»:
 //!
 //! * **Схемы генерируются из типов** ([`input_schema_for`] поверх `schemars`),
 //!   поэтому описание, валидация и десериализация не расходятся.
+//! * **Типы аргументов приводятся к схеме до валидации** — без потерь и только
+//!   на верхнем уровне ([`ToolRegistry::coerce_input`]): `"60"` и `60.0` там,
+//!   где ждут целое, становятся `60`, а не отбитым вызовом. Что приводится и
+//!   что нет — в `coerce`.
 //! * **Ошибки — это данные для модели.** Всё, что может пойти не так (неизвестный
 //!   тул, мусорные аргументы, отсутствующий файл, неуникальный `old_string`),
 //!   возвращается как [`ToolOutput`] с `is_error = true` и текстом «что не так и
@@ -15,6 +19,7 @@
 //!   байт-в-байт стабильным, иначе KV-кэш локального сервера инвалидируется.
 
 pub mod bash;
+mod coerce;
 pub mod edit;
 pub mod read;
 pub mod write;
@@ -30,7 +35,7 @@ use tokio_util::sync::CancellationToken;
 use crate::provider::ToolDef;
 
 pub use bash::BashTool;
-pub use edit::{EditStrategy, EditTool};
+pub use edit::{EditStrategy, EditTool, UnknownEditStrategy};
 pub use read::ReadTool;
 pub use write::WriteTool;
 
@@ -163,15 +168,27 @@ struct Registered {
 
 /// Реестр тулов: владеет инструментами, кэширует их схемы и скомпилированные
 /// валидаторы, отдаёт [`ToolDef`] провайдеру в детерминированном порядке.
-#[derive(Default)]
 pub struct ToolRegistry {
     tools: Vec<Registered>,
+    /// Приводить ли типы аргументов к схеме до валидации (`[agent]
+    /// arg_coercion`, по умолчанию да).
+    arg_coercion: bool,
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self {
+            tools: Vec::new(),
+            arg_coercion: true,
+        }
+    }
 }
 
 impl std::fmt::Debug for ToolRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolRegistry")
             .field("tools", &self.names())
+            .field("arg_coercion", &self.arg_coercion)
             .finish()
     }
 }
@@ -222,6 +239,25 @@ impl ToolRegistry {
         self
     }
 
+    /// Включить или выключить приведение типов аргументов к схеме
+    /// ([`Self::coerce_input`]); по умолчанию включено. Выключенное — для
+    /// абляции: аргументы валидируются ровно такими, какими их прислала модель.
+    pub fn set_arg_coercion(&mut self, enabled: bool) {
+        self.arg_coercion = enabled;
+    }
+
+    /// Builder-форма [`Self::set_arg_coercion`].
+    #[must_use]
+    pub fn with_arg_coercion(mut self, enabled: bool) -> Self {
+        self.set_arg_coercion(enabled);
+        self
+    }
+
+    /// Включено ли приведение типов аргументов.
+    pub fn arg_coercion(&self) -> bool {
+        self.arg_coercion
+    }
+
     /// Имена тулов в порядке регистрации.
     pub fn names(&self) -> Vec<&str> {
         self.tools.iter().map(|entry| entry.tool.name()).collect()
@@ -239,10 +275,11 @@ impl ToolRegistry {
 
     /// Тул по имени.
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
-        self.tools
-            .iter()
-            .find(|entry| entry.tool.name() == name)
-            .map(|entry| entry.tool.as_ref())
+        self.entry(name).map(|entry| entry.tool.as_ref())
+    }
+
+    fn entry(&self, name: &str) -> Option<&Registered> {
+        self.tools.iter().find(|entry| entry.tool.name() == name)
     }
 
     /// Определения тулов для провайдера — в порядке регистрации.
@@ -260,20 +297,47 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Привести аргументы тула `name` к типам его схемы: числовые и булевы
+    /// строки (`"60"`, `"60.0"`, `"1.5"`, `"true"`) и дробные числа с нулевой
+    /// дробью (`60.0` для целого) — там, где схема ждёт число или булево и
+    /// приведение без потерь. Только свойства верхнего уровня; мусор, строковые
+    /// поля, `null` и вложенные значения не трогаются. Возвращает имена
+    /// приведённых свойств в порядке аргументов (пусто — ничего не менялось).
+    ///
+    /// [`Self::execute`] приводит аргументы сам. Агент зовёт этот метод раньше —
+    /// до истории, событий и сессии, чтобы везде лежали ровно те аргументы,
+    /// которые получит тул. Выключенное приведение ([`Self::set_arg_coercion`]),
+    /// неизвестный тул и тул с несобравшейся схемой — ничего не трогается:
+    /// схеме, которой не верит валидация, не верит и приведение.
+    pub fn coerce_input(&self, name: &str, input: &mut Value) -> Vec<String> {
+        if !self.arg_coercion {
+            return Vec::new();
+        }
+        self.entry(name)
+            .filter(|entry| entry.validator.is_some())
+            .map(|entry| coerce::coerce_arguments(&entry.schema, input))
+            .unwrap_or_default()
+    }
+
     /// Выполнить тул по имени: неизвестное имя и невалидные аргументы
-    /// возвращаются модели как ошибка, а не как паника.
-    pub async fn execute(&self, name: &str, input: Value, ctx: &ToolCtx) -> ToolOutput {
-        let Some(entry) = self.tools.iter().find(|entry| entry.tool.name() == name) else {
+    /// возвращаются модели как ошибка, а не как паника. Перед валидацией
+    /// аргументы приводятся к схеме ([`Self::coerce_input`], если приведение
+    /// не выключено) — тул получает уже приведённые.
+    pub async fn execute(&self, name: &str, mut input: Value, ctx: &ToolCtx) -> ToolOutput {
+        let Some(entry) = self.entry(name) else {
             return ToolOutput::err(format!(
                 "Unknown tool `{name}`. Available tools: {}.",
                 self.names().join(", ")
             ));
         };
 
-        if let Some(validator) = &entry.validator
-            && let Some(message) = validation_message(validator, &entry.schema, name, &input)
-        {
-            return ToolOutput::err(message);
+        if let Some(validator) = &entry.validator {
+            if self.arg_coercion {
+                coerce::coerce_arguments(&entry.schema, &mut input);
+            }
+            if let Some(message) = validation_message(validator, &entry.schema, name, &input) {
+                return ToolOutput::err(message);
+            }
         }
 
         entry.tool.execute(input, ctx).await
@@ -522,6 +586,191 @@ mod tests {
         assert_eq!(out.content, "hi");
     }
 
+    /// Тул-зонд: десериализует аргументы в типизированную структуру (как
+    /// настоящие тулы) и возвращает их ровно в том виде, в каком получил.
+    struct Probe;
+
+    #[derive(serde::Deserialize, JsonSchema)]
+    #[allow(dead_code)]
+    struct ProbeInput {
+        count: Option<u64>,
+        ratio: Option<f64>,
+        flag: Option<bool>,
+        label: Option<String>,
+        sizes: Option<Vec<u64>>,
+    }
+
+    #[async_trait]
+    impl Tool for Probe {
+        fn name(&self) -> &str {
+            "probe"
+        }
+        fn description(&self) -> &str {
+            "echoes its typed arguments"
+        }
+        fn input_schema(&self) -> Value {
+            input_schema_for::<ProbeInput>()
+        }
+        async fn execute(&self, input: Value, _ctx: &ToolCtx) -> ToolOutput {
+            match serde_json::from_value::<ProbeInput>(input.clone()) {
+                Ok(_) => ToolOutput::ok(input.to_string()),
+                Err(error) => ToolOutput::err(format!("probe: {error}")),
+            }
+        }
+    }
+
+    /// Текст ошибки валидации для аргументов как есть — без приведения.
+    fn raw_validation_message(registry: &ToolRegistry, name: &str, input: &Value) -> String {
+        let entry = registry.entry(name).unwrap();
+        validation_message(
+            entry.validator.as_ref().unwrap(),
+            &entry.schema,
+            name,
+            input,
+        )
+        .expect("аргументы должны быть невалидны и без приведения")
+    }
+
+    /// Числа и булевы строками доходят до тула уже приведёнными — и проходят
+    /// типизированную десериализацию тула.
+    #[tokio::test]
+    async fn numeric_and_boolean_strings_reach_the_tool_coerced() {
+        let registry = ToolRegistry::new().with(Box::new(Probe));
+        let out = registry
+            .execute(
+                "probe",
+                json!({"count": "60.0", "ratio": "1.5", "flag": "true", "label": "60"}),
+                &ctx(),
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(
+            out.content,
+            r#"{"count":60,"ratio":1.5,"flag":true,"label":"60"}"#
+        );
+
+        let out = registry
+            .execute("probe", json!({"count": 60.0}), &ctx())
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, r#"{"count":60}"#);
+    }
+
+    /// Ровно сценарий живых прогонов: `timeout_seconds` строкой и `60.0`
+    /// числом. Раньше первое отбивала схема, второе — десериализация `u64`.
+    #[tokio::test]
+    async fn bash_accepts_timeout_seconds_as_a_numeric_string_or_a_whole_float() {
+        for timeout in [json!("60"), json!("60.0"), json!(60.0)] {
+            let out = registry()
+                .execute(
+                    "bash",
+                    json!({"command": "echo hi", "timeout_seconds": timeout}),
+                    &ctx(),
+                )
+                .await;
+            assert!(!out.is_error, "{timeout}: {}", out.content);
+            assert_eq!(out.content, "hi", "{timeout}");
+        }
+    }
+
+    /// Неприводимое остаётся невалидным — с тем же текстом ошибки, что и без
+    /// приведения.
+    #[tokio::test]
+    async fn uncoercible_arguments_fail_with_the_unchanged_message() {
+        let registry = registry();
+        let cases = [
+            (
+                "bash",
+                json!({"command": "echo hi", "timeout_seconds": "60s"}),
+            ),
+            (
+                "bash",
+                json!({"command": "echo hi", "timeout_seconds": "abc"}),
+            ),
+            ("bash", json!({"command": "echo hi", "timeout_seconds": ""})),
+            (
+                "bash",
+                json!({"command": "echo hi", "timeout_seconds": "60.5"}),
+            ),
+            (
+                "bash",
+                json!({"command": "echo hi", "timeout_seconds": 60.5}),
+            ),
+            ("bash", json!({"command": 42})),
+            ("read", json!({"path": "a.txt", "offset": [1]})),
+            ("read", json!({"path": "a.txt", "limit": {"value": "10"}})),
+            (
+                "edit",
+                json!({"path": "a.txt", "old_string": "a", "new_string": "b", "replace_all": "yes"}),
+            ),
+            ("write", json!({"path": "a.txt", "content": 60})),
+        ];
+        for (name, input) in cases {
+            let expected = raw_validation_message(&registry, name, &input);
+            let out = registry.execute(name, input.clone(), &ctx()).await;
+            assert!(out.is_error, "{name} {input}");
+            assert_eq!(out.content, expected, "{name} {input}");
+        }
+    }
+
+    #[test]
+    fn coerce_input_rewrites_in_place_and_reports_changes() {
+        let registry = registry();
+        let mut input = json!({"command": "ls", "timeout_seconds": "30"});
+        assert_eq!(
+            registry.coerce_input("bash", &mut input),
+            ["timeout_seconds"]
+        );
+        assert_eq!(input, json!({"command": "ls", "timeout_seconds": 30}));
+        // Повтор — ничего нового.
+        assert!(registry.coerce_input("bash", &mut input).is_empty());
+
+        let mut input = json!({"command": "ls", "timeout_seconds": null});
+        assert!(registry.coerce_input("bash", &mut input).is_empty());
+        assert_eq!(input, json!({"command": "ls", "timeout_seconds": null}));
+
+        // Неизвестный тул — не трогаем.
+        let mut input = json!({"timeout_seconds": "30"});
+        assert!(registry.coerce_input("browse", &mut input).is_empty());
+        assert_eq!(input, json!({"timeout_seconds": "30"}));
+    }
+
+    /// Абляция: с выключенным приведением `"60.0"` снова отбивается схемой — с
+    /// тем же текстом, что и до появления приведения, — а `coerce_input` ничего
+    /// не трогает.
+    #[tokio::test]
+    async fn disabled_coercion_validates_the_arguments_as_sent() {
+        let registry = registry().with_arg_coercion(false);
+        assert!(!registry.arg_coercion());
+        assert!(ToolRegistry::new().arg_coercion(), "по умолчанию включено");
+
+        let input = json!({"command": "echo hi", "timeout_seconds": "60.0"});
+        let mut probe = input.clone();
+        assert!(registry.coerce_input("bash", &mut probe).is_empty());
+        assert_eq!(probe, input);
+
+        let expected = raw_validation_message(&registry, "bash", &input);
+        assert!(
+            expected.contains(r#""60.0" is not of types "null", "integer""#),
+            "{expected}"
+        );
+        let out = registry.execute("bash", input, &ctx()).await;
+        assert!(out.is_error);
+        assert_eq!(out.content, expected);
+
+        // Включили обратно — тот же вызов проходит.
+        let mut registry = registry;
+        registry.set_arg_coercion(true);
+        let out = registry
+            .execute(
+                "bash",
+                json!({"command": "echo hi", "timeout_seconds": "60.0"}),
+                &ctx(),
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+    }
+
     #[tokio::test]
     async fn registry_without_validator_still_executes() {
         struct Loose;
@@ -547,5 +796,10 @@ mod tests {
         let out = registry.execute("loose", json!({"a": 1}), &ctx()).await;
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(out.content, r#"{"a":1}"#);
+
+        // Схеме, которая не собралась, не верит и приведение.
+        let mut input = json!({"a": "1"});
+        assert!(registry.coerce_input("loose", &mut input).is_empty());
+        assert_eq!(input, json!({"a": "1"}));
     }
 }

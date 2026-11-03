@@ -43,6 +43,7 @@ pub async fn run(
     opts: RenderOptions,
 ) -> StopReason {
     let mut usage = Usage::default();
+    let mut coerced_calls = 0usize;
     let mut interrupt_pending = false;
     let mut ends_with_newline = true;
     let mut reason = StopReason::Cancelled;
@@ -83,6 +84,10 @@ pub async fn run(
                 let mut stderr = std::io::stderr().lock();
                 let _ = writeln!(stderr, "{}", render::error_line(message, opts));
             }
+            Event::Nudge { guard, message, .. } => {
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "{}", render::nudge_line(*guard, message, opts));
+            }
             Event::MessageComplete { message } => {
                 if let Some(thinking) = render::thinking_only_answer(message) {
                     // С `--show-thinking` рассуждения уже на экране —
@@ -105,6 +110,7 @@ pub async fn run(
                 }
             }
             Event::Usage { usage: chunk } => accumulate(&mut usage, chunk),
+            Event::ArgumentsCoerced { .. } => coerced_calls += 1,
             Event::TurnFinished { reason: finished } => reason = *finished,
             _ => {}
         }
@@ -129,7 +135,11 @@ pub async fn run(
     }
     let _ = stdout.flush();
     let mut stderr = std::io::stderr().lock();
-    let _ = writeln!(stderr, "{}", render::usage_summary(&usage, opts));
+    let _ = writeln!(
+        stderr,
+        "{}",
+        render::usage_summary(&usage, coerced_calls, opts)
+    );
 
     reason
 }

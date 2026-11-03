@@ -3,7 +3,9 @@
 //! Файл описывает, *куда* и *под каким именем* ходить, плюс поправку на
 //! скорость железа: `timeout_multiplier` умножает `timeout_seconds` задачи.
 //! Так задача остаётся одна на всех, а 9b на localhost и 27b по сети получают
-//! честные бюджеты времени.
+//! честные бюджеты времени. Свойства самой модели, которые mark2 настраивает
+//! per-model (`edit_strategy`), тоже живут здесь — ранер передаёт их через
+//! `[models."<id>"]` проектного `.mark2.toml`.
 //!
 //! Ключи не угадываются: `deny_unknown_fields` превращает опечатку в ошибку с
 //! путём файла, а не в молчаливо потерянную настройку.
@@ -12,6 +14,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
+use mark2_core::tools::EditStrategy;
 use serde::{Deserialize, Serialize};
 
 /// Путь к матрице моделей по умолчанию (относительно корня репозитория).
@@ -34,6 +37,44 @@ pub struct ModelSpec {
     /// сервер его требует. Сам ключ в файле не хранится никогда.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key_env: Option<String>,
+    /// Формат правки файлов mark2 (`search_replace` | `whole_file`), если
+    /// модели нужен не дефолтный; разбор — тот же, что у конфига mark2,
+    /// неизвестное имя — ошибка загрузки матрицы. Ранер кладёт его в
+    /// `[models."<model>"]` проектного `.mark2.toml`. Без поля — дефолт mark2
+    /// (`search_replace`); в старых `results.json` его нет, и в новых оно
+    /// пишется только когда задано.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "edit_strategy_name"
+    )]
+    pub edit_strategy: Option<EditStrategy>,
+}
+
+/// `Option<EditStrategy>` как каноническое имя строкой — и в `models.toml`, и
+/// в `results.json`.
+mod edit_strategy_name {
+    use mark2_core::tools::EditStrategy;
+    use serde::{Deserialize, Deserializer, Serializer, de};
+
+    pub fn serialize<S: Serializer>(
+        value: &Option<EditStrategy>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(strategy) => serializer.serialize_some(strategy.as_str()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<EditStrategy>, D::Error> {
+        let Some(raw) = Option::<String>::deserialize(deserializer)? else {
+            return Ok(None);
+        };
+        raw.parse().map(Some).map_err(de::Error::custom)
+    }
 }
 
 fn default_timeout_multiplier() -> f64 {
@@ -133,6 +174,7 @@ mod tests {
         base_url = "http://localhost:11434/v1"
         timeout_multiplier = 2.5
         api_key_env = "OLLAMA_API_KEY"
+        edit_strategy = "whole_file"
     "#;
 
     #[test]
@@ -144,9 +186,61 @@ mod tests {
         assert_eq!(models[0].base_url, "http://localhost:11434/v1");
         assert_eq!(models[0].timeout_multiplier, 1.0);
         assert_eq!(models[0].api_key_env, None);
+        assert_eq!(models[0].edit_strategy, None);
         assert_eq!(models[1].alias, "oss120");
         assert_eq!(models[1].timeout_multiplier, 2.5);
         assert_eq!(models[1].api_key_env.as_deref(), Some("OLLAMA_API_KEY"));
+        assert_eq!(models[1].edit_strategy, Some(EditStrategy::WholeFile));
+    }
+
+    #[test]
+    fn edit_strategy_is_parsed_like_mark2_does() {
+        let parse = |value: &str| {
+            parse_models(
+                &format!(
+                    "[[models]]\nalias = \"a\"\nmodel = \"m\"\nbase_url = \"http://x/v1\"\nedit_strategy = \"{value}\"\n"
+                ),
+                "bench/models.toml",
+            )
+        };
+        assert_eq!(
+            parse("search_replace").unwrap()[0].edit_strategy,
+            Some(EditStrategy::SearchReplace)
+        );
+        // Терпимость к написанию — как у конфига mark2.
+        assert_eq!(
+            parse("Whole-File").unwrap()[0].edit_strategy,
+            Some(EditStrategy::WholeFile)
+        );
+
+        let text = format!("{:#}", parse("diff").unwrap_err());
+        assert!(text.contains("bench/models.toml"), "{text}");
+        assert!(text.contains("diff"), "{text}");
+        for known in EditStrategy::ALL {
+            assert!(text.contains(known.as_str()), "{text}");
+        }
+    }
+
+    /// `ModelSpec` уезжает в `results.json`: без стратегии поле не пишется
+    /// (файл как раньше), со стратегией — каноническим именем; старый файл без
+    /// поля читается как «дефолт mark2».
+    #[test]
+    fn edit_strategy_round_trips_through_results_json() {
+        let models = parse_models(SAMPLE, "test.toml").unwrap();
+        let plain = serde_json::to_value(&models[0]).unwrap();
+        assert!(plain.get("edit_strategy").is_none(), "{plain}");
+        let whole = serde_json::to_value(&models[1]).unwrap();
+        assert_eq!(whole["edit_strategy"], "whole_file");
+        assert_eq!(
+            serde_json::from_value::<ModelSpec>(whole).unwrap(),
+            models[1]
+        );
+
+        let old: ModelSpec = serde_json::from_str(
+            r#"{"alias": "qwen9", "model": "qwen3.5:9b", "base_url": "http://x/v1", "timeout_multiplier": 1.0}"#,
+        )
+        .unwrap();
+        assert_eq!(old.edit_strategy, None);
     }
 
     #[test]
@@ -195,6 +289,11 @@ mod tests {
                 .unwrap_or_else(|| panic!("нет якоря {anchor} в матрице: {aliases:?}"));
             assert_eq!(spec.model, model_id, "якорь {anchor} сменил модель");
         }
+
+        // flint роняет поля search/replace на длинных сессиях — ему файл
+        // целиком (прогоны 2026-11-03/04).
+        let flint = models.iter().find(|m| m.alias == "flint40").unwrap();
+        assert_eq!(flint.edit_strategy, Some(EditStrategy::WholeFile));
     }
 
     #[test]

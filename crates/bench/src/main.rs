@@ -22,8 +22,8 @@ use mark2_bench::models::{DEFAULT_MODELS_FILE, load_models, select_models};
 use mark2_bench::resolve_path;
 use mark2_bench::results::{Results, RunConfig, SCHEMA_VERSION, TaskRecord};
 use mark2_bench::runner::{
-    PROJECT_CONFIG, Runner, VERIFY_TIMEOUT_SECONDS, WARMUP_PROMPT, prepare_envs, run_id,
-    write_outputs,
+    PROJECT_CONFIG, Runner, VERIFY_TIMEOUT_SECONDS, WARMUP_PROMPT, check_project_configs,
+    parse_agent_override, prepare_envs, run_id, write_outputs,
 };
 use mark2_bench::task::{DEFAULT_TASKS_DIR, discover_tasks, select_tasks};
 
@@ -81,6 +81,13 @@ struct Args {
     /// Не прогревать модель перед задачами (для отладки самого ранера).
     #[arg(long)]
     no_warmup: bool,
+
+    /// Строка `key = value` в секцию [agent] `.mark2.toml` каждого прогона —
+    /// абляция настроек mark2 (например 'arg_coercion = false',
+    /// 'write_churn = false'). Повторяемый. Проверяется парсером mark2 до
+    /// первого прогона и пишется в results.json.
+    #[arg(long = "agent-override", value_name = "KEY = VALUE")]
+    agent_overrides: Vec<String>,
 }
 
 fn main() -> ExitCode {
@@ -128,6 +135,16 @@ async fn run(args: Args) -> Result<()> {
     let models = select_models(load_models(&args.models_file)?, &args.models)?;
     let tasks = select_tasks(discover_tasks(&args.tasks_dir)?, &args.tasks)?;
 
+    // Абляция — до окружений и директории результатов: опечатка в ключе или
+    // конфликт с тем, что пишет сам ранер, обязаны остановить бенч сразу, а не
+    // провалить каждый прогон.
+    let agent_overrides = args
+        .agent_overrides
+        .iter()
+        .map(|raw| parse_agent_override(raw))
+        .collect::<Result<Vec<_>>>()?;
+    check_project_configs(&models, &tasks, &agent_overrides)?;
+
     // Окружения задач (uitest/.venv) — до директории результатов и до первой
     // модели: сломанный bootstrap обязан остановить бенч сразу, а не съесть
     // таймаут задачи у каждой модели.
@@ -142,6 +159,7 @@ async fn run(args: Args) -> Result<()> {
     let mut runner = Runner::new(&args.mark2, &run_dir);
     runner.repeats_override = args.repeats;
     runner.warmup = !args.no_warmup;
+    runner.agent_overrides = agent_overrides.clone();
 
     // В сырьё уезжают развёрнутые пути: `results.json` должен читаться и через
     // месяц из другой директории, а не только из того cwd, где гоняли бенч.
@@ -154,6 +172,7 @@ async fn run(args: Args) -> Result<()> {
         verify_timeout_seconds: VERIFY_TIMEOUT_SECONDS,
         warmup_prompt: WARMUP_PROMPT.to_string(),
         project_config: PROJECT_CONFIG.to_string(),
+        agent_overrides: agent_overrides.clone(),
         models: models.clone(),
         tasks: tasks
             .iter()
@@ -231,6 +250,65 @@ mod tests {
         assert_eq!(args.models_file, PathBuf::from("bench/models.toml"));
         assert_eq!(args.out, PathBuf::from("bench/results"));
         assert!(!args.no_warmup);
+        assert!(args.agent_overrides.is_empty());
+    }
+
+    /// `--agent-override` повторяемый и запятые не режет: значение — целая
+    /// TOML-строка.
+    #[test]
+    fn agent_override_is_repeatable_and_kept_whole() {
+        let args = parse(&[
+            "mark2-bench",
+            "--agent-override",
+            "arg_coercion = false",
+            "--agent-override",
+            "write_churn = false",
+        ]);
+        assert_eq!(
+            args.agent_overrides,
+            ["arg_coercion = false", "write_churn = false"]
+        );
+    }
+
+    /// Невалидный override — ошибка до прогонов: ни окружений, ни директории
+    /// результатов, ни одного запуска mark2.
+    #[tokio::test]
+    async fn invalid_agent_override_fails_before_any_run() {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let out = tempfile::TempDir::new().unwrap();
+        for (raw, expected) in [
+            ("arg_coerciom = false", "не настройка [agent]"),
+            ("arg_coercion = maybe", "--agent-override"),
+            // Сам по себе валиден, но T17 пишет свой max_turns — дубликат ключа.
+            ("max_turns = 10", "× T17"),
+        ] {
+            let args = parse(&[
+                "mark2-bench",
+                "--mark2",
+                "/bin/sh",
+                "--models-file",
+                repo.join(DEFAULT_MODELS_FILE).to_str().unwrap(),
+                "--tasks-dir",
+                repo.join(DEFAULT_TASKS_DIR).to_str().unwrap(),
+                "--models",
+                "qwen9",
+                "--tasks",
+                "T01,T17",
+                "--out",
+                out.path().to_str().unwrap(),
+                "--no-warmup",
+                "--agent-override",
+                raw,
+            ]);
+            let text = format!("{:#}", run(args).await.unwrap_err());
+            assert!(text.contains(expected), "{raw}: {text}");
+            assert!(text.contains(raw), "строка-виновница в тексте: {text}");
+            assert_eq!(
+                std::fs::read_dir(out.path()).unwrap().count(),
+                0,
+                "{raw}: прогон не должен был начаться"
+            );
+        }
     }
 
     #[test]
@@ -347,6 +425,10 @@ mod tests {
         assert_eq!(results.config.tasks[0].max_turns, None);
         assert_eq!(results.config.tasks[0].verify_timeout_seconds, None);
         assert!(!results.config.tasks[0].uitest_env);
+        // …прогон без абляции…
+        assert!(results.config.agent_overrides.is_empty());
+        // …и модель без edit_strategy — с дефолтом mark2.
+        assert_eq!(results.config.models[0].edit_strategy, None);
         let report = render_report(&results);
         assert!(report.contains("| qwen9 | 1/1 · 12.3s |"), "{report}");
         assert!(report.contains("1200 / 340"), "{report}");

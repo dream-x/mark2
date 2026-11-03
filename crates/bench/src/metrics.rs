@@ -226,6 +226,29 @@ mod tests {
         );
     }
 
+    /// Хвост итоговой строки (счётчик приведений аргументов `· coerced N`)
+    /// парсер токенов пропускает — и с кэшем, и без.
+    #[test]
+    fn coercion_counter_suffix_does_not_break_the_usage_line() {
+        assert_eq!(
+            parse_tokens("tokens: in 1200 / out 340 · coerced 3").unwrap(),
+            Tokens {
+                input: 1200,
+                output: 340,
+                cached: None
+            }
+        );
+        assert_eq!(
+            parse_tokens("\u{1b}[2mtokens: in 1200 / out 340 (cached 1000) · coerced 0\u{1b}[0m")
+                .unwrap(),
+            Tokens {
+                input: 1200,
+                output: 340,
+                cached: Some(1000)
+            }
+        );
+    }
+
     #[test]
     fn takes_the_last_line_and_ignores_the_noise_around_it() {
         let stderr = concat!(

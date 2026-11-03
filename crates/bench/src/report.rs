@@ -25,6 +25,18 @@ pub fn render_report(results: &Results) -> String {
     out.push_str(&format!("- задачи: `{}`\n", results.config.tasks_dir));
     out.push_str(&format!("- модели: `{}`\n", results.config.models_file));
     out.push_str(&format!("- повторов: {}\n", repeats_summary(results)));
+    if !results.config.agent_overrides.is_empty() {
+        let overrides: Vec<String> = results
+            .config
+            .agent_overrides
+            .iter()
+            .map(|line| format!("`{line}`"))
+            .collect();
+        out.push_str(&format!(
+            "- абляция (`--agent-override` в [agent]): {}\n",
+            overrides.join(", ")
+        ));
+    }
     out.push('\n');
 
     out.push_str(&render_matrix(results));
@@ -267,6 +279,7 @@ mod tests {
             base_url: "http://localhost:11434/v1".into(),
             timeout_multiplier: multiplier,
             api_key_env: None,
+            edit_strategy: None,
         }
     }
 
@@ -376,6 +389,7 @@ mod tests {
                 verify_timeout_seconds: 30,
                 warmup_prompt: "Reply with exactly: ok".into(),
                 project_config: "[agent]\ntemperature = 0.0\n".into(),
+                agent_overrides: vec![],
                 models: vec![
                     model("qwen9", "qwen3.5:9b", 1.0),
                     model("oss120", "gpt-oss:120b-cloud", 2.5),
@@ -575,5 +589,25 @@ mod tests {
         results.config.repeats_override = None;
         results.config.tasks[1].repeats = 5;
         assert!(render_report(&results).contains("- повторов: 2/5 (из task.toml)"));
+    }
+
+    /// Прогон с абляцией отличим по шапке; без неё строки нет вовсе (снапшот
+    /// прежний).
+    #[test]
+    fn header_lists_agent_overrides_only_when_there_are_any() {
+        let mut results = fixture();
+        assert!(!render_report(&results).contains("абляция"));
+
+        results.config.agent_overrides =
+            vec!["arg_coercion = false".into(), "write_churn = false".into()];
+        let report = render_report(&results);
+        assert!(
+            report.contains(
+                "- абляция (`--agent-override` в [agent]): `arg_coercion = false`, `write_churn = false`\n"
+            ),
+            "{report}"
+        );
+        // Шапка, а не хвост: до первой таблицы.
+        assert!(report.find("абляция").unwrap() < report.find("## ").unwrap());
     }
 }

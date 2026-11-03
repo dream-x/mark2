@@ -41,6 +41,7 @@ base_url = "http://localhost:11434/v1"
 model = "qwen3.5:9b"
 policy = "ask_writes"      # yolo | ask_writes | read_only
 # max_turns = 50
+# arg_coercion = false     # не приводить "60" → 60 в аргументах тулов (абляция)
 
 [models."qwen3.5"]         # матчится по подстроке id модели
 context_limit = 32768      # включает проактивную компакцию (порог 0.8)
@@ -49,7 +50,7 @@ context_limit = 32768      # включает проактивную компа�
 
 ## Тулы
 
-`bash` (timeout, обрезка вывода, kill process group), `read`, `write`, `edit` (exact search/replace; для слабых моделей — режим whole-file). Аргументы валидируются JSON Schema; невалидные — возвращаются модели текстом ошибки (retry-with-error), обрезанный JSON проходит через repair.
+`bash` (timeout, обрезка вывода, kill process group), `read`, `write`, `edit` (exact search/replace; для слабых моделей — режим whole-file). Аргументы валидируются JSON Schema; невалидные — возвращаются модели текстом ошибки (retry-with-error), обрезанный JSON проходит через repair. До валидации числа и булевы, присланные строками (`"timeout_seconds": "60.0"`), приводятся к типу схемы без потерь; сколько вызовов так спасено — `coerced N` в итоговой строке stderr.
 
 ## Сессии
 
@@ -83,8 +84,16 @@ Append-only JSONL в `~/.mark2/sessions/YYYY/MM/DD/*.jsonl`: meta, все соо
 
 Что показали провалы: bolt (4B) на базовых задачах почти не отличим от больших, но рассыпается на точности — неоднозначный edit (T09), байт-в-байт YAML (T10), точный CSV (T14) и потеря фактов при компакции (T15); qwen27 решил T16 верно, но процитировал приманку в запрещённой форме ответа — чистый instruction-following-провал; T15 гоняется с `context_limit = 8192` — компакция срабатывала у всех пяти моделей в каждом прогоне.
 
+## Ревью
+
+`scripts/review.sh` — код-ревьювер на самом mark2: локальная модель под `--policy read-only` получает дифф и инструкцию `prompts/review.md`, при нехватке контекста дочитывает файлы репо тулом `read` и заканчивает ответ строкой `VERDICT: approve` или `VERDICT: needs-work` (exit 0 / 2; 1 — ошибка запуска или нет вердикта). Без аргументов ревьюит незакоммиченное (`git diff HEAD`), `--staged` — индекс, `HEAD~3` — последние три коммита, `-` — дифф из stdin (для CI).
+
+Модель по умолчанию — `qwen3.6:35b-a3b-coding` через ollama на `localhost:11434`; переопределяется через `MARK2_REVIEW_MODEL`, `MARK2_REVIEW_BASE_URL`, `MARK2_REVIEW_BIN`, `MARK2_REVIEW_MAX_DIFF_BYTES` (дифф больше 120 КиБ обрезается с пометкой). Офлайн-тесты обёртки — `sh scripts/test-review.sh`, наблюдения с живых прогонов — `docs/notes/review-findings-20261104.md`.
+
 ## Документация
 
+- [CHANGELOG.md](CHANGELOG.md) — история «что сделано → к чему привело», с эффектами из бенча
+- [docs/decisions.md](docs/decisions.md) — реестр контролей харнеса: инцидент-причина и сигнал для снятия
 - [ARCHITECTURE.md](ARCHITECTURE.md) — устройство: крейты, поток данных, ключевые контракты, инварианты
 - [CONTRIBUTING.md](CONTRIBUTING.md) — как собирать, проверять и что нельзя ломать
 - [bench/STRATEGY.md](bench/STRATEGY.md) — бенчмарк моделей на агентных задачах

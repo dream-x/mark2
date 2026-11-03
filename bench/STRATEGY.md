@@ -148,6 +148,7 @@ bench/tasks/T04-fix-bug-test/
 - **Температура 0** у всех (сравниваем модели, не сэмплинг), `--policy yolo`, `-p` print mode.
 - **Таймауты** по классу: 9b — 120с, 20–27b — 300с, cloud — 300с (из task.toml × множитель модели).
 - **Сессии** пишутся и складываются в артефакты прогона — это источник глубоких метрик.
+- **Абляция** настроек mark2 — `--agent-override 'key = value'` (повторяемый): строка дописывается в `[agent]` `.mark2.toml` каждого прогона, например `--agent-override 'arg_coercion = false' --agent-override 'write_churn = false' --label ablation`. Ключ и значение проверяются парсером mark2 до первого прогона (опечатка или конфликт с `max_turns` задачи — сразу ошибка), overrides пишутся в `results.json` (`config.agent_overrides`) и в шапку `report.md`. Сколько вызовов спасло приведение типов аргументов — `· coerced N` в итоговой строке stderr каждого прогона.
 
 ## Метрики
 

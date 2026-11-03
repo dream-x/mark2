@@ -28,7 +28,7 @@
 //!   └───────── tool results одним сообщением в историю ◄────┘
 //! ```
 //!
-//! Предохранители два:
+//! Предохранители три:
 //!
 //! * `max_turns` итераций сэмплинга на ход (`TurnFinished{MaxTurns}`);
 //! * **детектор зацикливания** (`loop_detection`): N-й подряд идентичный
@@ -36,7 +36,21 @@
 //!   модель получает `is_error`-результат «не повторяй, ответь текстом»; на
 //!   2×N-м ход завершается `TurnFinished{Error}` с [`Event::Error`]. Слабые
 //!   локалки умеют найти ответ и затем звать один и тот же `echo` до
-//!   `max_turns`, сжигая весь контекст на каждой итерации.
+//!   `max_turns`, сжигая весь контекст на каждой итерации;
+//! * **сенсор write-churn** (`write_churn`): N-я подряд успешная запись
+//!   (`write`/`edit`, в любой смеси) в один и тот же путь без единого
+//!   исполненного `bash` между записями исполняется как обычно, но к её
+//!   результату приложена подсказка «запусти и прочитай реальную ошибку,
+//!   прежде чем переписывать»; с 2×N-й подсказка жёсткая («смени стратегию»).
+//!   Ход не останавливается никогда: переписать файл — законная работа. Так
+//!   «мечутся» модели на проектных задачах: файл переписывается целиком раз
+//!   за разом с чуть другим содержимым и ни разу не запускается — вызовы не
+//!   идентичны, детектор зацикливания их не видит.
+//!
+//! Счётчики у детектора и сенсора свои и друг друга не трогают. Срабатывание
+//! любого из них видно наружу как [`Event::Nudge`] (CLI печатает его в stderr
+//! маркером `[agent] <guard>`) сразу после `ToolCallFinished` того вызова, к
+//! которому относится подсказка.
 //!
 //! # Инварианты
 //!
@@ -91,7 +105,7 @@
 
 use std::collections::VecDeque;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use futures::StreamExt;
@@ -102,7 +116,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::compact::{self, CompactionConfig, CompactionError};
-use crate::event::{ApprovalDecision, Event, Op, StopReason};
+use crate::event::{ApprovalDecision, Event, Guard, Op, StopReason};
 use crate::message::{ContentBlock, Message, Usage};
 use crate::permission::{self, PermissionCheck, PermissionPolicy};
 use crate::prompt;
@@ -116,6 +130,10 @@ pub const DEFAULT_MAX_TURNS: usize = 50;
 /// Порог детектора зацикливания по умолчанию: третий подряд идентичный
 /// тул-колл не исполняется.
 pub const DEFAULT_LOOP_DETECTION: usize = 3;
+
+/// Порог сенсора write-churn по умолчанию: третья подряд запись в один файл
+/// без запуска между записями получает мягкую подсказку, шестая — жёсткую.
+pub const DEFAULT_WRITE_CHURN: usize = 3;
 
 /// Настройки агента.
 #[derive(Debug, Clone, PartialEq)]
@@ -140,6 +158,13 @@ pub struct AgentConfig {
     /// детектор выключен; `1` равносилен `2` (иначе блокировался бы любой
     /// первый вызов).
     pub loop_detection: usize,
+    /// Сенсор write-churn: с какой подряд записи (`write`/`edit`) в один и тот
+    /// же путь без единого `bash` между ними прикладывать к результату записи
+    /// подсказку «запусти, прежде чем переписывать»; с удвоенного порога она
+    /// жёсткая. Запись не блокируется никогда. `0` — сенсор выключен (в TOML
+    /// это `write_churn = false`, `true` — порог по умолчанию); `1` равносилен
+    /// `2` (иначе подсказку получала бы любая первая запись).
+    pub write_churn: usize,
 }
 
 impl Default for AgentConfig {
@@ -153,6 +178,7 @@ impl Default for AgentConfig {
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             compaction: CompactionConfig::default(),
             loop_detection: DEFAULT_LOOP_DETECTION,
+            write_churn: DEFAULT_WRITE_CHURN,
         }
     }
 }
@@ -212,6 +238,13 @@ impl AgentConfig {
     #[must_use]
     pub fn with_loop_detection(mut self, threshold: usize) -> Self {
         self.loop_detection = threshold;
+        self
+    }
+
+    /// Задать порог сенсора write-churn (`0` — выключить).
+    #[must_use]
+    pub fn with_write_churn(mut self, threshold: usize) -> Self {
+        self.write_churn = threshold;
         self
     }
 }
@@ -633,6 +666,169 @@ fn repeated_call_result(previous: usize) -> String {
 const LOOP_ABORTED_RESULT: &str =
     "Not run: the turn was stopped because the same tool call kept repeating.";
 
+/// Текст [`Event::Nudge`] детектора зацикливания — для человека.
+fn loop_nudge_message(name: &str, repeats: usize) -> String {
+    format!("{repeats}-й подряд одинаковый вызов `{name}` не исполнен")
+}
+
+/// Что приложить к результату исполненного вызова по мнению сенсора
+/// write-churn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChurnVerdict {
+    /// Ничего.
+    Quiet,
+    /// Мягкая подсказка: `writes`-я подряд запись в путь без запуска.
+    Soft { writes: usize },
+    /// Жёсткая подсказка: записей подряд уже не меньше удвоенного порога.
+    Hard { writes: usize },
+}
+
+/// Сенсор «переписывает, не запуская»: подряд идущие записи в один и тот же
+/// файл без единого `bash` между ними.
+///
+/// Живёт один ход. В отличие от [`LoopDetector`] ничего не блокирует —
+/// переписать файл законно, да и вызовы не идентичны: содержимое каждый раз
+/// чуть другое (его сенсор не сравнивает — важен сам факт «пишет, не
+/// запуская»). Видит только **исполненные** вызовы, цикл сообщает о них после
+/// исполнения:
+///
+/// * успешный `write`/`edit` — запись: тот же путь — счётчик растёт, другой —
+///   отсчёт заново, уже для нового пути;
+/// * `bash` — сброс: что бы ни запустили и чем бы оно ни кончилось, модель
+///   увидела настоящий вывод;
+/// * остальное нейтрально: `read` — не проверка (перечитать свой файл — не
+///   то же, что запустить), упавшая запись — не перезапись.
+///
+/// Вызовы, заблокированные детектором зацикливания или политикой доступа, не
+/// исполнялись и до сенсора не доходят. Ключ пути — [`write_target`]: `a.py`,
+/// `./a.py` и абсолютный путь к тому же файлу — одна и та же запись.
+#[derive(Debug)]
+struct WriteChurnDetector {
+    /// Порог мягкой подсказки; `0` — сенсор выключен.
+    threshold: usize,
+    path: Option<PathBuf>,
+    writes: usize,
+}
+
+impl WriteChurnDetector {
+    fn new(threshold: usize) -> Self {
+        Self {
+            // Порог 1 подсказывал бы на любой первой записи — минимум два.
+            threshold: if threshold == 0 { 0 } else { threshold.max(2) },
+            path: None,
+            writes: 0,
+        }
+    }
+
+    /// Учесть исполненный тул-колл и вынести вердикт.
+    fn observe(&mut self, name: &str, input: &Value, is_error: bool, cwd: &Path) -> ChurnVerdict {
+        if self.threshold == 0 {
+            return ChurnVerdict::Quiet;
+        }
+        // Имена — из реестра по умолчанию (`tools/`), как и в `permission`.
+        match name {
+            "bash" => {
+                self.path = None;
+                self.writes = 0;
+                ChurnVerdict::Quiet
+            }
+            "write" | "edit" if !is_error => {
+                let Some(path) = write_target(input, cwd) else {
+                    return ChurnVerdict::Quiet;
+                };
+                if self.path.as_ref() == Some(&path) {
+                    self.writes += 1;
+                } else {
+                    self.path = Some(path);
+                    self.writes = 1;
+                }
+
+                let writes = self.writes;
+                if writes >= 2 * self.threshold {
+                    ChurnVerdict::Hard { writes }
+                } else if writes >= self.threshold {
+                    ChurnVerdict::Soft { writes }
+                } else {
+                    ChurnVerdict::Quiet
+                }
+            }
+            _ => ChurnVerdict::Quiet,
+        }
+    }
+}
+
+/// Файл, в который пишет `write`/`edit`: поле `path`, относительный — от
+/// `cwd`, `.` и `..` свёрнуты лексически. Файловую систему сенсор не трогает
+/// (симлинки не разворачиваются): CLI и так канонизирует `cwd`.
+fn write_target(input: &Value, cwd: &Path) -> Option<PathBuf> {
+    let raw = input.get("path")?.as_str()?;
+    let mut target = PathBuf::new();
+    for component in cwd.join(raw).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                target.pop();
+            }
+            other => target.push(other),
+        }
+    }
+    Some(target)
+}
+
+/// Подсказка сенсора write-churn в двух адресах.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChurnNudge {
+    /// Модели: дописывается к результату записи.
+    note: String,
+    /// Человеку: текст [`Event::Nudge`].
+    message: String,
+}
+
+/// Подсказка по вердикту сенсора; `None` — подсказывать нечего.
+///
+/// Модель читает текст по-английски и с путём в её же написании; человеку —
+/// путь относительно `cwd`, если файл внутри него (в бенче `cwd` — длинный
+/// временный путь, который ничего не говорит).
+fn churn_nudge(verdict: ChurnVerdict, input: &Value, cwd: &Path) -> Option<ChurnNudge> {
+    let (writes, hard) = match verdict {
+        ChurnVerdict::Quiet => return None,
+        ChurnVerdict::Soft { writes } => (writes, false),
+        ChurnVerdict::Hard { writes } => (writes, true),
+    };
+    let path = input
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or("this file");
+    let target = write_target(input, cwd).unwrap_or_else(|| PathBuf::from(path));
+    let shown = target.strip_prefix(cwd).unwrap_or(&target).display();
+
+    Some(if hard {
+        ChurnNudge {
+            note: format!(
+                "Warning: {writes} writes to {path} in a row without a single run in between. \
+                 Rewriting without running is not converging. Change strategy: run it now with \
+                 bash and fix only the error it actually reports; make the file smaller and \
+                 check fewer things at a time."
+            ),
+            message: format!(
+                "{writes}-я запись подряд в {shown} без запуска между ними — жёсткая подсказка \
+                 сменить стратегию"
+            ),
+        }
+    } else {
+        ChurnNudge {
+            note: format!(
+                "Note: this is write #{writes} to {path} in a row, and nothing has been run in \
+                 between. Before rewriting it again, run it (or its test) with bash and read the \
+                 actual error, or simplify the approach."
+            ),
+            message: format!(
+                "{writes}-я запись подряд в {shown} без запуска между ними — подсказка запустить"
+            ),
+        }
+    })
+}
+
 /// Исход исполнения тул-коллов одного ответа модели.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ToolRound {
@@ -831,6 +1027,7 @@ impl AgentLoop {
     /// Цикл сэмплинга: запрос → дельты → тулы → снова запрос.
     async fn sample_loop(&mut self, turn_cancel: &CancellationToken) -> StopReason {
         let mut loops = LoopDetector::new(self.config.loop_detection);
+        let mut churn = WriteChurnDetector::new(self.config.write_churn);
         for iteration in 0..self.config.max_turns {
             if turn_cancel.is_cancelled() {
                 return StopReason::Cancelled;
@@ -921,6 +1118,26 @@ impl AgentLoop {
                 break 'request complete;
             };
 
+            // Типы аргументов — к схемам тулов (`"60"` → `60`), до истории,
+            // событий, сессии и детектора зацикливания: везде лежат ровно те
+            // аргументы, которые получит тул. Сообщение в историю ещё не
+            // попало — append-only не нарушается.
+            // Каждое приведение — `ArgumentsCoerced` наружу: по счётчику видно,
+            // востребована ли фича (её выключатель — `[agent] arg_coercion`).
+            let mut message = message;
+            for block in &mut message.content {
+                if let ContentBlock::ToolUse { id, name, input } = block {
+                    let fields = self.registry.coerce_input(name, input);
+                    if !fields.is_empty() {
+                        self.emit(Event::ArgumentsCoerced {
+                            id: id.clone(),
+                            name: name.clone(),
+                            fields,
+                        });
+                    }
+                }
+            }
+
             let calls: Vec<PendingCall> = message
                 .tool_uses()
                 .map(|(id, name, input)| PendingCall {
@@ -940,7 +1157,10 @@ impl AgentLoop {
             if calls.is_empty() {
                 return StopReason::Completed;
             }
-            match self.run_tool_calls(calls, &mut loops, turn_cancel).await {
+            match self
+                .run_tool_calls(calls, &mut loops, &mut churn, turn_cancel)
+                .await
+            {
                 ToolRound::Continue => {}
                 ToolRound::Interrupted => return StopReason::Cancelled,
                 ToolRound::LoopAborted { name, repeats } => {
@@ -960,10 +1180,15 @@ impl AgentLoop {
     /// Результаты уходят в историю **одним** сообщением из `ToolResult`-блоков,
     /// по блоку на каждый `tool_use` — включая запрещённые, отклонённые,
     /// заблокированные детектором зацикливания и не дошедшие до исполнения.
+    ///
+    /// Детектор зацикливания смотрит на вызов **до** исполнения (и может его
+    /// не пустить), сенсор write-churn — **после** (и только дописывает
+    /// подсказку к результату). Счётчики у них независимы.
     async fn run_tool_calls(
         &mut self,
         calls: Vec<PendingCall>,
         loops: &mut LoopDetector,
+        churn: &mut WriteChurnDetector,
         turn_cancel: &CancellationToken,
     ) -> ToolRound {
         let mut results: Vec<ContentBlock> = Vec::with_capacity(calls.len());
@@ -977,11 +1202,21 @@ impl AgentLoop {
                 LoopVerdict::Block { repeats } => {
                     let result = repeated_call_result(repeats - 1);
                     self.finish_tool_call(&mut results, call, result, true);
+                    self.nudge(
+                        call,
+                        Guard::LoopDetection,
+                        loop_nudge_message(&call.name, repeats),
+                    );
                     continue;
                 }
                 LoopVerdict::Abort { repeats } => {
                     let result = repeated_call_result(repeats - 1);
                     self.finish_tool_call(&mut results, call, result, true);
+                    self.nudge(
+                        call,
+                        Guard::LoopDetection,
+                        loop_nudge_message(&call.name, repeats),
+                    );
                     round = ToolRound::LoopAborted {
                         name: call.name.clone(),
                         repeats,
@@ -1029,7 +1264,21 @@ impl AgentLoop {
             let (output, cancelled) =
                 race_ops_awaiting(execution, &mut self.ops, turn_cancel).await;
 
-            self.finish_tool_call(&mut results, call, output.content, output.is_error);
+            // Запись исполнена в любом случае; подсказка лишь дописывается к
+            // её результату, и тот остаётся успешным — иначе модель решила бы,
+            // что запись не удалась, и переписала бы файл ещё раз.
+            let verdict = churn.observe(&call.name, &call.input, output.is_error, &self.config.cwd);
+            let nudge = churn_nudge(verdict, &call.input, &self.config.cwd);
+            let mut content = output.content;
+            if let Some(nudge) = &nudge {
+                content.push_str("\n\n");
+                content.push_str(&nudge.note);
+            }
+
+            self.finish_tool_call(&mut results, call, content, output.is_error);
+            if let Some(nudge) = nudge {
+                self.nudge(call, Guard::WriteChurn, nudge.message);
+            }
             if cancelled {
                 round = ToolRound::Interrupted;
                 break;
@@ -1072,6 +1321,17 @@ impl AgentLoop {
             tool_use_id: call.id.clone(),
             content,
             is_error,
+        });
+    }
+
+    /// Сработал предохранитель: [`Event::Nudge`] наружу — сразу после
+    /// `ToolCallFinished` вызова, к которому относится подсказка.
+    fn nudge(&self, call: &PendingCall, guard: Guard, message: String) {
+        tracing::debug!(id = %call.id, guard = guard.as_str(), %message, "предохранитель");
+        self.emit(Event::Nudge {
+            id: call.id.clone(),
+            guard,
+            message,
         });
     }
 
@@ -2004,6 +2264,78 @@ mod tests {
         harness.finish().await;
     }
 
+    /// Число строкой (`"timeout_seconds": "5.0"` — привычка flint/qwen3.6)
+    /// приводится к схеме до исполнения: тул отрабатывает с первого раза, а
+    /// событие, история следующего запроса и сессия несут уже целое — ровно
+    /// то, что получил тул.
+    #[tokio::test]
+    async fn numeric_string_arguments_are_coerced_everywhere_before_the_tool_runs() {
+        let mut harness = Harness::new(
+            vec![
+                tools_script(
+                    "",
+                    &[(
+                        "call_1",
+                        "bash",
+                        json!({"command": "echo hi", "timeout_seconds": "5.0"}),
+                    )],
+                ),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+        let coerced = json!({"command": "echo hi", "timeout_seconds": 5});
+
+        let events = harness.turn("скажи hi").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        // Сигнал наружу — один на вызов, до MessageComplete с этим вызовом.
+        let coerced_events: Vec<&Event> = events
+            .iter()
+            .filter(|event| matches!(event, Event::ArgumentsCoerced { .. }))
+            .collect();
+        assert_eq!(
+            coerced_events,
+            [&Event::ArgumentsCoerced {
+                id: "call_1".into(),
+                name: "bash".into(),
+                fields: vec!["timeout_seconds".into()],
+            }]
+        );
+        let order = tags(&events);
+        let position = |tag: &str| order.iter().position(|t| t == tag).unwrap();
+        assert!(position("arguments_coerced") < position("message_complete"));
+
+        let started: Vec<Value> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::ToolCallStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(started, std::slice::from_ref(&coerced));
+        assert_eq!(
+            tool_results(&events),
+            [("call_1".to_string(), "hi".to_string(), false)]
+        );
+
+        let tool_inputs = |messages: &[Message]| -> Vec<Value> {
+            messages
+                .iter()
+                .flat_map(|message| message.tool_uses().map(|(_, _, input)| input.clone()))
+                .collect()
+        };
+        let requests = harness.provider.requests();
+        assert_eq!(
+            tool_inputs(&requests[1].messages),
+            std::slice::from_ref(&coerced)
+        );
+
+        let items = harness.finish().await;
+        assert_eq!(tool_inputs(&messages(&items)), [coerced]);
+    }
+
     /// Модель, зациклившаяся на тулах, останавливается предохранителем.
     #[tokio::test]
     async fn max_turns_stops_a_tool_loop() {
@@ -2078,6 +2410,16 @@ mod tests {
             "{}",
             results[2].1
         );
+        // Наружу — сигнал предохранителя, сразу за результатом вызова.
+        assert_eq!(
+            nudges(&events),
+            [(
+                "call_3".to_string(),
+                Guard::LoopDetection,
+                "3-й подряд одинаковый вызов `read` не исполнен".to_string()
+            )]
+        );
+        assert_nudge_follows_its_result(&events);
 
         // Модель увидела блокировку обычным tool result.
         let requests = harness.provider.requests();
@@ -2288,6 +2630,607 @@ mod tests {
         assert_eq!(one.observe("read", &a), LoopVerdict::Block { repeats: 2 });
         assert_eq!(one.observe("read", &a), LoopVerdict::Block { repeats: 3 });
         assert_eq!(one.observe("read", &a), LoopVerdict::Abort { repeats: 4 });
+    }
+
+    // ───────────────────────── сенсор write-churn ─────────────────────────
+
+    /// `write` файла `path` одним ответом модели.
+    fn write_script(id: &str, path: &str, content: &str) -> Script {
+        tools_script(
+            "",
+            &[(id, "write", json!({"path": path, "content": content}))],
+        )
+    }
+
+    /// `edit` (search/replace) одним ответом модели.
+    fn edit_script(id: &str, path: &str, old: &str, new: &str) -> Script {
+        tools_script(
+            "",
+            &[(
+                id,
+                "edit",
+                json!({"path": path, "old_string": old, "new_string": new}),
+            )],
+        )
+    }
+
+    fn bash_script(id: &str, command: &str) -> Script {
+        tools_script("", &[(id, "bash", json!({"command": command}))])
+    }
+
+    /// `n` подряд записей `a.py` с разным содержимым (`call_1`…`call_n`).
+    fn churning_writes(n: usize) -> Vec<Script> {
+        (1..=n)
+            .map(|i| write_script(&format!("call_{i}"), "a.py", &format!("v{i}")))
+            .collect()
+    }
+
+    /// Все `Nudge` как `(id, guard, message)`.
+    fn nudges(events: &[Event]) -> Vec<(String, Guard, String)> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Nudge { id, guard, message } => Some((id.clone(), *guard, message.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Id вызовов, получивших подсказку write-churn.
+    fn churn_ids(events: &[Event]) -> Vec<String> {
+        nudges(events)
+            .into_iter()
+            .filter(|(_, guard, _)| *guard == Guard::WriteChurn)
+            .map(|(id, ..)| id)
+            .collect()
+    }
+
+    /// Каждый `Nudge` идёт сразу за `ToolCallFinished` своего вызова.
+    fn assert_nudge_follows_its_result(events: &[Event]) {
+        for (index, event) in events.iter().enumerate() {
+            if let Event::Nudge { id, .. } = event {
+                assert!(
+                    matches!(
+                        index.checked_sub(1).map(|prev| &events[prev]),
+                        Some(Event::ToolCallFinished { id: finished, .. }) if finished == id
+                    ),
+                    "Nudge {id} не следует за своим результатом: {events:?}"
+                );
+            }
+        }
+    }
+
+    /// Третья подряд запись в один файл без запуска между ними исполняется
+    /// как обычно, но к её результату приложена мягкая подсказка — и модель
+    /// видит её в следующем запросе.
+    #[tokio::test]
+    async fn third_write_to_one_path_without_a_run_gets_a_soft_nudge() {
+        let mut scripts = churning_writes(3);
+        scripts.push(text_script("готово"));
+        let mut harness = Harness::new(scripts, PermissionPolicy::Yolo, DEFAULT_MAX_TURNS).await;
+
+        let events = harness.turn("напиши тест").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(started_count(&events), 3, "запись не блокируется");
+        assert_eq!(std::fs::read_to_string(harness.path("a.py")).unwrap(), "v3");
+
+        let results = tool_results(&events);
+        assert!(results.iter().all(|r| !r.2), "подсказка — не ошибка");
+        let expected = churn_nudge(
+            ChurnVerdict::Soft { writes: 3 },
+            &json!({"path": "a.py"}),
+            harness.dir.path(),
+        )
+        .unwrap();
+        assert!(!results[0].1.contains(&expected.note));
+        assert!(!results[1].1.contains(&expected.note));
+        assert!(
+            results[2].1.starts_with("Overwrote ") && results[2].1.contains("a.py (2 bytes)"),
+            "результат самой записи на месте: {}",
+            results[2].1
+        );
+        assert!(
+            results[2].1.ends_with(&format!("\n\n{}", expected.note)),
+            "{}",
+            results[2].1
+        );
+        assert!(
+            expected
+                .note
+                .starts_with("Note: this is write #3 to a.py in a row"),
+            "{}",
+            expected.note
+        );
+
+        assert_eq!(
+            nudges(&events),
+            [(
+                "call_3".to_string(),
+                Guard::WriteChurn,
+                "3-я запись подряд в a.py без запуска между ними — подсказка запустить".to_string()
+            )]
+        );
+        assert_nudge_follows_its_result(&events);
+
+        // Модель увидела подсказку внутри обычного успешного tool result.
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 4);
+        let last = requests[3].messages.last().unwrap();
+        assert!(matches!(
+            &last.content[..],
+            [ContentBlock::ToolResult { tool_use_id, content, is_error: false }]
+                if tool_use_id == "call_3" && content.ends_with(&expected.note)
+        ));
+        harness.finish().await;
+    }
+
+    /// Любой исполненный `bash` между записями — сброс: модель что-то
+    /// запустила и увидела настоящий вывод. Упавшая команда — тоже запуск.
+    #[tokio::test]
+    async fn a_bash_run_between_writes_resets_the_churn_counter() {
+        let mut harness = Harness::new(
+            vec![
+                write_script("call_1", "a.py", "v1"),
+                write_script("call_2", "a.py", "v2"),
+                bash_script("call_3", "true"),
+                write_script("call_4", "a.py", "v3"),
+                write_script("call_5", "a.py", "v4"),
+                bash_script("call_6", "exit 1"),
+                write_script("call_7", "a.py", "v5"),
+                write_script("call_8", "a.py", "v6"),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        let events = harness.turn("напиши").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(started_count(&events), 8);
+        assert!(tool_results(&events)[5].2, "`exit 1` — упавший запуск");
+        assert_eq!(nudges(&events), []);
+        harness.finish().await;
+    }
+
+    /// `read` между записями счётчик **не** сбрасывает: перечитать свой файл —
+    /// не то же, что его запустить.
+    #[tokio::test]
+    async fn reading_between_writes_does_not_reset_the_churn_counter() {
+        let read = |id: &str| tools_script("", &[(id, "read", json!({"path": "a.py"}))]);
+        let mut harness = Harness::new(
+            vec![
+                write_script("call_1", "a.py", "v1"),
+                read("call_2"),
+                write_script("call_3", "a.py", "v2"),
+                read("call_4"),
+                write_script("call_5", "a.py", "v3"),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        let events = harness.turn("напиши").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(churn_ids(&events), ["call_5"]);
+        harness.finish().await;
+    }
+
+    /// Запись в другой путь начинает отсчёт заново: чередование файлов —
+    /// это работа над проектом, а не метание вокруг одного.
+    #[tokio::test]
+    async fn writes_to_different_files_do_not_nudge() {
+        let mut harness = Harness::new(
+            vec![
+                write_script("call_1", "a.py", "v1"),
+                write_script("call_2", "a.py", "v2"),
+                write_script("call_3", "b.py", "v1"),
+                write_script("call_4", "a.py", "v3"),
+                write_script("call_5", "a.py", "v4"),
+                write_script("call_6", "b.py", "v2"),
+                write_script("call_7", "c.py", "v1"),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        let events = harness.turn("напиши проект").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(started_count(&events), 7);
+        assert_eq!(nudges(&events), []);
+        harness.finish().await;
+    }
+
+    /// С удвоенного порога подсказка жёсткая, но ход идёт дальше: в отличие
+    /// от тупого повтора, переписывание файла — законная работа. Детектор
+    /// зацикливания на разные записи не реагирует.
+    #[tokio::test]
+    async fn sixth_write_in_a_row_gets_a_hard_nudge_and_the_turn_goes_on() {
+        let mut scripts = churning_writes(7);
+        scripts.push(text_script("готово"));
+        let mut harness = Harness::new(scripts, PermissionPolicy::Yolo, DEFAULT_MAX_TURNS).await;
+
+        let events = harness.turn("напиши тест").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(started_count(&events), 7, "ни одна запись не заблокирована");
+        assert_eq!(std::fs::read_to_string(harness.path("a.py")).unwrap(), "v7");
+
+        let all = nudges(&events);
+        assert!(
+            all.iter().all(|(_, guard, _)| *guard == Guard::WriteChurn),
+            "{all:?}"
+        );
+        assert_eq!(
+            churn_ids(&events),
+            ["call_3", "call_4", "call_5", "call_6", "call_7"]
+        );
+        assert_nudge_follows_its_result(&events);
+
+        let cwd = harness.dir.path();
+        let input = json!({"path": "a.py"});
+        let results = tool_results(&events);
+        assert!(results.iter().all(|r| !r.2));
+        for (index, writes) in [(2, 3), (3, 4), (4, 5)] {
+            let soft = churn_nudge(ChurnVerdict::Soft { writes }, &input, cwd).unwrap();
+            assert!(
+                results[index].1.ends_with(&soft.note),
+                "{}",
+                results[index].1
+            );
+        }
+        for (index, writes) in [(5, 6), (6, 7)] {
+            let hard = churn_nudge(ChurnVerdict::Hard { writes }, &input, cwd).unwrap();
+            assert!(
+                results[index].1.ends_with(&hard.note),
+                "{}",
+                results[index].1
+            );
+        }
+        assert!(results[5].1.contains("Warning: 6 writes to a.py in a row"));
+        assert!(results[5].1.contains("Change strategy"));
+        assert_eq!(
+            all[3].2,
+            "6-я запись подряд в a.py без запуска между ними — жёсткая подсказка сменить \
+             стратегию"
+        );
+        harness.finish().await;
+    }
+
+    /// `write` и `edit` в один путь считаются вместе, как бы модель этот
+    /// путь ни писала (`a.py`, `./a.py`).
+    #[tokio::test]
+    async fn edits_and_writes_to_one_path_count_together() {
+        let mut harness = Harness::new(
+            vec![
+                write_script("call_1", "app.py", "print(1)\n"),
+                edit_script("call_2", "./app.py", "print(1)", "print(2)"),
+                edit_script("call_3", "app.py", "print(2)", "print(3)"),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        let events = harness.turn("поправь").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(
+            std::fs::read_to_string(harness.path("app.py")).unwrap(),
+            "print(3)\n"
+        );
+        assert_eq!(churn_ids(&events), ["call_3"]);
+        let results = tool_results(&events);
+        assert!(!results[2].2);
+        assert!(
+            results[2].1.starts_with("Replaced 1 occurrence in "),
+            "{}",
+            results[2].1
+        );
+        assert!(
+            results[2].1.contains("write #3 to app.py"),
+            "{}",
+            results[2].1
+        );
+        harness.finish().await;
+    }
+
+    /// После подсказки модель запустила файл — счётчик чист: следующие две
+    /// записи тихие, а новая серия считается с нуля.
+    #[tokio::test]
+    async fn a_run_after_the_nudge_starts_the_count_over() {
+        let mut harness = Harness::new(
+            vec![
+                write_script("call_1", "a.py", "v1"),
+                write_script("call_2", "a.py", "v2"),
+                write_script("call_3", "a.py", "v3"),
+                bash_script("call_4", "cat a.py"),
+                write_script("call_5", "a.py", "v4"),
+                write_script("call_6", "a.py", "v5"),
+                write_script("call_7", "a.py", "v6"),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        let events = harness.turn("напиши").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(churn_ids(&events), ["call_3", "call_7"]);
+        let results = tool_results(&events);
+        assert!(results[2].1.contains("write #3 to a.py"));
+        assert!(
+            results[6].1.contains("write #3 to a.py"),
+            "серия после запуска считается заново: {}",
+            results[6].1
+        );
+        harness.finish().await;
+    }
+
+    /// Детектор зацикливания и сенсор write-churn друг друга не душат:
+    /// заблокированная повторная запись не исполнялась — сенсор её не видит, а
+    /// следующая, уже другая, запись не повтор — детектор её пропускает.
+    #[tokio::test]
+    async fn write_churn_and_loop_detection_keep_separate_counters() {
+        let mut harness = Harness::new(
+            vec![
+                write_script("call_1", "a.py", "same"),
+                write_script("call_2", "a.py", "same"),
+                write_script("call_3", "a.py", "same"),
+                write_script("call_4", "a.py", "other"),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+
+        let events = harness.turn("напиши").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(started_count(&events), 3, "третий повтор не исполнялся");
+
+        let results = tool_results(&events);
+        assert_eq!(
+            results[2],
+            ("call_3".to_string(), repeated_call_result(2), true)
+        );
+        assert!(!results[3].2);
+        assert!(
+            results[3].1.contains("write #3 to a.py"),
+            "{}",
+            results[3].1
+        );
+
+        let guards: Vec<(String, Guard)> = nudges(&events)
+            .into_iter()
+            .map(|(id, guard, _)| (id, guard))
+            .collect();
+        assert_eq!(
+            guards,
+            [
+                ("call_3".to_string(), Guard::LoopDetection),
+                ("call_4".to_string(), Guard::WriteChurn),
+            ]
+        );
+        assert_nudge_follows_its_result(&events);
+        assert_eq!(
+            std::fs::read_to_string(harness.path("a.py")).unwrap(),
+            "other"
+        );
+        harness.finish().await;
+    }
+
+    /// Абляция: `[agent] write_churn = false` выключает сенсор целиком — ни
+    /// подсказок, ни событий даже на 7 перезаписях подряд; `true` и дефолт
+    /// (ключа нет) — сенсор как обычно. Путь тот же, что в CLI: TOML →
+    /// `AgentSettings` → `AgentConfig::write_churn`.
+    #[tokio::test]
+    async fn write_churn_switch_in_the_config_turns_the_sensor_off_and_on() {
+        let on = vec!["call_3", "call_4", "call_5", "call_6", "call_7"];
+        for (agent_section, expected) in [
+            ("write_churn = false", vec![]),
+            ("write_churn = true", on.clone()),
+            ("", on.clone()),
+        ] {
+            let settings =
+                crate::config::Config::parse(&format!("[agent]\n{agent_section}\n"), "t")
+                    .unwrap()
+                    .agent;
+            let mut config = AgentConfig::new("mock-model").with_policy(PermissionPolicy::Yolo);
+            if let Some(threshold) = settings.write_churn {
+                config = config.with_write_churn(threshold);
+            }
+
+            let mut scripts = churning_writes(7);
+            scripts.push(text_script("готово"));
+            let mut harness = Harness::with_config(scripts, config).await;
+            let events = harness.turn("напиши").await;
+            assert_eq!(stop_reason(&events), StopReason::Completed);
+            assert_eq!(started_count(&events), 7, "{agent_section}");
+            assert_eq!(churn_ids(&events), expected, "{agent_section:?}");
+            if expected.is_empty() {
+                assert_eq!(nudges(&events), [], "{agent_section}");
+                for (_, content, _) in tool_results(&events) {
+                    assert!(
+                        content.starts_with("Wrote ") || content.starts_with("Overwrote "),
+                        "{content}"
+                    );
+                    assert!(!content.contains("in a row"), "{content}");
+                }
+            }
+            harness.finish().await;
+        }
+    }
+
+    #[test]
+    fn write_churn_detector_counts_consecutive_writes_to_one_path() {
+        let cwd = Path::new("/work");
+        let at = |path: &str| json!({"path": path, "content": "x"});
+        let ok = false;
+        let failed = true;
+
+        let mut churn = WriteChurnDetector::new(3);
+        // Относительный, `./` и абсолютный путь — один файл; write и edit — одна
+        // серия.
+        assert_eq!(
+            churn.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("edit", &at("./a.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("write", &at("/work/a.py"), ok, cwd),
+            ChurnVerdict::Soft { writes: 3 }
+        );
+        // `read` и упавшая запись нейтральны: не сбрасывают и не считаются.
+        assert_eq!(
+            churn.observe("read", &at("a.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("edit", &at("a.py"), failed, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("edit", &at("a.py"), ok, cwd),
+            ChurnVerdict::Soft { writes: 4 }
+        );
+        // Как и незнакомый тул и запись без строкового `path`.
+        assert_eq!(
+            churn.observe("browse", &at("a.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("write", &json!({}), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Soft { writes: 5 }
+        );
+        assert_eq!(
+            churn.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Hard { writes: 6 }
+        );
+        assert_eq!(
+            churn.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Hard { writes: 7 }
+        );
+
+        // `bash` — сброс, даже упавший.
+        assert_eq!(
+            churn.observe("bash", &json!({"command": "python3 a.py"}), failed, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        // Другой путь — отсчёт заново, и для старого тоже.
+        assert_eq!(
+            churn.observe("write", &at("b.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        // `..` сворачивается лексически.
+        assert_eq!(
+            churn.observe("write", &at("sub/../a.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            churn.observe("write", &at("/work/./a.py"), ok, cwd),
+            ChurnVerdict::Soft { writes: 3 }
+        );
+
+        // 0 — выключено; 1 ведёт себя как 2.
+        let mut off = WriteChurnDetector::new(0);
+        for _ in 0..10 {
+            assert_eq!(
+                off.observe("write", &at("a.py"), ok, cwd),
+                ChurnVerdict::Quiet
+            );
+        }
+        let mut one = WriteChurnDetector::new(1);
+        assert_eq!(
+            one.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Quiet
+        );
+        assert_eq!(
+            one.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Soft { writes: 2 }
+        );
+        assert_eq!(
+            one.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Soft { writes: 3 }
+        );
+        assert_eq!(
+            one.observe("write", &at("a.py"), ok, cwd),
+            ChurnVerdict::Hard { writes: 4 }
+        );
+    }
+
+    #[test]
+    fn churn_nudge_speaks_to_the_model_and_to_the_human() {
+        let cwd = Path::new("/work");
+        let input = json!({"path": "/work/tests/test_chat.py", "content": "x"});
+        assert_eq!(churn_nudge(ChurnVerdict::Quiet, &input, cwd), None);
+
+        // Модели — путь в её же написании и что делать вместо переписывания.
+        let soft = churn_nudge(ChurnVerdict::Soft { writes: 3 }, &input, cwd).unwrap();
+        assert!(
+            soft.note
+                .starts_with("Note: this is write #3 to /work/tests/test_chat.py in a row"),
+            "{}",
+            soft.note
+        );
+        assert!(soft.note.contains("run it"), "{}", soft.note);
+        assert!(soft.note.contains("read the actual error"), "{}", soft.note);
+        // Человеку — путь от cwd.
+        assert_eq!(
+            soft.message,
+            "3-я запись подряд в tests/test_chat.py без запуска между ними — подсказка запустить"
+        );
+
+        let hard = churn_nudge(ChurnVerdict::Hard { writes: 6 }, &input, cwd).unwrap();
+        assert!(
+            hard.note
+                .starts_with("Warning: 6 writes to /work/tests/test_chat.py in a row"),
+            "{}",
+            hard.note
+        );
+        assert!(hard.note.contains("Change strategy"), "{}", hard.note);
+        assert!(hard.note.contains("make the file smaller"), "{}", hard.note);
+        assert_eq!(
+            hard.message,
+            "6-я запись подряд в tests/test_chat.py без запуска между ними — жёсткая подсказка \
+             сменить стратегию"
+        );
+
+        // Файл вне cwd человеку показывается полным путём.
+        let outside = churn_nudge(
+            ChurnVerdict::Soft { writes: 3 },
+            &json!({"path": "/tmp/x.py"}),
+            cwd,
+        )
+        .unwrap();
+        assert!(
+            outside.message.contains(" /tmp/x.py "),
+            "{}",
+            outside.message
+        );
     }
 
     /// Неизвестный тул не роняет ход: модель получает список доступных.
@@ -3181,6 +4124,8 @@ mod tests {
         assert_eq!(config.compaction, CompactionConfig::default());
         assert_eq!(config.loop_detection, DEFAULT_LOOP_DETECTION);
         assert_eq!(DEFAULT_LOOP_DETECTION, 3);
+        assert_eq!(config.write_churn, DEFAULT_WRITE_CHURN);
+        assert_eq!(DEFAULT_WRITE_CHURN, 3);
 
         let config = AgentConfig::new("qwen3-coder")
             .with_cwd(Path::new("/work"))
@@ -3189,8 +4134,10 @@ mod tests {
             .with_max_tokens(2048)
             .with_temperature(0.2)
             .with_compaction(CompactionConfig::new().with_context_limit(32_768))
-            .with_loop_detection(0);
+            .with_loop_detection(0)
+            .with_write_churn(5);
         assert_eq!(config.loop_detection, 0);
+        assert_eq!(config.write_churn, 5);
         assert_eq!(config.model, "qwen3-coder");
         assert_eq!(config.cwd, PathBuf::from("/work"));
         assert_eq!(config.policy, PermissionPolicy::Yolo);

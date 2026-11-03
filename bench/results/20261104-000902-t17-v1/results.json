@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "label": "t17-v1",
+  "run_id": "20261104-000902-t17-v1",
+  "started_at": "2026-11-03T21:09:02.653199Z",
+  "finished_at": "2026-11-03T23:38:43.894883Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 1,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "models": [
+      {
+        "alias": "flint40",
+        "model": "flint:40b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "qwen36c",
+        "model": "qwen3.6:35b-a3b-coding",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "qwen36c-5090",
+        "model": "qwen3.6:35b-a3b-coding",
+        "base_url": "http://white.local:11434/v1",
+        "timeout_multiplier": 1.5
+      },
+      {
+        "alias": "qwen36c-mlx4",
+        "model": "qwen3.6:35b-a3b-coding-nvfp4",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "beam",
+        "model": "beam:cloud",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T17",
+        "slug": "ws-chat",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T17-ws-chat",
+        "timeout_seconds": 1800,
+        "repeats": 1,
+        "tags": [
+          "project",
+          "frontend",
+          "backend",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "prompt": "Build a small multi-user chat in the current working directory: a Python\nbackend on aiohttp, a plain JavaScript frontend, and an automated test for\nit. A checker will start your server, talk to it over WebSocket, and drive\nthe page in a headless browser like a real user (typing and clicking).\nFollow the contract below exactly.\n\n## Files\n\n- `server.py`\n- `static/index.html`\n- `static/app.js`\n- `static/style.css`\n- `test_chat.py`\n\n## Server (`server.py`)\n\n- Python 3 with aiohttp. It is started as `python3 server.py` from the\n  working directory and must keep running until it is killed.\n- Port: the `PORT` environment variable, default `8765`. Listen on `0.0.0.0`\n  or `127.0.0.1`: the checker connects to `127.0.0.1`.\n- `GET /` returns `static/index.html`. Every file in `static/` is also served\n  at `/static/<name>`, and `index.html` loads `/static/style.css` and\n  `/static/app.js` from there.\n- The WebSocket endpoint is `/ws` on the same port.\n\n## Protocol\n\nEvery WebSocket message is a text frame holding one JSON object.\n\nClient to server:\n\n- `{\"type\": \"join\", \"nick\": \"<nick>\"}`\n- `{\"type\": \"message\", \"text\": \"<text>\"}`\n\nServer to client:\n\n- `{\"type\": \"history\", \"messages\": [...]}`: sent only to the client that\n  joined, right after its `join`. `messages` holds the last 50 chat messages,\n  oldest first, each in the `message` form below. System notices are not\n  part of the history.\n- `{\"type\": \"system\", \"text\": \"...\"}`: sent to every joined client when a\n  client joins and when a joined client leaves (its WebSocket closes). The\n  text names the nick, e.g. `alice joined`, `alice left`. Whether the joining\n  client also receives its own join notice is up to you.\n- `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}`: when a\n  joined client sends a message, the server broadcasts it to every joined\n  client, the sender included. `nick` is the sender's nick, `ts` is the\n  server time in Unix milliseconds.\n\nA client that is connected but has not joined gets no broadcasts, and its\n`message` frames are ignored.\n\n## Page\n\n- `static/index.html` has elements with exactly these ids: `nick` (text\n  input), `join-btn` (button), `msg` (text input), `send-btn` (button),\n  `messages` (the chat feed).\n- No auto-join. Loading the page must never send `join` by itself, not even\n  with a default or remembered nick: the user joins only by acting. Until\n  then `#nick` and `#join-btn` are visible and enabled, and `#messages` is\n  empty (no placeholder text).\n- Clicking `#join-btn` joins with the nick typed into `#nick`. Pressing Enter\n  in `#nick` does the same.\n- After joining, `#msg` and `#send-btn` are visible and enabled (before\n  joining they may be hidden or disabled). Pressing Enter in `#msg` or\n  clicking `#send-btn` sends the typed text as a message.\n- On join, `#messages` shows the received history. After that, every\n  incoming `message` and `system` notice is appended to `#messages` with its\n  text visible. A message is shown when its broadcast comes back from the\n  server (the sender receives its own broadcast too).\n- The page may open the WebSocket on load or when the user joins.\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet. The checker's browser can reach only your server.\n\n## Test (`test_chat.py`)\n\nWrite your own automated test and ship it with the code:\n\n- It runs as `python3 test_chat.py` from the working directory, needs\n  nothing already running, and finishes within 60 seconds.\n- It starts `server.py` itself as a subprocess (use `sys.executable`), with\n  `PORT` set to a free port it picks, waits until the server accepts\n  connections, and stops the server at the end, also when a check fails.\n- It checks the protocol with real WebSocket clients: join and history,\n  broadcast between two clients, join and leave notices, history for a\n  newcomer.\n- It exits with status 0 only if every check passed, non-zero otherwise.\n\n## Environment\n\naiohttp is installed in the Python that the checker uses to run `server.py`\nand `test_chat.py`. The `python3` on your PATH may not have it. If so, you may\ncreate a virtual environment inside the working directory (for example\n`python3 -m venv .venv && .venv/bin/pip install aiohttp`); do not install\npackages anywhere else. You may start the server and run your test while you\nwork, but you don't have to. Stop any server you started before you finish.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-03T21:09:14.121005Z",
+      "pass": false,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 931.163464167,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 1581509,
+        "output": 53694,
+        "cached": 1536368
+      },
+      "session": {
+        "assistant_messages": 80,
+        "tool_uses": 80,
+        "tool_errors": 26,
+        "compactions": 0,
+        "stop_reason": "max_turns",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): FAIL\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer B ui]: page 1: typing a nick into #nick and pressing Enter did not join: probe752b2d expected a `system` notice that ann752b2d joined within 5 s; received instead: nothing\n  page errors: pageerror: Failed to execute 'send' on 'WebSocket': Still in CONNECTING state.\nFAIL [layer C own test_chat.py]: `python3 test_chat.py` exited with code 1; its output:\nPASS join gets history\nPASS own join notice\nPASS newcomer gets history\nPASS own join notice bob\nPASS broadcast to other client\nFAIL broadcast back to sender\nPASS history for newcomer\nPASS unjoined client ignored\nFAIL dave history empty\nPASS server alive after leave\nserver output: ======== Running on http://0.0.0.0:8791 ========\n(Press CTRL+C to quit)\n"
+      },
+      "answer_chars": 1872,
+      "stdout_path": "logs/flint40/T17/1.stdout.txt",
+      "stderr_path": "logs/flint40/T17/1.stderr.txt",
+      "session_path": "sessions/flint40/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-03T21:25:05.807618Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 3600.004420583,
+      "timeout_seconds": 3600.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 14,
+        "tool_uses": 14,
+        "tool_errors": 2,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793744706254.709}\nFAIL [layer C own test_chat.py]: `python3 test_chat.py` exited with code 1; its output:\nServer is ready\n  PASS: HTML served\n  PASS: Static files served\n  PASS: Join and history\n  PASS: Broadcast between clients\n  PASS: Join and leave notices\n  FAIL: History for newcomer - Expected 5 messages, got 6\n  PASS: Unjoined client ignored\n\nResults: 6 passed, 1 failed\nUnclosed client session\nclient_session: <aiohttp.client.ClientSession object at 0x106851160>\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen36c/T17/1.stdout.txt",
+      "stderr_path": "logs/qwen36c/T17/1.stderr.txt",
+      "session_path": "sessions/qwen36c/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c-5090",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-03T22:25:29.973092Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 505.952481458,
+      "timeout_seconds": 2700.0,
+      "tokens": {
+        "input": 623552,
+        "output": 30957,
+        "cached": 591620
+      },
+      "session": {
+        "assistant_messages": 35,
+        "tool_uses": 34,
+        "tool_errors": 4,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793745236181}\nFAIL [layer C own test_chat.py]: `python3 test_chat.py` exited with code 1; its output:\nclient_session: <aiohttp.client.ClientSession object at 0x10b2ca270>\nUnclosed client session\nclient_session: <aiohttp.client.ClientSession object at 0x10b2ca120>\nPASS: HTML page served\nPASS: Static files served\nPASS: Join and history\nPASS: Broadcast between two clients\nFAIL: Join and leave notices - eve did not receive 'dave joined' notice\nPASS: History for newcomer\nPASS: Unjoined client ignored\n\nSome tests failed!\n"
+      },
+      "answer_chars": 3011,
+      "stdout_path": "logs/qwen36c-5090/T17/1.stdout.txt",
+      "stderr_path": "logs/qwen36c-5090/T17/1.stderr.txt",
+      "session_path": "sessions/qwen36c-5090/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c-mlx4",
+      "model_id": "qwen3.6:35b-a3b-coding-nvfp4",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-03T22:34:19.364891Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 3600.002863041,
+      "timeout_seconds": 3600.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 14,
+        "tool_uses": 14,
+        "tool_errors": 0,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793748859707.1948}\nFAIL [layer C own test_chat.py]: `python3 test_chat.py` did not finish within 60 s (does it stop its server?); its output:\n(no output)\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen36c-mlx4/T17/1.stdout.txt",
+      "stderr_path": "logs/qwen36c-mlx4/T17/1.stderr.txt",
+      "session_path": "sessions/qwen36c-mlx4/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "beam",
+      "model_id": "beam:cloud",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-03T23:35:24.430356Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 193.857218542,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 48439,
+        "output": 6069,
+        "cached": 37184
+      },
+      "session": {
+        "assistant_messages": 13,
+        "tool_uses": 12,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer C own test_chat.py]: `python3 test_chat.py` exited with code 1; its output:\n    return runner.run(main)\n           ~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/runners.py\", line 128, in run\n    return self._loop.run_until_complete(task)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py\", line 719, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-JA3xp2/cwd/test_chat.py\", line 58, in main\n    assert got[\"type\"] == \"system\" and \"bob joined\" in got[\"text\"], got\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: {'type': 'system', 'text': 'alice joined'}\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/beam/T17/1.stdout.txt",
+      "stderr_path": "logs/beam/T17/1.stderr.txt",
+      "session_path": "sessions/beam/T17/1.jsonl",
+      "error": null
+    }
+  ]
+}

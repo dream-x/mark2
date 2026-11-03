@@ -24,8 +24,15 @@ OpenAI-compatible. План: `docs/plans/20260824-rust-agent-harness.md`.
 - Запуск: `cargo run -q -p mark2-cli -- "задача"`
 - Проверка перед коммитом:
   `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
+- Ревью диффа локальной моделью (по желанию, нужен ollama): `scripts/review.sh`
+  (exit 0 — approve, 2 — needs-work, 1 — сбой); правишь саму обёртку — гоняй
+  `sh scripts/test-review.sh`.
 
 Тесты обязательны в каждой задаче: код и тесты пишутся в рамках одного таска.
+
+Значимое изменение сопровождается записью в `CHANGELOG.md` в формате
+«что сделано ← почему → к чему привело (измеримо)»; причины и сроки годности
+контролей харнеса — в `docs/decisions.md`.
 
 ## Запуск против локальной модели
 

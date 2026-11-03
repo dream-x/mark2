@@ -12,17 +12,20 @@
 //!
 //! * [`Event::Error`] — уходит в stderr, чтобы не смешиваться с ответом
 //!   модели в пайпе;
+//! * [`Event::Nudge`] — тоже stderr, строкой с маркером `[agent] <guard>`
+//!   ([`nudge_line`]): по нему в логах прогона видно, где сработал
+//!   предохранитель agent loop;
 //! * [`Event::ApprovalRequired`] — вопрос пользователю живёт в интерактивном
 //!   цикле (для него есть чистая заготовка [`approval_prompt`]);
-//! * итог [`Event::Usage`] — печатается один раз в конце хода в stderr
-//!   ([`usage_summary`]);
+//! * итог [`Event::Usage`] и счётчик [`Event::ArgumentsCoerced`] — печатаются
+//!   одной строкой в конце хода в stderr ([`usage_summary`]);
 //! * ответ, который модель положила целиком в thinking-канал
 //!   ([`thinking_only_answer`]) — решение «показать рассуждения вместо
 //!   ответа» принимает фронтенд, здесь только распознавание и текст пометки;
 //! * сводка тул-коллов print mode ([`tool_summary_line`]) — она в stderr.
 
-use mark2_core::Event;
 use mark2_core::message::{ContentBlock, Message, Role, Usage};
+use mark2_core::{Event, Guard};
 use serde_json::Value;
 
 /// Приглушённый текст (рассуждения, служебные строки).
@@ -131,7 +134,7 @@ pub fn render(event: &Event, opts: RenderOptions) -> Option<String> {
         }
 
         // Всё остальное — служебное (`TurnStarted`, `MessageComplete`,
-        // `Usage`, `TurnFinished`), рендерится отдельно (`Error`,
+        // `Usage`, `TurnFinished`), рендерится отдельно (`Error`, `Nudge`,
         // `ApprovalRequired`) или ещё не существует: новые варианты `Event`
         // обязаны проходить здесь молча, а не ронять CLI.
         _ => None,
@@ -146,8 +149,14 @@ pub fn approval_prompt(name: &str, input: &Value, opts: RenderOptions) -> String
     format!("\n{}\nallow? [y/N] ", opts.paint(DIM, &header))
 }
 
-/// Итог расхода токенов за ход (идёт в stderr).
-pub fn usage_summary(usage: &Usage, opts: RenderOptions) -> String {
+/// Итог хода (идёт в stderr): расход токенов и `coerced N` — сколько
+/// тул-коллов спасло приведение типов аргументов к схеме (по
+/// [`Event::ArgumentsCoerced`]).
+///
+/// Счётчик печатается и нулём: ноль на всей матрице бенча — сигнал, что
+/// приведение больше не нужно. Префикс `tokens: in … / out …` — контракт с
+/// парсером бенча (`mark2_bench::metrics::parse_tokens`), хвост он пропускает.
+pub fn usage_summary(usage: &Usage, coerced_calls: usize, opts: RenderOptions) -> String {
     let mut line = format!(
         "tokens: in {} / out {}",
         usage.input_tokens, usage.output_tokens
@@ -155,6 +164,7 @@ pub fn usage_summary(usage: &Usage, opts: RenderOptions) -> String {
     if let Some(cached) = usage.cache_read_tokens.filter(|tokens| *tokens > 0) {
         line.push_str(&format!(" (cached {cached})"));
     }
+    line.push_str(&format!(" · coerced {coerced_calls}"));
     opts.paint(DIM, &line)
 }
 
@@ -172,6 +182,13 @@ pub fn note_line(text: &str, opts: RenderOptions) -> String {
 /// Предупреждение для stderr: ход не сломан, но что-то не так, как ждали.
 pub fn warning_line(text: &str, opts: RenderOptions) -> String {
     opts.paint(YELLOW, &format!("warning: {text}"))
+}
+
+/// Срабатывание предохранителя agent loop для stderr:
+/// `[agent] write_churn: <что случилось>`. Маркер стабилен — по нему грепают
+/// логи прогонов.
+pub fn nudge_line(guard: Guard, message: &str, opts: RenderOptions) -> String {
+    opts.paint(YELLOW, &format!("[agent] {}: {message}", guard.as_str()))
 }
 
 /// Ответ модели, если она положила его целиком в thinking-канал.
@@ -397,6 +414,11 @@ mod tests {
             Event::Error {
                 message: "boom".into(),
             },
+            Event::Nudge {
+                id: "c1".into(),
+                guard: Guard::WriteChurn,
+                message: "3-я запись подряд".into(),
+            },
             Event::ApprovalRequired {
                 id: "c1".into(),
                 name: "write".into(),
@@ -431,16 +453,16 @@ mod tests {
     fn usage_summary_counts_both_directions() {
         let opts = interactive();
         assert_eq!(
-            usage_summary(&Usage::new(1200, 340), opts),
-            "tokens: in 1200 / out 340"
+            usage_summary(&Usage::new(1200, 340), 0, opts),
+            "tokens: in 1200 / out 340 · coerced 0"
         );
         let cached = Usage {
             cache_read_tokens: Some(1000),
             ..Usage::new(1200, 340)
         };
         assert_eq!(
-            usage_summary(&cached, opts),
-            "tokens: in 1200 / out 340 (cached 1000)"
+            usage_summary(&cached, 2, opts),
+            "tokens: in 1200 / out 340 (cached 1000) · coerced 2"
         );
     }
 
@@ -548,6 +570,26 @@ mod tests {
         assert_eq!(
             warning_line("x", RenderOptions::interactive(false, true)),
             format!("{YELLOW}warning: x{RESET}")
+        );
+    }
+
+    #[test]
+    fn nudge_line_carries_the_agent_marker() {
+        assert_eq!(
+            nudge_line(Guard::WriteChurn, "3-я запись подряд в a.py", interactive()),
+            "[agent] write_churn: 3-я запись подряд в a.py"
+        );
+        assert_eq!(
+            nudge_line(Guard::LoopDetection, "x", RenderOptions::print()),
+            "[agent] loop_detection: x"
+        );
+        assert_eq!(
+            nudge_line(
+                Guard::LoopDetection,
+                "x",
+                RenderOptions::interactive(false, true)
+            ),
+            format!("{YELLOW}[agent] loop_detection: x{RESET}")
         );
     }
 
