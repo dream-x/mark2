@@ -1,0 +1,319 @@
+{
+  "schema_version": 1,
+  "label": "hard-smoke",
+  "run_id": "20261103-135355-hard-smoke",
+  "started_at": "2026-11-03T10:53:55.104132Z",
+  "finished_at": "2026-11-03T11:00:35.96699Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 1,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "models": [
+      {
+        "alias": "bolt4",
+        "model": "nemotron-3.5-bolt:e4b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 1.0
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T09",
+        "slug": "needle-edit",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T09-needle-edit",
+        "timeout_seconds": 240,
+        "repeats": 1,
+        "tags": [
+          "edit",
+          "precision",
+          "hard"
+        ],
+        "prompt": "The file `handlers.py` in the current working directory is a large module of\nwarehouse event validators. One of them, `validate_shipment()`, has a bug.\n\nThe docstring of `validate_shipment()` is the specification and it is correct.\nThe code of `validate_shipment()` disagrees with it for exactly one boundary.\n\nFix the code of `validate_shipment()` so that it matches its docstring.\n\nRules:\n\n- Change only the single wrong token inside `validate_shipment()`. It is a\n  one-token edit.\n- Every other function in the file is correct and must stay exactly as it is.\n- Do not touch any docstring, the helpers, the constants, the blank lines or\n  the formatting.\n- Do not rewrite or reformat the file, and do not create new files.\n"
+      },
+      {
+        "id": "T10",
+        "slug": "yaml-surgical",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T10-yaml-surgical",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "edit",
+          "restraint",
+          "hard"
+        ],
+        "prompt": "The file `deploy.yaml` in the current working directory is a deployment\nmanifest with several environments and services.\n\nSet `replicas` of the `api` service in the `prod` environment to 6.\n\nRules:\n\n- The file is compared byte-for-byte with the original afterwards: exactly one\n  line may differ.\n- Do not reformat the file: keep the quoting, the indentation, the key order\n  and the blank lines as they are.\n- Do not touch any comments.\n- Do not change the `staging` environment or any other service.\n- Do not create backups or any other new files.\n"
+      },
+      {
+        "id": "T11",
+        "slug": "cascade-bugs",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T11-cascade-bugs",
+        "timeout_seconds": 300,
+        "repeats": 1,
+        "tags": [
+          "edit",
+          "verify-loop",
+          "hard"
+        ],
+        "prompt": "The current working directory contains `textkit.py` and `test.py`.\n\nRunning `python3 test.py` currently fails. Make it pass.\n\nRules:\n\n- Fix the code in `textkit.py`. The docstrings in `textkit.py` describe the\n  intended behaviour and are correct.\n- Do not modify `test.py` in any way, and do not delete or rename it.\n- Run `python3 test.py` yourself at the end and make sure it prints\n  `all tests passed` and exits successfully.\n"
+      },
+      {
+        "id": "T12",
+        "slug": "decoy-answer",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T12-decoy-answer",
+        "timeout_seconds": 240,
+        "repeats": 1,
+        "tags": [
+          "search",
+          "reasoning",
+          "hard"
+        ],
+        "prompt": "The current working directory contains `README.md` and a small Python library\nin `src/`: retry policies for an HTTP client.\n\nThe docs in this repo may be stale; trust the code. What is the effective retry\nlimit that `build_policy(\"edge\")` actually produces?\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `retry_limit = <value>`\n- Use the `retry_limit = ...` form only for that final answer line. Do not\n  write it with any other value anywhere in your reply.\n- This is a read-only task: do not modify, create or delete any file. That\n  includes helper scripts: if you need to execute code, run it inline with\n  `python3 -c \"...\"` instead of writing a file.\n"
+      },
+      {
+        "id": "T13",
+        "slug": "moved-config",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T13-moved-config",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "search",
+          "recovery",
+          "hard"
+        ],
+        "prompt": "The service in the current working directory reads its settings from\n`app/config/settings.ini` — at least it did before the 2.0 reorganization.\n\nFind the configuration file the 2.0 layout actually uses and report the\n`cache_ttl` value.\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `cache_ttl = <value>`\n- Use the `cache_ttl = ...` form only for that final answer line. Do not write\n  it with any other value anywhere in your reply.\n- Read-only task: do not modify, create or delete any file.\n"
+      },
+      {
+        "id": "T14",
+        "slug": "csv-report",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T14-csv-report",
+        "timeout_seconds": 240,
+        "repeats": 1,
+        "tags": [
+          "bash",
+          "composition",
+          "precision",
+          "hard"
+        ],
+        "prompt": "Read `sales.csv` in the current working directory. Its header is\n`date,region,sku,units,unit_price`.\n\nFor each region compute the total revenue: the sum of `units * unit_price` over\nall rows of that region, rounded to 2 decimal places ONCE at the end (do not\nround per row).\n\nWrite `summary.csv` in the current working directory:\n\n- header `region,total`\n- one row per region\n- rows sorted by total, descending\n- totals formatted with exactly 2 decimal places\n- the file must end with a single trailing newline\n\nDo not modify `sales.csv`.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T09",
+      "repeat": 1,
+      "started_at": "2026-11-03T10:53:59.675997Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 240.004981584,
+      "timeout_seconds": 240.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 10,
+        "tool_errors": 5,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: validate_shipment({'hours_open': 48}) = [], expected ['overdue']\nFAIL: validate_shipment({'hours_open': 48.0}) = [], expected ['overdue']\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/bolt4/T09/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T09/1.stderr.txt",
+      "session_path": "sessions/bolt4/T09/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T10",
+      "repeat": 1,
+      "started_at": "2026-11-03T10:57:59.808727Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 60.812336917,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 20814,
+        "output": 4613,
+        "cached": 16708
+      },
+      "session": {
+        "assistant_messages": 8,
+        "tool_uses": 7,
+        "tool_errors": 4,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 81,
+      "stdout_path": "logs/bolt4/T10/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T10/1.stderr.txt",
+      "session_path": "sessions/bolt4/T10/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T11",
+      "repeat": 1,
+      "started_at": "2026-11-03T10:59:00.644976Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 32.639314917,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 10071,
+        "output": 2482,
+        "cached": 7043
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "normalize_spaces: ok\n",
+        "stderr": "Traceback (most recent call last):\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-5AncRG/cwd/test.py\", line 118, in <module>\n    main()\n    ~~~~^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-5AncRG/cwd/test.py\", line 112, in main\n    test()\n    ~~~~^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-5AncRG/cwd/test.py\", line 37, in test_truncate_words\n    check(\n    ~~~~~^\n        \"truncate_words/limit-1\",\n        ^^^^^^^^^^^^^^^^^^^^^^^^^\n        textkit.truncate_words(\"alpha beta\", 1),\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        \"alpha...\",\n        ^^^^^^^^^^^\n    )\n    ^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-5AncRG/cwd/test.py\", line 8, in check\n    raise AssertionError(\"%s: got %r, expected %r\" % (label, got, want))\nAssertionError: truncate_words/limit-1: got ' alpha...', expected 'alpha...'\nFAIL: python3 test.py did not pass\n"
+      },
+      "answer_chars": 1106,
+      "stdout_path": "logs/bolt4/T11/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T11/1.stderr.txt",
+      "session_path": "sessions/bolt4/T11/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T12",
+      "repeat": 1,
+      "started_at": "2026-11-03T10:59:33.417455Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 22.120139583,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 9646,
+        "output": 1748,
+        "cached": 7509
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 16,
+      "stdout_path": "logs/bolt4/T12/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T12/1.stderr.txt",
+      "session_path": "sessions/bolt4/T12/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T13",
+      "repeat": 1,
+      "started_at": "2026-11-03T10:59:55.57648Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 16.686337375,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 8464,
+        "output": 1301,
+        "cached": 6822
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 5,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 17,
+      "stdout_path": "logs/bolt4/T13/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T13/1.stderr.txt",
+      "session_path": "sessions/bolt4/T13/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T14",
+      "repeat": 1,
+      "started_at": "2026-11-03T11:00:12.318693Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 23.622190042,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 6993,
+        "output": 1973,
+        "cached": 5437
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 72,
+      "stdout_path": "logs/bolt4/T14/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T14/1.stderr.txt",
+      "session_path": "sessions/bolt4/T14/1.jsonl",
+      "error": null
+    }
+  ]
+}
