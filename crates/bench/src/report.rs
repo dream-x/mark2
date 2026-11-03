@@ -193,6 +193,17 @@ fn percent(part: usize, whole: usize) -> String {
     format!("{}%", value.round())
 }
 
+/// Бюджет `verify.sh` задачи: свой из `task.toml` или общий дефолт прогона.
+fn verify_budget(results: &Results, task_id: &str) -> u64 {
+    results
+        .config
+        .tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .and_then(|task| task.verify_timeout_seconds)
+        .unwrap_or(results.config.verify_timeout_seconds)
+}
+
 /// Аномалии: всё, из-за чего цифрам выше нельзя верить как есть.
 fn render_anomalies(results: &Results) -> String {
     let mut out = String::from("## Аномалии\n\n");
@@ -222,7 +233,7 @@ fn render_anomalies(results: &Results) -> String {
         if run.verify.as_ref().is_some_and(|verify| verify.timed_out) {
             lines.push(format!(
                 "- {who}: verify.sh не уложился в {}s",
-                results.config.verify_timeout_seconds
+                verify_budget(results, &run.task)
             ));
         }
         if run.session.is_none() {
@@ -269,6 +280,8 @@ mod tests {
             tags: vec![],
             policy: TaskPolicy::Yolo,
             context_limit: None,
+            max_turns: None,
+            verify_timeout_seconds: None,
             prompt: "промпт".into(),
         }
     }
@@ -527,6 +540,29 @@ mod tests {
             .retain(|run| run.model == "qwen9" && run.task == "T01");
         let report = render_report(&results);
         assert!(report.contains("## Аномалии\n\nНет.\n"), "{report}");
+    }
+
+    /// Таймаут verify в аномалиях называет бюджет именно этой задачи.
+    #[test]
+    fn verify_timeout_anomaly_names_the_task_budget() {
+        let mut results = fixture();
+        results.config.tasks[1].verify_timeout_seconds = Some(300);
+        for run in &mut results.runs {
+            if run.model == "oss120" && run.repeat == 1 {
+                let verify = run.verify.as_mut().unwrap();
+                verify.timed_out = true;
+                verify.exit_code = None;
+            }
+        }
+        let report = render_report(&results);
+        assert!(
+            report.contains("- [oss120] T01 повтор 1: verify.sh не уложился в 30s"),
+            "{report}"
+        );
+        assert!(
+            report.contains("- [oss120] T02 повтор 1: verify.sh не уложился в 300s"),
+            "{report}"
+        );
     }
 
     #[test]

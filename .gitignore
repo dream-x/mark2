@@ -5,3 +5,6 @@ target/
 # Сессии прогонов бенча: тяжёлые JSONL, в git идут только report.md и results.json.
 bench/results/*/sessions/
 bench/results/*/logs/
+
+# Окружение проектных verify (aiohttp + Playwright), собирается bench/uitest/bootstrap.sh.
+bench/uitest/.venv/

@@ -1,0 +1,8 @@
+[task]
+timeout_seconds = 1800
+tags = ["project", "frontend", "backend", "hard"]
+# A whole project: flint:40b ran into the default 50 on this task.
+max_turns = 80
+# Three layers (protocol, headless browser, the model's own test, up to 60 s)
+# plus a one-time build of bench/uitest/.venv on the first run (~30 s).
+verify_timeout_seconds = 300

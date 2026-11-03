@@ -14,11 +14,11 @@
 //!   сэмплинг;
 //! * **настройки задачи** — тоже снаружи, без особых режимов в mark2:
 //!   `policy = "read-only"` превращается в `--policy read-only` вместо
-//!   `--yolo`, `context_limit` — в секцию `[models."<id>"]` того же
-//!   `.mark2.toml` (см. [`project_config`]);
+//!   `--yolo`, `max_turns` — в строку секции `[agent]`, `context_limit` — в
+//!   секцию `[models."<id>"]` того же `.mark2.toml` (см. [`project_config`]);
 //! * **таймаут** = `timeout_seconds` задачи × множитель модели, по истечении —
 //!   `kill` и пометка `timed_out` (прогон засчитывается как непройденный, но не
-//!   вешает бенч).
+//!   вешает бенч); у `verify.sh` свой бюджет — [`verify_timeout`].
 //!
 //! Ранер не интерпретирует ответ модели: приговор выносит `verify.sh`.
 
@@ -43,11 +43,13 @@ pub const WARMUP_PROMPT: &str = "Reply with exactly: ok";
 /// Бюджет прогрева. Он не таймируется, но и висеть вечно не должен.
 pub const WARMUP_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Бюджет `verify.sh`: проверка локальная и должна быть мгновенной.
+/// Бюджет `verify.sh` по умолчанию: проверка локальная и должна быть
+/// мгновенной. Задача, которой этого мало (сервер + браузер), задаёт свой
+/// `verify_timeout_seconds`.
 pub const VERIFY_TIMEOUT_SECONDS: u64 = 30;
 
 /// Проектный конфиг, который кладётся в cwd каждого прогона (база; задача с
-/// `context_limit` дописывает к нему секцию модели — см. [`project_config`]).
+/// `max_turns` или `context_limit` дописывает к нему — см. [`project_config`]).
 pub const PROJECT_CONFIG: &str = "[agent]\ntemperature = 0.0\n";
 
 /// Сколько символов вывода `verify.sh` сохраняем в `results.json`.
@@ -194,7 +196,7 @@ impl Runner {
         let project_config_path = sandbox.cwd().join(".mark2.toml");
         std::fs::write(
             &project_config_path,
-            project_config(&model.model, task.context_limit),
+            project_config(&model.model, task.context_limit, task.max_turns),
         )
         .with_context(|| format!("не удалось записать {}", project_config_path.display()))?;
 
@@ -253,7 +255,7 @@ impl Runner {
             &task.verify_script(),
             sandbox.cwd(),
             &stdout_path,
-            Duration::from_secs(VERIFY_TIMEOUT_SECONDS),
+            verify_timeout(task),
         )
         .await?;
         record.pass = verify.passed();
@@ -358,6 +360,14 @@ pub fn effective_timeout(task: &Task, model: &ModelSpec) -> Duration {
     Duration::from_secs_f64(seconds.max(1.0))
 }
 
+/// Бюджет `verify.sh` прогона: свой у задачи или общий [`VERIFY_TIMEOUT_SECONDS`].
+pub fn verify_timeout(task: &Task) -> Duration {
+    Duration::from_secs(
+        task.verify_timeout_seconds
+            .unwrap_or(VERIFY_TIMEOUT_SECONDS),
+    )
+}
+
 /// Аргументы запуска mark2 для одного прогона.
 ///
 /// Чистая функция: протокол запуска (print mode, политика задачи, куда ходить,
@@ -392,19 +402,28 @@ pub fn mark2_args(
 
 /// Содержимое `<cwd>/.mark2.toml` для прогона модели `model_id`.
 ///
-/// Без `context_limit` — ровно [`PROJECT_CONFIG`], байт в байт как раньше.
-/// С ним — та же база плюс `[models."<model_id>"] context_limit = N`: ключ —
-/// точный id модели, а точное совпадение в `mark2_core::config` важнее
-/// любого приблизительного, так что лимит гарантированно достаётся этой
-/// модели.
-pub fn project_config(model_id: &str, context_limit: Option<u64>) -> String {
-    match context_limit {
-        None => PROJECT_CONFIG.to_string(),
-        Some(limit) => format!(
-            "{PROJECT_CONFIG}\n[models.{}]\ncontext_limit = {limit}\n",
-            toml_basic_string(model_id)
-        ),
+/// Без настроек задачи — ровно [`PROJECT_CONFIG`], байт в байт как раньше.
+/// `max_turns` дописывается строкой сразу за базой: база — это секция
+/// `[agent]` целиком, так что строка попадает в неё же. `context_limit` —
+/// отдельной секцией `[models."<model_id>"]`: ключ — точный id модели, а
+/// точное совпадение в `mark2_core::config` важнее любого приблизительного,
+/// так что лимит гарантированно достаётся этой модели.
+pub fn project_config(
+    model_id: &str,
+    context_limit: Option<u64>,
+    max_turns: Option<usize>,
+) -> String {
+    let mut text = PROJECT_CONFIG.to_string();
+    if let Some(turns) = max_turns {
+        text.push_str(&format!("max_turns = {turns}\n"));
     }
+    if let Some(limit) = context_limit {
+        text.push_str(&format!(
+            "\n[models.{}]\ncontext_limit = {limit}\n",
+            toml_basic_string(model_id)
+        ));
+    }
+    text
 }
 
 /// Строка в кавычках по правилам TOML basic string: id моделей бывают с
@@ -692,19 +711,61 @@ mod tests {
     }
 
     #[test]
-    fn project_config_without_a_limit_is_unchanged() {
-        assert_eq!(project_config("qwen3.5:9b", None), PROJECT_CONFIG);
+    fn project_config_without_task_settings_is_unchanged() {
+        assert_eq!(project_config("qwen3.5:9b", None, None), PROJECT_CONFIG);
         assert_eq!(
-            project_config("qwen3.5:9b", None),
+            project_config("qwen3.5:9b", None, None),
             "[agent]\ntemperature = 0.0\n"
         );
+    }
+
+    /// `max_turns` обязан доехать до `[agent]` именно так, как его читает
+    /// mark2 (CLI берёт `config.agent.max_turns` из проектного конфига), и не
+    /// сломать соседние настройки.
+    #[test]
+    fn project_config_with_max_turns_reaches_the_agent_settings_of_mark2() {
+        let text = project_config("flint:40b", None, Some(80));
+        assert_eq!(text, "[agent]\ntemperature = 0.0\nmax_turns = 80\n");
+        let config = mark2_core::config::Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.max_turns, Some(80));
+        assert_eq!(config.agent.temperature, Some(0.0));
+
+        // Вместе с context_limit: строка остаётся в [agent], лимит — у модели.
+        let text = project_config("flint:40b", Some(8192), Some(80));
+        assert_eq!(
+            text,
+            "[agent]\ntemperature = 0.0\nmax_turns = 80\n\n[models.\"flint:40b\"]\ncontext_limit = 8192\n"
+        );
+        let config = mark2_core::config::Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.max_turns, Some(80));
+        assert_eq!(config.agent.temperature, Some(0.0));
+        assert_eq!(config.resolve("flint:40b").context_limit, Some(8192));
+    }
+
+    #[test]
+    fn verify_timeout_is_the_task_budget_or_the_default() {
+        let root = TempDir::new().unwrap();
+        let dir = write_task(root.path(), "T01-x", "[task]\ntimeout_seconds = 60\n");
+        let task = load_task(&dir).unwrap();
+        assert_eq!(
+            verify_timeout(&task),
+            Duration::from_secs(VERIFY_TIMEOUT_SECONDS)
+        );
+
+        let dir = write_task(
+            root.path(),
+            "T17-x",
+            "[task]\ntimeout_seconds = 60\nverify_timeout_seconds = 300\n",
+        );
+        let task = load_task(&dir).unwrap();
+        assert_eq!(verify_timeout(&task), Duration::from_secs(300));
     }
 
     /// Лимит обязан доехать до настроек модели именно так, как их читает
     /// mark2: разбираем сгенерированный файл парсером ядра, а не глазами.
     #[test]
     fn project_config_with_a_limit_reaches_the_model_settings_of_mark2() {
-        let text = project_config("qwen3.5:9b", Some(8192));
+        let text = project_config("qwen3.5:9b", Some(8192), None);
         assert_eq!(
             text,
             "[agent]\ntemperature = 0.0\n\n[models.\"qwen3.5:9b\"]\ncontext_limit = 8192\n"
@@ -720,7 +781,8 @@ mod tests {
         // Экзотический id: кавычки, слеши, обратный слеш — ключ экранирован.
         let odd = r#"hf.co/org/"model"\q4:latest"#;
         let config =
-            mark2_core::config::Config::parse(&project_config(odd, Some(4096)), "x.toml").unwrap();
+            mark2_core::config::Config::parse(&project_config(odd, Some(4096), None), "x.toml")
+                .unwrap();
         assert_eq!(config.resolve(odd).context_limit, Some(4096));
     }
 

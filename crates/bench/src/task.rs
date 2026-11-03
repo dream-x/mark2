@@ -8,7 +8,8 @@
 //! ├── prompt.md   весь файл целиком уходит в mark2 позиционным аргументом
 //! ├── setup/      копируется в свежую tmp-cwd прогона (может отсутствовать)
 //! ├── verify.sh   `sh verify.sh` с cwd = cwd прогона; exit 0 = pass
-//! └── task.toml   [task] timeout_seconds, опц. repeats, tags, policy, context_limit
+//! └── task.toml   [task] timeout_seconds, опц. repeats, tags, policy,
+//!                 context_limit, max_turns, verify_timeout_seconds
 //! ```
 //!
 //! Поля `[task]`:
@@ -22,7 +23,13 @@
 //!   `edit`, `write` отклоняются ядром без вопросов);
 //! * `context_limit` — окно модели в токенах (> 0) для этого прогона: ранер
 //!   дописывает `[models."<id>"] context_limit = N` в `<cwd>/.mark2.toml`, и
-//!   mark2 считает от него порог компакции.
+//!   mark2 считает от него порог компакции;
+//! * `max_turns` — предохранитель агента для этого прогона (> 0): ранер
+//!   дописывает `max_turns = N` в секцию `[agent]` того же `.mark2.toml`
+//!   (у mark2 по умолчанию 50 — проектным задачам этого мало);
+//! * `verify_timeout_seconds` — бюджет `verify.sh` (> 0) вместо общего
+//!   [`crate::runner::VERIFY_TIMEOUT_SECONDS`]: проверка, которая поднимает
+//!   сервер и headless-браузер, в 30 секунд не укладывается.
 //!
 //! Всё, что можно проверить до запуска модели, проверяется до запуска модели:
 //! отсутствующий `verify.sh`, пустой `prompt.md`, опечатка в ключе или
@@ -70,6 +77,10 @@ pub struct Task {
     pub policy: TaskPolicy,
     /// Окно модели в токенах для этого прогона, если задача его задаёт.
     pub context_limit: Option<u64>,
+    /// Предохранитель `max_turns` агента для этого прогона, если задача его задаёт.
+    pub max_turns: Option<usize>,
+    /// Бюджет `verify.sh` в секундах, если задача его задаёт.
+    pub verify_timeout_seconds: Option<u64>,
 }
 
 /// Политика доступа к тулам в `task.toml`.
@@ -133,6 +144,10 @@ struct TaskSection {
     policy: TaskPolicy,
     #[serde(default)]
     context_limit: Option<u64>,
+    #[serde(default)]
+    max_turns: Option<usize>,
+    #[serde(default)]
+    verify_timeout_seconds: Option<u64>,
 }
 
 /// Разобрать `task.toml`. `origin` попадает в текст ошибок.
@@ -148,6 +163,12 @@ fn parse_task_file(raw: &str, origin: &str) -> Result<TaskSection> {
     }
     if section.context_limit == Some(0) {
         bail!("{origin}: context_limit должен быть больше нуля");
+    }
+    if section.max_turns == Some(0) {
+        bail!("{origin}: max_turns должен быть больше нуля");
+    }
+    if section.verify_timeout_seconds == Some(0) {
+        bail!("{origin}: verify_timeout_seconds должен быть больше нуля");
     }
     Ok(section)
 }
@@ -198,6 +219,8 @@ pub fn load_task(dir: &Path) -> Result<Task> {
         tags: section.tags,
         policy: section.policy,
         context_limit: section.context_limit,
+        max_turns: section.max_turns,
+        verify_timeout_seconds: section.verify_timeout_seconds,
     })
 }
 
@@ -309,6 +332,8 @@ pub(crate) mod tests {
         // Новые поля необязательны: старый task.toml значит то же, что раньше.
         assert_eq!(task.policy, TaskPolicy::Yolo);
         assert_eq!(task.context_limit, None);
+        assert_eq!(task.max_turns, None);
+        assert_eq!(task.verify_timeout_seconds, None);
     }
 
     #[test]
@@ -378,6 +403,60 @@ pub(crate) mod tests {
         }
     }
 
+    #[test]
+    fn max_turns_and_verify_timeout_are_loaded() {
+        let root = TempDir::new().unwrap();
+        let dir = write_task(
+            root.path(),
+            "T17-x",
+            "[task]\ntimeout_seconds = 1800\nmax_turns = 80\nverify_timeout_seconds = 300\n",
+        );
+        let task = load_task(&dir).unwrap();
+        assert_eq!(task.max_turns, Some(80));
+        assert_eq!(task.verify_timeout_seconds, Some(300));
+        // Соседние поля не задеты.
+        assert_eq!(task.policy, TaskPolicy::Yolo);
+        assert_eq!(task.context_limit, None);
+    }
+
+    /// Ноль, отрицательное число и строка — ошибка загрузки с путём и именем
+    /// поля, а не прогон, который упадёт на первом же ходу или на verify.
+    #[test]
+    fn zero_or_mistyped_max_turns_and_verify_timeout_are_load_errors() {
+        let root = TempDir::new().unwrap();
+        let dir = write_task(root.path(), "T17-x", "[task]\ntimeout_seconds = 60\n");
+        for field in ["max_turns", "verify_timeout_seconds"] {
+            std::fs::write(
+                dir.join(TASK_FILE),
+                format!("[task]\ntimeout_seconds = 60\n{field} = 0\n"),
+            )
+            .unwrap();
+            let text = format!("{:#}", load_task(&dir).unwrap_err());
+            assert!(text.contains(field), "{field}: {text}");
+            assert!(text.contains("больше нуля"), "{field}: {text}");
+            assert!(text.contains(&dir.display().to_string()), "{field}: {text}");
+
+            for bad in ["-1", "\"80\""] {
+                std::fs::write(
+                    dir.join(TASK_FILE),
+                    format!("[task]\ntimeout_seconds = 60\n{field} = {bad}\n"),
+                )
+                .unwrap();
+                let text = format!("{:#}", load_task(&dir).unwrap_err());
+                assert!(text.contains("task.toml"), "{field} = {bad}: {text}");
+            }
+        }
+
+        // Опечатка в имени поля ловится deny_unknown_fields.
+        std::fs::write(
+            dir.join(TASK_FILE),
+            "[task]\ntimeout_seconds = 60\nmax_turn = 80\n",
+        )
+        .unwrap();
+        let text = format!("{:#}", load_task(&dir).unwrap_err());
+        assert!(text.contains("max_turn"), "{text}");
+    }
+
     /// Реальные задачи репозитория обязаны грузиться текущим контрактом —
     /// иначе бенч упадёт на старте. Старые task.toml без новых полей значат
     /// ровно то же, что и раньше.
@@ -388,12 +467,23 @@ pub(crate) mod tests {
             .join(DEFAULT_TASKS_DIR);
         let tasks = discover_tasks(&dir).unwrap();
         let ids: Vec<&str> = tasks.iter().map(|task| task.id.as_str()).collect();
-        for expected in (1..=14).map(|n| format!("T{n:02}")) {
+        for expected in (1..=17).map(|n| format!("T{n:02}")) {
             assert!(ids.contains(&expected.as_str()), "нет {expected}: {ids:?}");
         }
         let first = tasks.iter().find(|task| task.id == "T01").unwrap();
         assert_eq!(first.policy, TaskPolicy::Yolo);
         assert_eq!(first.context_limit, None);
+        assert_eq!(first.max_turns, None);
+        assert_eq!(first.verify_timeout_seconds, None);
+
+        // Проектная задача: больше ходов и свой бюджет на трёхслойный verify.
+        let project = tasks.iter().find(|task| task.id == "T17").unwrap();
+        assert_eq!(project.slug, "ws-chat");
+        assert_eq!(project.max_turns, Some(80));
+        assert_eq!(project.timeout_seconds, 1800);
+        assert!(project.verify_timeout_seconds.is_some_and(|s| s > 30));
+        assert!(project.tags.iter().any(|tag| tag == "project"));
+        assert!(project.setup_dir().is_none(), "T17 стартует с пустой cwd");
     }
 
     /// Пути задачи используются из tmp-cwd прогона (`sh verify.sh`, копия

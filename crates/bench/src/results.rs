@@ -48,13 +48,15 @@ pub struct RunConfig {
     pub models_file: String,
     /// Значение `--repeats`, если задавали.
     pub repeats_override: Option<usize>,
-    /// Таймаут `verify.sh`, секунды.
+    /// Таймаут `verify.sh` по умолчанию, секунды (задача может задать свой —
+    /// [`TaskRecord::verify_timeout_seconds`]).
     pub verify_timeout_seconds: u64,
     /// Промпт прогрева (не таймируется, в результаты не попадает).
     pub warmup_prompt: String,
     /// Что писалось в `<cwd>/.mark2.toml` каждого прогона. Задача с
-    /// `context_limit` (см. [`TaskRecord::context_limit`]) дописывает к этой
-    /// базе секцию `[models."<id модели>"]`.
+    /// `max_turns` (см. [`TaskRecord::max_turns`]) дописывает строку в
+    /// `[agent]`, с `context_limit` (см. [`TaskRecord::context_limit`]) — секцию
+    /// `[models."<id модели>"]`.
     pub project_config: String,
     /// Матрица моделей после фильтра `--models`.
     pub models: Vec<ModelSpec>,
@@ -84,6 +86,14 @@ pub struct TaskRecord {
     /// Окно модели в токенах, если задача его задавала.
     #[serde(default)]
     pub context_limit: Option<u64>,
+    /// Предохранитель `max_turns` агента, если задача его задавала (иначе —
+    /// дефолт mark2). В старых `results.json` поля нет.
+    #[serde(default)]
+    pub max_turns: Option<usize>,
+    /// Свой бюджет `verify.sh`, секунды, если задача его задавала (иначе —
+    /// [`RunConfig::verify_timeout_seconds`]).
+    #[serde(default)]
+    pub verify_timeout_seconds: Option<u64>,
     /// Промпт целиком — прогон должен быть воспроизводим по одному файлу.
     pub prompt: String,
 }
@@ -234,6 +244,8 @@ mod tests {
             tags: vec![],
             policy: TaskPolicy::Yolo,
             context_limit: None,
+            max_turns: None,
+            verify_timeout_seconds: None,
             prompt: "…".into(),
         };
         assert_eq!(record.name(), "T01-create-file");

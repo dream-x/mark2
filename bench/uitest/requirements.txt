@@ -1,0 +1,8 @@
+# Python environment of the project-tier verify scripts (bench/tasks/T17-*),
+# built by bootstrap.sh into bench/uitest/.venv.
+#
+# Pinned on purpose: the Playwright version fixes the Chromium build it drives
+# (1.64.x -> chromium-1248, already in ~/Library/Caches/ms-playwright on the
+# bench machine). Bumping it means a browser download on the next bootstrap.
+aiohttp==3.14.5
+playwright==1.64.1
