@@ -1,0 +1,4 @@
+[task]
+timeout_seconds = 360
+tags = ["read", "compaction", "hard"]
+context_limit = 8192

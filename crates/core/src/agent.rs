@@ -58,17 +58,27 @@
 //!
 //! # Компакция
 //!
-//! Три входа в [`crate::compact::compact`], все — вокруг сэмплинга:
+//! Четыре входа в [`crate::compact::compact`]:
 //!
-//! * **проактивно**, до того как ввод пользователя попадёт в историю: если
+//! * **перед ходом**, до того как ввод пользователя попадёт в историю: если
 //!   оценка занятости перевалила `threshold × context_limit`
 //!   ([`crate::compact::CompactionConfig`]). Порядок важен — свежая просьба
 //!   пользователя обязана пережить сжатие видимой;
+//! * **между итерациями** хода — тот же порог перед каждой итерацией, кроме
+//!   первой, когда результаты прошлого раунда тулов уже в истории. Без этой
+//!   точки порог не видели бы однократный `-p` и сервера, которые на
+//!   переполнение не отказывают, а молча режут промпт (ollama);
 //! * **реактивно**, на [`ProviderError::ContextLengthExceeded`] — как до
 //!   стрима, так и error-фреймом внутри него: сжать и повторить запрос
-//!   **ровно один раз**; второе переполнение подряд (или переполнение на самой
-//!   суммаризации) завершает ход `Error`;
+//!   **ровно один раз**. Компакция в итерации одна: переполнение после неё
+//!   (реактивной или проактивной) и переполнение на самой суммаризации
+//!   завершают ход `Error`;
 //! * **вручную**, по [`Op::Compact`] вне хода.
+//!
+//! Шторм-защита порога: после любой компакции он молчит, пока провайдер не
+//! пришлёт свежий [`Usage`]. Оценка без него — грубая байтовая, и даже если
+//! сразу после сжатия она выше порога, цикл идёт сэмплить, а не пересжимает
+//! саммари; страхует реактивная ветка.
 //!
 //! Наружу это видно как [`Event::Compacted`], в сессию — как
 //! [`SessionItem::Compacted`], скрытые копии сообщений и саммари.
@@ -295,6 +305,7 @@ impl Agent {
             tool_defs: self.tool_defs,
             history: self.history,
             last_usage: None,
+            compacted_since_usage: false,
             events: event_tx,
             ops: OpChannel {
                 rx: op_rx,
@@ -646,9 +657,25 @@ struct AgentLoop {
     /// контекста. Сбрасывается компакцией: старый `usage` описывает промпт,
     /// которого больше нет.
     last_usage: Option<Usage>,
+    /// Шторм-защита порога: история уже сжата, а свежего `Usage` с тех пор
+    /// провайдер не присылал. Пока флаг поднят, проактивная компакция молчит:
+    /// оценка без `Usage` — грубая байтовая, и сжимать по ней саммари снова и
+    /// снова — шторм суммаризаций вместо работы.
+    compacted_since_usage: bool,
     events: UnboundedSender<Event>,
     ops: OpChannel,
     cancel: CancellationToken,
+}
+
+/// Исход проверки порога компакции.
+enum Threshold {
+    /// История не тронута: порог не пройден, сжатие ждёт свежего `Usage` или
+    /// не удалось (ошибка уже отдана наружу).
+    Kept,
+    /// История сжата.
+    Compacted,
+    /// Компакция прервана ([`Op::Interrupt`] или отмена снаружи).
+    Interrupted,
 }
 
 /// Исход компакции внутри цикла.
@@ -692,24 +719,11 @@ impl AgentLoop {
 
         // Проактивная компакция — до того, как ввод попадёт в историю: иначе
         // свежая просьба пользователя тут же уехала бы в скрытые.
-        if self.needs_compaction() {
-            match self.compact_history(&turn_cancel).await {
-                Compaction::Done => {}
-                Compaction::Interrupted => {
-                    let reason = StopReason::Cancelled;
-                    self.emit(Event::TurnFinished { reason });
-                    self.record(SessionItem::turn_finished(turn_id.as_str(), reason));
-                    return;
-                }
-                // Сжать не вышло — ход всё равно идёт: оценка могла ошибаться,
-                // а настоящее переполнение поймает реактивная ветка.
-                Compaction::Failed(error) => {
-                    tracing::warn!(%error, "компакция по порогу не удалась");
-                    self.emit(Event::Error {
-                        message: error.to_string(),
-                    });
-                }
-            }
+        if let Threshold::Interrupted = self.compact_on_threshold(&turn_cancel).await {
+            let reason = StopReason::Cancelled;
+            self.emit(Event::TurnFinished { reason });
+            self.record(SessionItem::turn_finished(turn_id.as_str(), reason));
+            return;
         }
 
         self.push_message(Message::user(text));
@@ -740,13 +754,36 @@ impl AgentLoop {
         }
     }
 
-    /// Перевалила ли оценка занятости порог из конфига.
+    /// Пора ли сжимать по порогу: оценка занятости перевалила порог из конфига,
+    /// и после прошлой компакции провайдер уже прислал свежий `Usage`.
     fn needs_compaction(&self) -> bool {
-        self.history.iter().any(Message::is_agent_visible)
+        !self.compacted_since_usage
+            && self.history.iter().any(Message::is_agent_visible)
             && self
                 .config
                 .compaction
                 .should_compact(compact::estimate_tokens(&self.history, self.last_usage))
+    }
+
+    /// Проактивная компакция по порогу — перед ходом и между итерациями.
+    ///
+    /// Неудача хода не валит: оценка могла ошибаться, а настоящее переполнение
+    /// поймает реактивная ветка. Наружу она уходит [`Event::Error`].
+    async fn compact_on_threshold(&mut self, turn_cancel: &CancellationToken) -> Threshold {
+        if !self.needs_compaction() {
+            return Threshold::Kept;
+        }
+        match self.compact_history(turn_cancel).await {
+            Compaction::Done => Threshold::Compacted,
+            Compaction::Interrupted => Threshold::Interrupted,
+            Compaction::Failed(error) => {
+                tracing::warn!(%error, "компакция по порогу не удалась");
+                self.emit(Event::Error {
+                    message: error.to_string(),
+                });
+                Threshold::Kept
+            }
+        }
     }
 
     /// Сжать историю: суммаризация через провайдера, скрытие старых сообщений,
@@ -774,6 +811,7 @@ impl AgentLoop {
         };
 
         self.last_usage = None;
+        self.compacted_since_usage = true;
         self.emit(Event::Compacted {
             tokens_before: outcome.tokens_before,
             tokens_after: outcome.tokens_after,
@@ -793,17 +831,34 @@ impl AgentLoop {
     /// Цикл сэмплинга: запрос → дельты → тулы → снова запрос.
     async fn sample_loop(&mut self, turn_cancel: &CancellationToken) -> StopReason {
         let mut loops = LoopDetector::new(self.config.loop_detection);
-        for _ in 0..self.config.max_turns {
+        for iteration in 0..self.config.max_turns {
             if turn_cancel.is_cancelled() {
                 return StopReason::Cancelled;
             }
 
+            // Компакция в итерации — одна: проактивная здесь или реактивная
+            // ниже. Переполнение после неё валит ход, иначе цикл «сжали, снова
+            // не влезло» не кончился бы никогда.
+            let mut compacted = false;
+
+            // Проактивная компакция между итерациями, до сборки запроса. Без неё
+            // ход видел порог только на входе: в `-p` ход ровно один и история на
+            // старте пуста, а ollama на переполнение не отказывает, а молча режет
+            // начало промпта. Сжимать здесь безопасно: результаты прошлого раунда
+            // уже в истории одним сообщением — у каждого `tool_use` есть пара, и
+            // обе уходят в скрытые. Первую итерацию уже проверил `run_turn` — до
+            // ввода пользователя, который сжимать рано: модель его ещё не видела.
+            if iteration > 0 {
+                match self.compact_on_threshold(turn_cancel).await {
+                    Threshold::Kept => {}
+                    Threshold::Compacted => compacted = true,
+                    Threshold::Interrupted => return StopReason::Cancelled,
+                }
+            }
+
             // Один ответ модели. Переполнение контекста — что до стрима, что
             // внутри него (llama-server отдаёт его error-фреймом уже в SSE) —
-            // лечится компакцией и ровно одним повтором на итерацию: второе
-            // переполнение подряд валит ход, иначе цикл «сжали, снова не
-            // влезло» не кончился бы никогда.
-            let mut compacted = false;
+            // лечится компакцией и ровно одним повтором.
             let (message, usage) = 'request: loop {
                 let provider = Arc::clone(&self.provider);
                 let request = self.build_request();
@@ -875,7 +930,9 @@ impl AgentLoop {
                 })
                 .collect();
 
+            // Свежий замер занятости — порог снова вправе сработать.
             self.last_usage = Some(usage);
+            self.compacted_since_usage = false;
             self.push_message(message.clone());
             self.emit(Event::MessageComplete { message });
             self.emit(Event::Usage { usage });
@@ -1177,6 +1234,11 @@ mod tests {
 
     /// Ответ с тул-коллами (и, возможно, текстом перед ними).
     fn tools_script(text: &str, calls: &[(&str, &str, Value)]) -> Script {
+        tools_script_with_usage(text, calls, Usage::new(20, 8))
+    }
+
+    /// То же, но с заданным расходом токенов — порог компакции между итерациями.
+    fn tools_script_with_usage(text: &str, calls: &[(&str, &str, Value)], usage: Usage) -> Script {
         let mut blocks = Vec::new();
         let mut chunks = Vec::new();
         if !text.is_empty() {
@@ -1188,7 +1250,7 @@ mod tests {
         }
         chunks.push(StreamChunk::Complete {
             message: Message::new(Role::Assistant, blocks),
-            usage: Usage::new(20, 8),
+            usage,
         });
         Script::Chunks(chunks)
     }
@@ -1369,6 +1431,39 @@ mod tests {
     /// Текст саммари в сообщении, если это оно.
     fn is_summary(message: &Message) -> bool {
         message.text().starts_with(compact::SUMMARY_PREFIX)
+    }
+
+    /// Сколько компакций в потоке событий.
+    fn compactions(events: &[Event]) -> usize {
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::Compacted { .. }))
+            .count()
+    }
+
+    /// У каждого `tool_use` среди сообщений есть парный `tool_result`.
+    fn assert_tool_calls_paired(messages: &[Message]) {
+        let results: Vec<&str> = messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .filter_map(|block| match block {
+                ContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        for (id, name, _) in messages.iter().flat_map(Message::tool_uses) {
+            assert!(results.contains(&id), "висящий tool_use `{name}` ({id})");
+        }
+    }
+
+    /// Контекст 5000 токенов: порог — 4000.
+    fn small_context() -> CompactionConfig {
+        CompactionConfig::new().with_context_limit(5000)
+    }
+
+    /// Расход выше порога [`small_context`]: 4096 токенов.
+    fn usage_over_threshold() -> Usage {
+        Usage::new(4000, 96)
     }
 
     fn approval_id(events: &[Event]) -> String {
@@ -2637,6 +2732,443 @@ mod tests {
         assert!(summary.text().contains("Next: продолжить"));
         assert!(summary.is_agent_visible(), "саммари — для модели");
         assert!(!summary.is_user_visible(), "и не для пользователя");
+    }
+
+    // ─────────────────────── компакция внутри хода ───────────────────────
+
+    /// Единственный ход на пустой истории (как в `-p`): контекст набивается
+    /// раундом тулов, и порог срабатывает между итерациями — до следующего
+    /// запроса, а не только перед ходом.
+    #[tokio::test]
+    async fn threshold_compacts_between_iterations_of_a_single_turn() {
+        let mut harness = Harness::with_compaction(
+            vec![
+                tools_script_with_usage(
+                    "читаю",
+                    &[("call_1", "read", json!({"path": "a.txt"}))],
+                    usage_over_threshold(),
+                ),
+                text_script("Task: прочитать a.txt. Next: ответить"),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+            small_context(),
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "hello\n").unwrap();
+
+        let events = harness.turn("прочитай a.txt").await;
+        assert_eq!(
+            tags(&events),
+            [
+                "turn_started",
+                "text_delta",
+                "message_complete",
+                "usage",
+                "tool_call_started",
+                "tool_call_finished",
+                "compacted",
+                "text_delta",
+                "message_complete",
+                "usage",
+                "turn_finished",
+            ],
+            "компакция — между раундом тулов и следующим запросом"
+        );
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        let (before, after) = compaction(&events);
+        assert_eq!(before, 4096, "оценка из usage первой итерации");
+        assert!(before > after, "{before} → {after}");
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 3, "итерация, суммаризация, итерация");
+
+        // Суммаризация видит раунд целиком: просьбу, tool_use и его результат.
+        assert_eq!(requests[1].system, compact::SUMMARY_SYSTEM_PROMPT);
+        assert_eq!(requests[1].messages.len(), 4);
+        assert_eq!(requests[1].messages[0], Message::user("прочитай a.txt"));
+        assert_eq!(requests[1].messages[1].tool_uses().count(), 1);
+        assert_eq!(requests[1].messages[2].role, Role::Tool);
+        assert_eq!(
+            requests[1].messages[3],
+            Message::user(compact::SUMMARY_INSTRUCTIONS)
+        );
+        assert_tool_calls_paired(&requests[1].messages);
+
+        // Следующая итерация — на сжатой истории: только саммари, скрытое
+        // (включая tool_use и tool_result) в запрос не попало.
+        assert_eq!(requests[2].system, "тестовый системный промпт");
+        assert!(!requests[2].tools.is_empty(), "тулы на месте");
+        assert_eq!(requests[2].messages.len(), 1);
+        assert!(is_summary(&requests[2].messages[0]));
+        assert!(requests[2].messages[0].text().contains("Next: ответить"));
+
+        // Сессия: маркер компакции встал между результатом тула и ответом.
+        let items = harness.finish().await;
+        let position = |wanted: &dyn Fn(&SessionItem) -> bool| {
+            items
+                .iter()
+                .position(wanted)
+                .expect("элемента нет в сессии")
+        };
+        let marker = position(&|item| {
+            *item
+                == SessionItem::Compacted {
+                    tokens_before: before,
+                    tokens_after: after,
+                }
+        });
+        let tool_result = position(
+            &|item| matches!(item, SessionItem::Message { message } if message.role == Role::Tool),
+        );
+        let answer = position(
+            &|item| matches!(item, SessionItem::Message { message } if *message == Message::assistant("готово")),
+        );
+        assert!(
+            tool_result < marker && marker < answer,
+            "{tool_result} < {marker} < {answer}"
+        );
+
+        // Append-only: исходный раунд, его скрытые копии, саммари, ответ.
+        let history = messages(&items);
+        assert_eq!(history.len(), 8);
+        for (original, hidden) in history[..3].iter().zip(&history[3..6]) {
+            assert_eq!(original.content, hidden.content, "содержимое то же");
+            assert!(original.is_agent_visible());
+            assert!(!hidden.is_agent_visible(), "модель больше это не видит");
+            assert!(hidden.is_user_visible(), "пользователь видит по-прежнему");
+        }
+        assert_tool_calls_paired(&history[3..6]);
+        assert!(is_summary(&history[6]));
+        assert_eq!(history[7], Message::assistant("готово"));
+    }
+
+    /// Ниже порога раунды тулов идут без компакции, история растёт целиком.
+    #[tokio::test]
+    async fn tool_rounds_below_the_threshold_do_not_compact() {
+        let below = Usage::new(3000, 96);
+        let mut harness = Harness::with_compaction(
+            vec![
+                tools_script_with_usage("", &[("call_1", "read", json!({"path": "a.txt"}))], below),
+                tools_script_with_usage("", &[("call_2", "read", json!({"path": "b.txt"}))], below),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+            small_context(),
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "a\n").unwrap();
+        std::fs::write(harness.path("b.txt"), "b\n").unwrap();
+
+        let events = harness.turn("прочитай оба файла").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(compactions(&events), 0);
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 3, "суммаризации не было");
+        assert_eq!(requests[2].messages.len(), 5, "история без потерь");
+        assert!(
+            requests
+                .iter()
+                .all(|r| r.system == "тестовый системный промпт")
+        );
+        assert_tool_calls_paired(&requests[2].messages);
+        harness.finish().await;
+    }
+
+    /// `-p` с огромным промптом и сервером без счётчиков: первую итерацию
+    /// порог не трогает — модель обязана увидеть просьбу как есть, — а между
+    /// итерациями срабатывает по байтовой оценке.
+    #[tokio::test]
+    async fn the_first_iteration_keeps_the_prompt_and_bytes_compact_later() {
+        let mut harness = Harness::with_compaction(
+            vec![
+                tools_script_with_usage(
+                    "",
+                    &[("call_1", "read", json!({"path": "a.txt"}))],
+                    Usage::default(),
+                ),
+                text_script("саммари"),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+            // ~4000 байт ввода ≈ 1000 токенов при пороге 800.
+            CompactionConfig::new().with_context_limit(1000),
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "a\n").unwrap();
+
+        let prompt = "щ".repeat(2000);
+        let events = harness.turn(&prompt).await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(compactions(&events), 1);
+        let (before, _) = compaction(&events);
+        assert!(before > 1000, "байтовая оценка: {before}");
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].messages, vec![Message::user(prompt)]);
+        assert_eq!(requests[1].system, compact::SUMMARY_SYSTEM_PROMPT);
+        assert_eq!(requests[2].messages.len(), 1);
+        assert!(is_summary(&requests[2].messages[0]));
+        harness.finish().await;
+    }
+
+    /// Последняя разрешённая итерация не компактит впустую: запроса после неё
+    /// всё равно не будет.
+    #[tokio::test]
+    async fn no_compaction_after_the_last_allowed_iteration() {
+        let mut harness = Harness::with_compaction(
+            vec![tools_script_with_usage(
+                "",
+                &[("call_1", "read", json!({"path": "a.txt"}))],
+                usage_over_threshold(),
+            )],
+            PermissionPolicy::Yolo,
+            1,
+            small_context(),
+        )
+        .await;
+
+        let events = harness.turn("прочитай a.txt").await;
+        assert_eq!(stop_reason(&events), StopReason::MaxTurns);
+        assert_eq!(compactions(&events), 0);
+        assert_eq!(harness.provider.calls(), 1, "суммаризации не было");
+        harness.finish().await;
+    }
+
+    /// Шторм-защита: после компакции порог молчит, пока провайдер не пришлёт
+    /// свежий `Usage`, даже если байтовая оценка саммари всё ещё выше порога.
+    /// Пришёл `Usage` — порог снова работает.
+    #[tokio::test]
+    async fn threshold_waits_for_fresh_usage_before_compacting_again() {
+        // Саммари больше порога само по себе: ~5000 токенов по байтам.
+        let long_summary = format!("Task: длинная задача. {}", "x".repeat(20_000));
+        let mut harness = Harness::with_compaction(
+            vec![
+                tools_script_with_usage(
+                    "",
+                    &[("call_1", "read", json!({"path": "a.txt"}))],
+                    usage_over_threshold(),
+                ),
+                text_script(&long_summary),
+                // Ход 1 падает сразу после компакции — свежего usage нет.
+                Script::Fail("сеть легла".into()),
+                // Ход 2: порог молчит; ответ приносит свежий usage.
+                text_script_with_usage("второй ответ", usage_over_threshold()),
+                // Ход 3: порог снова в деле.
+                text_script("Task: второе саммари"),
+                text_script("третий ответ"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+            small_context(),
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "a\n").unwrap();
+
+        let events = harness.turn("первый вопрос").await;
+        assert_eq!(stop_reason(&events), StopReason::Error);
+        assert_eq!(compactions(&events), 1);
+        let (_, after) = compaction(&events);
+        assert!(
+            small_context().should_compact(after),
+            "оценка сразу после компакции всё ещё выше порога: {after}"
+        );
+
+        let events = harness.turn("второй вопрос").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(
+            compactions(&events),
+            0,
+            "без свежего usage вторая компакция подряд — шторм"
+        );
+
+        let events = harness.turn("третий вопрос").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(compactions(&events), 1, "свежий usage снова включил порог");
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 6);
+        let summarizations = requests
+            .iter()
+            .filter(|r| r.system == compact::SUMMARY_SYSTEM_PROMPT)
+            .count();
+        assert_eq!(summarizations, 2);
+        // Ход 2 ушёл с первым саммари и свежим вводом.
+        assert_eq!(requests[3].messages.len(), 2);
+        assert!(is_summary(&requests[3].messages[0]));
+        assert_eq!(requests[3].messages[1], Message::user("второй вопрос"));
+        // Ход 3 — уже со вторым саммари.
+        assert_eq!(requests[5].messages.len(), 2);
+        assert!(requests[5].messages[0].text().contains("второе саммари"));
+        assert_eq!(requests[5].messages[1], Message::user("третий вопрос"));
+        harness.finish().await;
+    }
+
+    /// Компакция в итерации одна: переполнение сразу после проактивной
+    /// компакции не сжимает саммари второй раз, а валит ход.
+    #[tokio::test]
+    async fn overflow_right_after_an_in_turn_compaction_fails_the_turn() {
+        let mut harness = Harness::with_compaction(
+            vec![
+                tools_script_with_usage(
+                    "",
+                    &[("call_1", "read", json!({"path": "a.txt"}))],
+                    usage_over_threshold(),
+                ),
+                text_script("саммари"),
+                // Повторяется: лишняя компакция и повтор повесили бы тест.
+                Script::ContextOverflow,
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+            small_context(),
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "a\n").unwrap();
+
+        let events = harness.turn("вопрос").await;
+        assert_eq!(
+            tags(&events),
+            [
+                "turn_started",
+                "message_complete",
+                "usage",
+                "tool_call_started",
+                "tool_call_finished",
+                "compacted",
+                "error",
+                "turn_finished",
+            ]
+        );
+        assert_eq!(stop_reason(&events), StopReason::Error);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Error { message } if message.contains("контекст модели переполнен")
+        )));
+        assert_eq!(
+            harness.provider.calls(),
+            3,
+            "итерация, суммаризация, повтор"
+        );
+        harness.finish().await;
+    }
+
+    /// Неудачная компакция между итерациями хода не валит: ошибка наружу,
+    /// история не тронута, следующий запрос уходит как есть.
+    #[tokio::test]
+    async fn a_failed_in_turn_compaction_is_reported_and_the_turn_goes_on() {
+        let mut harness = Harness::with_compaction(
+            vec![
+                tools_script_with_usage(
+                    "",
+                    &[("call_1", "read", json!({"path": "a.txt"}))],
+                    usage_over_threshold(),
+                ),
+                // Пустое саммари — заменять историю нечем.
+                text_script("   "),
+                text_script("готово"),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+            small_context(),
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "a\n").unwrap();
+
+        let events = harness.turn("вопрос").await;
+        assert_eq!(
+            tags(&events),
+            [
+                "turn_started",
+                "message_complete",
+                "usage",
+                "tool_call_started",
+                "tool_call_finished",
+                "error",
+                "text_delta",
+                "message_complete",
+                "usage",
+                "turn_finished",
+            ]
+        );
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Error { message } if message.contains("пустое саммари")
+        )));
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[2].messages.len(), 3, "история не тронута");
+        assert_tool_calls_paired(&requests[2].messages);
+        harness.finish().await;
+    }
+
+    /// Прерывание посреди компакции между итерациями: ход `Cancelled`,
+    /// история не тронута, пары тул-коллов целы.
+    #[tokio::test]
+    async fn interrupt_during_an_in_turn_compaction_cancels_the_turn() {
+        let mut harness = Harness::with_compaction(
+            vec![
+                tools_script_with_usage(
+                    "",
+                    &[("call_1", "read", json!({"path": "a.txt"}))],
+                    usage_over_threshold(),
+                ),
+                // Суммаризатор «думает» вечно.
+                Script::Hang(Vec::new()),
+            ],
+            PermissionPolicy::Yolo,
+            DEFAULT_MAX_TURNS,
+            small_context(),
+        )
+        .await;
+        std::fs::write(harness.path("a.txt"), "a\n").unwrap();
+
+        harness.submit(Op::user_input("вопрос"));
+        // Прерываем именно компакцию: ждём, пока суммаризатор примет запрос.
+        tokio::time::timeout(EVENT_TIMEOUT, async {
+            while harness.provider.calls() < 2 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("суммаризация не началась");
+        assert_eq!(
+            harness.provider.requests()[1].system,
+            compact::SUMMARY_SYSTEM_PROMPT
+        );
+        harness.submit(Op::Interrupt);
+        let events = harness.drain_turn().await;
+
+        assert_eq!(
+            tags(&events),
+            [
+                "turn_started",
+                "message_complete",
+                "usage",
+                "tool_call_started",
+                "tool_call_finished",
+                "turn_finished",
+            ]
+        );
+        assert_eq!(stop_reason(&events), StopReason::Cancelled);
+
+        let items = harness.finish().await;
+        assert!(
+            !items
+                .iter()
+                .any(|item| matches!(item, SessionItem::Compacted { .. }))
+        );
+        let history = messages(&items);
+        assert_eq!(history.len(), 3, "просьба, tool_use, tool_result");
+        assert!(history.iter().all(Message::is_agent_visible));
+        assert_tool_calls_paired(&history);
     }
 
     #[test]

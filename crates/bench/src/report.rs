@@ -103,7 +103,7 @@ fn render_summary(results: &Results) -> String {
     let mut out = String::from("## Сводка\n\n");
     out.push_str(
         "| модель | pass rate | медиана времени | медиана токенов in/out | tool error rate | \
-         таймауты |\n|---|---|---|---|---|---|\n",
+         таймауты | компакции |\n|---|---|---|---|---|---|---|\n",
     );
 
     for model in &results.config.models {
@@ -113,13 +113,14 @@ fn render_summary(results: &Results) -> String {
             .filter(|run| run.model == model.alias)
             .collect();
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
             model.alias,
             pass_rate(&runs),
             median_time(&runs),
             median_tokens(&runs),
             tool_error_rate(&runs),
             runs.iter().filter(|run| run.timed_out).count(),
+            compactions(&runs),
         ));
     }
 
@@ -172,6 +173,16 @@ fn tool_error_rate(runs: &[&RunRecord]) -> String {
         return "—".to_string();
     }
     format!("{} ({errors}/{uses})", percent(errors, uses))
+}
+
+/// Сколько раз за все прогоны модели сработала компакция. Прогон без сессии
+/// даёт ноль: колонка печатается всегда, даже если везде нули, — формат
+/// таблицы не должен зависеть от данных.
+fn compactions(runs: &[&RunRecord]) -> usize {
+    runs.iter()
+        .filter_map(|run| run.session.as_ref())
+        .map(|session| session.compactions)
+        .sum()
 }
 
 fn percent(part: usize, whole: usize) -> String {
@@ -235,6 +246,7 @@ mod tests {
     use crate::metrics::{SessionMetrics, Tokens};
     use crate::models::ModelSpec;
     use crate::results::{RunConfig, SCHEMA_VERSION, TaskRecord, VerifyOutcome};
+    use crate::task::TaskPolicy;
     use mark2_core::event::StopReason;
 
     fn model(alias: &str, id: &str, multiplier: f64) -> ModelSpec {
@@ -255,8 +267,18 @@ mod tests {
             timeout_seconds: 120,
             repeats: 2,
             tags: vec![],
+            policy: TaskPolicy::Yolo,
+            context_limit: None,
             prompt: "промпт".into(),
         }
+    }
+
+    /// Прогон, в сессии которого компакция сработала `count` раз.
+    fn with_compactions(mut run: RunRecord, count: usize) -> RunRecord {
+        if let Some(session) = run.session.as_mut() {
+            session.compactions = count;
+        }
+        run
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -347,15 +369,18 @@ mod tests {
                 tasks: vec![task("T01", "create-file"), task("T02", "read-answer")],
             },
             runs: vec![
-                run(
-                    "qwen9",
-                    "T01",
-                    1,
-                    true,
-                    10.0,
-                    Some((1200, 340)),
-                    Some((2, 3, 1)),
-                    false,
+                with_compactions(
+                    run(
+                        "qwen9",
+                        "T01",
+                        1,
+                        true,
+                        10.0,
+                        Some((1200, 340)),
+                        Some((2, 3, 1)),
+                        false,
+                    ),
+                    2,
                 ),
                 run(
                     "qwen9",
@@ -367,15 +392,18 @@ mod tests {
                     Some((2, 3, 0)),
                     false,
                 ),
-                run(
-                    "qwen9",
-                    "T02",
+                with_compactions(
+                    run(
+                        "qwen9",
+                        "T02",
+                        1,
+                        false,
+                        30.0,
+                        Some((800, 20)),
+                        Some((1, 2, 2)),
+                        false,
+                    ),
                     1,
-                    false,
-                    30.0,
-                    Some((800, 20)),
-                    Some((1, 2, 2)),
-                    false,
                 ),
                 timed_out,
                 run(
@@ -438,8 +466,57 @@ mod tests {
         assert_eq!(median_time(&[]), "—");
         assert_eq!(median_tokens(&[]), "—");
         assert_eq!(tool_error_rate(&[]), "—");
+        assert_eq!(compactions(&[]), 0);
         assert_eq!(percent(0, 0), "—");
         assert_eq!(percent(1, 3), "33%");
+    }
+
+    /// Строка сводки модели (не путать со строкой таблицы модель×задача).
+    fn summary_row(report: &str, alias: &str) -> String {
+        let summary = report.split("## Сводка").nth(1).unwrap();
+        summary
+            .lines()
+            .find(|line| line.starts_with(&format!("| {alias} |")))
+            .unwrap_or_else(|| panic!("нет строки {alias}:\n{summary}"))
+            .to_string()
+    }
+
+    /// Компакции суммируются по всем прогонам модели; прогон без сессии
+    /// (таймаут) просто ничего не добавляет.
+    #[test]
+    fn summary_sums_compactions_per_model() {
+        let report = render_report(&fixture());
+        assert!(
+            report.contains("| таймауты | компакции |\n|---|---|---|---|---|---|---|\n"),
+            "{report}"
+        );
+        // qwen9: 2 + 1 + 0 + (таймаут без сессии) = 3; таймаутов — 1.
+        assert!(
+            summary_row(&report, "qwen9").ends_with("| 1 | 3 |"),
+            "{report}"
+        );
+        assert!(
+            summary_row(&report, "oss120").ends_with("| 0 | 0 |"),
+            "{report}"
+        );
+    }
+
+    /// Нули — тоже данные: колонка не пропадает, если компакций не было вовсе.
+    #[test]
+    fn compactions_column_stays_when_everything_is_zero() {
+        let mut results = fixture();
+        for run in &mut results.runs {
+            if let Some(session) = run.session.as_mut() {
+                session.compactions = 0;
+            }
+        }
+        let report = render_report(&results);
+        assert!(report.contains("| компакции |"), "{report}");
+        for alias in ["qwen9", "oss120"] {
+            let row = summary_row(&report, alias);
+            assert!(row.ends_with(" | 0 |"), "{row}");
+            assert_eq!(row.matches('|').count(), 8, "семь колонок: {row}");
+        }
     }
 
     #[test]

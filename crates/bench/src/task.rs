@@ -8,12 +8,26 @@
 //! ├── prompt.md   весь файл целиком уходит в mark2 позиционным аргументом
 //! ├── setup/      копируется в свежую tmp-cwd прогона (может отсутствовать)
 //! ├── verify.sh   `sh verify.sh` с cwd = cwd прогона; exit 0 = pass
-//! └── task.toml   [task] timeout_seconds, опц. repeats, tags
+//! └── task.toml   [task] timeout_seconds, опц. repeats, tags, policy, context_limit
 //! ```
 //!
+//! Поля `[task]`:
+//!
+//! * `timeout_seconds` — базовый бюджет прогона (> 0), умножается на
+//!   `timeout_multiplier` модели;
+//! * `repeats` — сколько повторов (> 0), по умолчанию [`DEFAULT_REPEATS`];
+//! * `tags` — группировка в отчёте;
+//! * `policy` — политика доступа к тулам: `"yolo"` (по умолчанию, mark2
+//!   запускается с `--yolo`) или `"read-only"` (`--policy read-only`: `bash`,
+//!   `edit`, `write` отклоняются ядром без вопросов);
+//! * `context_limit` — окно модели в токенах (> 0) для этого прогона: ранер
+//!   дописывает `[models."<id>"] context_limit = N` в `<cwd>/.mark2.toml`, и
+//!   mark2 считает от него порог компакции.
+//!
 //! Всё, что можно проверить до запуска модели, проверяется до запуска модели:
-//! отсутствующий `verify.sh` или пустой `prompt.md` — ошибка загрузки, а не
-//! сюрприз через пять минут прогона.
+//! отсутствующий `verify.sh`, пустой `prompt.md`, опечатка в ключе или
+//! значении `task.toml` — ошибка загрузки, а не сюрприз через пять минут
+//! прогона.
 
 use std::path::{Path, PathBuf};
 
@@ -52,6 +66,25 @@ pub struct Task {
     pub repeats: usize,
     /// Теги для группировки в отчёте.
     pub tags: Vec<String>,
+    /// Политика доступа к тулам, с которой запускается mark2.
+    pub policy: TaskPolicy,
+    /// Окно модели в токенах для этого прогона, если задача его задаёт.
+    pub context_limit: Option<u64>,
+}
+
+/// Политика доступа к тулам в `task.toml`.
+///
+/// Намеренно уже, чем `--policy` у mark2: `ask-writes` в print mode без
+/// человека за терминалом означает «отказать во всём мутирующем» — то же
+/// самое, что `read-only`, только с менее честным именем.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TaskPolicy {
+    /// Ничего не спрашивать — обычный прогон бенча.
+    #[default]
+    Yolo,
+    /// Только чтение: мутирующие тулы отклоняются ядром.
+    ReadOnly,
 }
 
 impl Task {
@@ -96,6 +129,10 @@ struct TaskSection {
     repeats: Option<usize>,
     #[serde(default)]
     tags: Vec<String>,
+    #[serde(default)]
+    policy: TaskPolicy,
+    #[serde(default)]
+    context_limit: Option<u64>,
 }
 
 /// Разобрать `task.toml`. `origin` попадает в текст ошибок.
@@ -108,6 +145,9 @@ fn parse_task_file(raw: &str, origin: &str) -> Result<TaskSection> {
     }
     if section.repeats == Some(0) {
         bail!("{origin}: repeats должен быть больше нуля");
+    }
+    if section.context_limit == Some(0) {
+        bail!("{origin}: context_limit должен быть больше нуля");
     }
     Ok(section)
 }
@@ -156,6 +196,8 @@ pub fn load_task(dir: &Path) -> Result<Task> {
         timeout_seconds: section.timeout_seconds,
         repeats: section.repeats.unwrap_or(DEFAULT_REPEATS),
         tags: section.tags,
+        policy: section.policy,
+        context_limit: section.context_limit,
     })
 }
 
@@ -264,6 +306,94 @@ pub(crate) mod tests {
         assert_eq!(task.repeats_with_override(None), 3);
         assert_eq!(task.repeats_with_override(Some(1)), 1);
         assert!(task.tags.is_empty());
+        // Новые поля необязательны: старый task.toml значит то же, что раньше.
+        assert_eq!(task.policy, TaskPolicy::Yolo);
+        assert_eq!(task.context_limit, None);
+    }
+
+    #[test]
+    fn policy_and_context_limit_are_loaded() {
+        let root = TempDir::new().unwrap();
+        let dir = write_task(
+            root.path(),
+            "T15-x",
+            "[task]\ntimeout_seconds = 300\npolicy = \"read-only\"\ncontext_limit = 8192\n",
+        );
+        let task = load_task(&dir).unwrap();
+        assert_eq!(task.policy, TaskPolicy::ReadOnly);
+        assert_eq!(task.context_limit, Some(8192));
+
+        std::fs::write(
+            dir.join(TASK_FILE),
+            "[task]\ntimeout_seconds = 300\npolicy = \"yolo\"\n",
+        )
+        .unwrap();
+        let task = load_task(&dir).unwrap();
+        assert_eq!(task.policy, TaskPolicy::Yolo);
+        assert_eq!(task.context_limit, None);
+    }
+
+    /// Допустимы ровно два написания: `ask-writes` в `-p` выродился бы в тот же
+    /// read-only, а `read_only` — опечатка, которую лучше поймать сразу.
+    #[test]
+    fn unknown_policy_is_a_load_error_naming_the_alternatives() {
+        let root = TempDir::new().unwrap();
+        for bad in ["whatever", "ask-writes", "read_only", "Read-Only"] {
+            let dir = write_task(
+                root.path(),
+                "T16-x",
+                &format!("[task]\ntimeout_seconds = 60\npolicy = \"{bad}\"\n"),
+            );
+            let text = format!("{:#}", load_task(&dir).unwrap_err());
+            assert!(text.contains(&dir.display().to_string()), "{text}");
+            assert!(text.contains(bad), "{bad}: {text}");
+            assert!(
+                text.contains("yolo") && text.contains("read-only"),
+                "{bad}: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_or_mistyped_context_limit_is_a_load_error() {
+        let root = TempDir::new().unwrap();
+        let dir = write_task(
+            root.path(),
+            "T15-x",
+            "[task]\ntimeout_seconds = 60\ncontext_limit = 0\n",
+        );
+        let text = format!("{:#}", load_task(&dir).unwrap_err());
+        assert!(text.contains("context_limit"), "{text}");
+        assert!(text.contains("больше нуля"), "{text}");
+        assert!(text.contains(&dir.display().to_string()), "{text}");
+
+        for bad in ["context_limit = -1", "context_limit = \"8k\""] {
+            std::fs::write(
+                dir.join(TASK_FILE),
+                format!("[task]\ntimeout_seconds = 60\n{bad}\n"),
+            )
+            .unwrap();
+            let text = format!("{:#}", load_task(&dir).unwrap_err());
+            assert!(text.contains("task.toml"), "{bad}: {text}");
+        }
+    }
+
+    /// Реальные задачи репозитория обязаны грузиться текущим контрактом —
+    /// иначе бенч упадёт на старте. Старые task.toml без новых полей значат
+    /// ровно то же, что и раньше.
+    #[test]
+    fn repository_tasks_load_with_the_current_contract() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(DEFAULT_TASKS_DIR);
+        let tasks = discover_tasks(&dir).unwrap();
+        let ids: Vec<&str> = tasks.iter().map(|task| task.id.as_str()).collect();
+        for expected in (1..=14).map(|n| format!("T{n:02}")) {
+            assert!(ids.contains(&expected.as_str()), "нет {expected}: {ids:?}");
+        }
+        let first = tasks.iter().find(|task| task.id == "T01").unwrap();
+        assert_eq!(first.policy, TaskPolicy::Yolo);
+        assert_eq!(first.context_limit, None);
     }
 
     /// Пути задачи используются из tmp-cwd прогона (`sh verify.sh`, копия

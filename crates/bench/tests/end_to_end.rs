@@ -35,7 +35,7 @@ prompt=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -C) cwd="$2"; shift 2 ;;
-        --base-url|--model|--api-key-env) shift 2 ;;
+        --base-url|--model|--api-key-env|--policy) shift 2 ;;
         -p|--yolo) shift ;;
         *) prompt="$1"; shift ;;
     esac
@@ -454,6 +454,86 @@ fn relative_paths_still_resolve_from_the_run_cwd() {
             run_dir.display()
         );
     }
+}
+
+/// Настройки задачи из `task.toml` доезжают до mark2: `policy = "read-only"` —
+/// флагом вместо `--yolo`, `context_limit` — секцией модели в `.mark2.toml`.
+/// Задача без них запускается ровно как раньше.
+#[test]
+fn task_policy_and_context_limit_reach_mark2() {
+    let fixture = Fixture::new();
+    fixture.task(
+        "T01-plain",
+        "Создай hello.txt\n",
+        "[task]\ntimeout_seconds = 60\nrepeats = 1\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+    fixture.task(
+        "T15-small-context",
+        "Создай hello.txt\n",
+        "[task]\ntimeout_seconds = 60\nrepeats = 1\ncontext_limit = 8192\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+    fixture.task(
+        "T16-read-only",
+        "Только прочитай given.txt\n",
+        "[task]\ntimeout_seconds = 60\nrepeats = 1\npolicy = \"read-only\"\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+
+    let output = fixture.bench(&["--models", "fake1", "--no-warmup"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Лог фейка: по блоку на прогон, в порядке задач (T01, T15, T16).
+    let log = fixture.log();
+    let runs: Vec<&str> = log.split("--- run").skip(1).collect();
+    assert_eq!(runs.len(), 3, "{log}");
+    let (plain, small, read_only) = (runs[0], runs[1], runs[2]);
+
+    assert!(plain.contains("argv: -p --yolo --base-url "), "{plain}");
+    assert!(
+        plain.contains("config: [agent] temperature = 0.0 \n"),
+        "конфиг без лимита — как раньше:\n{plain}"
+    );
+
+    assert!(small.contains("argv: -p --yolo "), "{small}");
+    assert!(
+        small.contains(
+            "config: [agent] temperature = 0.0  [models.\"fake-model-1\"] context_limit = 8192 \n"
+        ),
+        "{small}"
+    );
+
+    assert!(
+        read_only.contains("argv: -p --policy read-only --base-url "),
+        "{read_only}"
+    );
+    assert!(!read_only.contains("--yolo"), "{read_only}");
+    assert!(!read_only.contains("context_limit"), "{read_only}");
+
+    // В сырьё уезжают и настройки задачи — прогон воспроизводим по одному файлу.
+    let results = fixture.results();
+    let tasks = results["config"]["tasks"].as_array().unwrap();
+    assert_eq!(tasks[0]["policy"], "yolo");
+    assert_eq!(tasks[0]["context_limit"], serde_json::Value::Null);
+    assert_eq!(tasks[1]["context_limit"], 8192);
+    assert_eq!(tasks[2]["policy"], "read-only");
+    assert!(
+        results["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|run| run["pass"] == true),
+        "{results}"
+    );
+
+    // Колонка компакций есть в сводке, даже когда их не было.
+    let report = fixture.report();
+    assert!(report.contains("| компакции |"), "{report}");
 }
 
 /// Зависший прогон убивается по таймауту и помечается в результатах.

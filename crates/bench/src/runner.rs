@@ -12,12 +12,17 @@
 //!   директорию сессий, из которой сессия и забирается;
 //! * **температура 0** через `<cwd>/.mark2.toml`: сравниваем модели, а не
 //!   сэмплинг;
+//! * **настройки задачи** — тоже снаружи, без особых режимов в mark2:
+//!   `policy = "read-only"` превращается в `--policy read-only` вместо
+//!   `--yolo`, `context_limit` — в секцию `[models."<id>"]` того же
+//!   `.mark2.toml` (см. [`project_config`]);
 //! * **таймаут** = `timeout_seconds` задачи × множитель модели, по истечении —
 //!   `kill` и пометка `timed_out` (прогон засчитывается как непройденный, но не
 //!   вешает бенч).
 //!
 //! Ранер не интерпретирует ответ модели: приговор выносит `verify.sh`.
 
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -30,7 +35,7 @@ use tokio::process::Command;
 use crate::metrics::{find_session_file, parse_tokens, read_session_metrics};
 use crate::models::ModelSpec;
 use crate::results::{Results, RunRecord, VerifyOutcome};
-use crate::task::Task;
+use crate::task::{Task, TaskPolicy};
 
 /// Промпт прогрева: тривиальный ответ без тулов, только чтобы поднять модель.
 pub const WARMUP_PROMPT: &str = "Reply with exactly: ok";
@@ -41,7 +46,8 @@ pub const WARMUP_TIMEOUT: Duration = Duration::from_secs(300);
 /// Бюджет `verify.sh`: проверка локальная и должна быть мгновенной.
 pub const VERIFY_TIMEOUT_SECONDS: u64 = 30;
 
-/// Проектный конфиг, который кладётся в cwd каждого прогона.
+/// Проектный конфиг, который кладётся в cwd каждого прогона (база; задача с
+/// `context_limit` дописывает к нему секцию модели — см. [`project_config`]).
 pub const PROJECT_CONFIG: &str = "[agent]\ntemperature = 0.0\n";
 
 /// Сколько символов вывода `verify.sh` сохраняем в `results.json`.
@@ -118,9 +124,11 @@ impl Runner {
         let sandbox = Sandbox::new()?;
         let stdout = sandbox.path().join("warmup.stdout");
         let stderr = sandbox.path().join("warmup.stderr");
+        // Прогрев не зовёт тулы, политика ему безразлична — берём обычную.
         self.execute_mark2(
             model,
             WARMUP_PROMPT,
+            TaskPolicy::default(),
             sandbox.cwd(),
             sandbox.home(),
             &stdout,
@@ -183,9 +191,12 @@ impl Runner {
                 )
             })?;
         }
-        let project_config = sandbox.cwd().join(".mark2.toml");
-        std::fs::write(&project_config, PROJECT_CONFIG)
-            .with_context(|| format!("не удалось записать {}", project_config.display()))?;
+        let project_config_path = sandbox.cwd().join(".mark2.toml");
+        std::fs::write(
+            &project_config_path,
+            project_config(&model.model, task.context_limit),
+        )
+        .with_context(|| format!("не удалось записать {}", project_config_path.display()))?;
 
         let logs_dir = self.run_dir.join("logs").join(&model.alias).join(&task.id);
         std::fs::create_dir_all(&logs_dir)
@@ -197,6 +208,7 @@ impl Runner {
             .execute_mark2(
                 model,
                 &task.prompt,
+                task.policy,
                 sandbox.cwd(),
                 sandbox.home(),
                 &stdout_path,
@@ -256,6 +268,7 @@ impl Runner {
         &self,
         model: &ModelSpec,
         prompt: &str,
+        policy: TaskPolicy,
         cwd: &Path,
         home: &Path,
         stdout_path: &Path,
@@ -269,20 +282,7 @@ impl Runner {
 
         let mut command = Command::new(&self.mark2);
         command
-            .arg("-p")
-            .arg("--yolo")
-            .arg("--base-url")
-            .arg(&model.base_url)
-            .arg("--model")
-            .arg(&model.model)
-            .arg("-C")
-            .arg(cwd);
-        if let Some(variable) = &model.api_key_env {
-            command.arg("--api-key-env").arg(variable);
-        }
-        command
-            // Промпт — последним: это позиционный аргумент mark2.
-            .arg(prompt)
+            .args(mark2_args(model, policy, cwd, prompt))
             .current_dir(cwd)
             // Изолируем и пользовательский конфиг (~/.config/mark2), и
             // директорию сессий (~/.mark2/sessions) одним махом.
@@ -356,6 +356,72 @@ fn outcome_label(record: &RunRecord) -> String {
 pub fn effective_timeout(task: &Task, model: &ModelSpec) -> Duration {
     let seconds = task.timeout_seconds as f64 * model.timeout_multiplier;
     Duration::from_secs_f64(seconds.max(1.0))
+}
+
+/// Аргументы запуска mark2 для одного прогона.
+///
+/// Чистая функция: протокол запуска (print mode, политика задачи, куда ходить,
+/// где работать) проверяется юнитом, без процесса.
+pub fn mark2_args(
+    model: &ModelSpec,
+    policy: TaskPolicy,
+    cwd: &Path,
+    prompt: &str,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec!["-p".into()];
+    match policy {
+        TaskPolicy::Yolo => args.push("--yolo".into()),
+        // `--yolo` и `--policy` у mark2 взаимоисключающие — только одно из двух.
+        TaskPolicy::ReadOnly => args.extend(["--policy".into(), "read-only".into()]),
+    }
+    args.extend([
+        "--base-url".into(),
+        model.base_url.clone().into(),
+        "--model".into(),
+        model.model.clone().into(),
+        "-C".into(),
+        cwd.as_os_str().to_owned(),
+    ]);
+    if let Some(variable) = &model.api_key_env {
+        args.extend(["--api-key-env".into(), variable.into()]);
+    }
+    // Промпт — последним: это позиционный аргумент mark2.
+    args.push(prompt.into());
+    args
+}
+
+/// Содержимое `<cwd>/.mark2.toml` для прогона модели `model_id`.
+///
+/// Без `context_limit` — ровно [`PROJECT_CONFIG`], байт в байт как раньше.
+/// С ним — та же база плюс `[models."<model_id>"] context_limit = N`: ключ —
+/// точный id модели, а точное совпадение в `mark2_core::config` важнее
+/// любого приблизительного, так что лимит гарантированно достаётся этой
+/// модели.
+pub fn project_config(model_id: &str, context_limit: Option<u64>) -> String {
+    match context_limit {
+        None => PROJECT_CONFIG.to_string(),
+        Some(limit) => format!(
+            "{PROJECT_CONFIG}\n[models.{}]\ncontext_limit = {limit}\n",
+            toml_basic_string(model_id)
+        ),
+    }
+}
+
+/// Строка в кавычках по правилам TOML basic string: id моделей бывают с
+/// двоеточиями и слешами, а в теории — и с кавычками.
+fn toml_basic_string(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 2);
+    out.push('"');
+    for ch in raw.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            ch if ch.is_control() => out.push_str(&format!("\\u{:04X}", u32::from(ch))),
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Запустить `verify.sh` в cwd прогона.
@@ -560,6 +626,102 @@ mod tests {
             Duration::from_secs(300)
         );
         assert!(effective_timeout(&task, &model(0.001)) >= Duration::from_secs(1));
+    }
+
+    fn args_as_strings(args: &[OsString]) -> Vec<String> {
+        args.iter()
+            .map(|arg| arg.to_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn yolo_task_keeps_the_historical_argv() {
+        let args = mark2_args(
+            &model(1.0),
+            TaskPolicy::Yolo,
+            Path::new("/tmp/run/cwd"),
+            "Создай файл",
+        );
+        assert_eq!(
+            args_as_strings(&args),
+            [
+                "-p",
+                "--yolo",
+                "--base-url",
+                "http://localhost:11434/v1",
+                "--model",
+                "qwen3.5:9b",
+                "-C",
+                "/tmp/run/cwd",
+                "Создай файл",
+            ]
+        );
+    }
+
+    #[test]
+    fn read_only_task_gets_policy_flag_and_no_yolo() {
+        let mut spec = model(1.0);
+        spec.api_key_env = Some("OLLAMA_API_KEY".into());
+        let args = args_as_strings(&mark2_args(
+            &spec,
+            TaskPolicy::ReadOnly,
+            Path::new("/tmp/run/cwd"),
+            "Только посмотри",
+        ));
+
+        assert!(!args.iter().any(|arg| arg == "--yolo"), "{args:?}");
+        let at = args.iter().position(|arg| arg == "--policy").unwrap();
+        assert_eq!(args[at + 1], "read-only");
+        assert_eq!(
+            args,
+            [
+                "-p",
+                "--policy",
+                "read-only",
+                "--base-url",
+                "http://localhost:11434/v1",
+                "--model",
+                "qwen3.5:9b",
+                "-C",
+                "/tmp/run/cwd",
+                "--api-key-env",
+                "OLLAMA_API_KEY",
+                "Только посмотри",
+            ]
+        );
+    }
+
+    #[test]
+    fn project_config_without_a_limit_is_unchanged() {
+        assert_eq!(project_config("qwen3.5:9b", None), PROJECT_CONFIG);
+        assert_eq!(
+            project_config("qwen3.5:9b", None),
+            "[agent]\ntemperature = 0.0\n"
+        );
+    }
+
+    /// Лимит обязан доехать до настроек модели именно так, как их читает
+    /// mark2: разбираем сгенерированный файл парсером ядра, а не глазами.
+    #[test]
+    fn project_config_with_a_limit_reaches_the_model_settings_of_mark2() {
+        let text = project_config("qwen3.5:9b", Some(8192));
+        assert_eq!(
+            text,
+            "[agent]\ntemperature = 0.0\n\n[models.\"qwen3.5:9b\"]\ncontext_limit = 8192\n"
+        );
+        assert!(text.starts_with(PROJECT_CONFIG));
+
+        let config = mark2_core::config::Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.temperature, Some(0.0));
+        assert_eq!(config.resolve("qwen3.5:9b").context_limit, Some(8192));
+        // Другие модели лимит не задевает.
+        assert_eq!(config.resolve("gpt-oss:120b-cloud").context_limit, None);
+
+        // Экзотический id: кавычки, слеши, обратный слеш — ключ экранирован.
+        let odd = r#"hf.co/org/"model"\q4:latest"#;
+        let config =
+            mark2_core::config::Config::parse(&project_config(odd, Some(4096)), "x.toml").unwrap();
+        assert_eq!(config.resolve(odd).context_limit, Some(4096));
     }
 
     #[test]

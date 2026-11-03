@@ -157,6 +157,8 @@ async fn run(args: Args) -> Result<()> {
                 timeout_seconds: task.timeout_seconds,
                 repeats: task.repeats_with_override(args.repeats),
                 tags: task.tags.clone(),
+                policy: task.policy,
+                context_limit: task.context_limit,
                 prompt: task.prompt.clone(),
             })
             .collect(),
@@ -326,6 +328,12 @@ mod tests {
             ]
         }"#;
         let results: Results = serde_json::from_str(json).unwrap();
+        // Старый файл без policy/context_limit читается с дефолтами.
+        assert_eq!(
+            results.config.tasks[0].policy,
+            mark2_bench::task::TaskPolicy::Yolo
+        );
+        assert_eq!(results.config.tasks[0].context_limit, None);
         let report = render_report(&results);
         assert!(report.contains("| qwen9 | 1/1 · 12.3s |"), "{report}");
         assert!(report.contains("1200 / 340"), "{report}");

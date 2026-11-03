@@ -165,6 +165,7 @@ mod tests {
     }
 
     /// Реальный файл репозитория обязан разбираться — иначе бенч не запустится.
+    /// Состав матрицы зафиксирован: меняется осознанно, вместе с этим тестом.
     #[test]
     fn repository_models_file_is_valid() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -172,7 +173,7 @@ mod tests {
             .join(DEFAULT_MODELS_FILE);
         let models = load_models(&path).unwrap();
         let aliases: Vec<&str> = models.iter().map(|m| m.alias.as_str()).collect();
-        assert_eq!(aliases, ["qwen9", "qwen27", "oss120"]);
+        assert_eq!(aliases, ["qwen9", "bolt4", "flint40", "qwen27", "gemma31c"]);
     }
 
     #[test]

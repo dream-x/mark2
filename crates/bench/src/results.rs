@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::metrics::{SessionMetrics, Tokens};
 use crate::models::ModelSpec;
+use crate::task::TaskPolicy;
 
 /// Версия схемы `results.json`. Растёт при несовместимых изменениях.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -51,7 +52,9 @@ pub struct RunConfig {
     pub verify_timeout_seconds: u64,
     /// Промпт прогрева (не таймируется, в результаты не попадает).
     pub warmup_prompt: String,
-    /// Что писалось в `<cwd>/.mark2.toml` каждого прогона.
+    /// Что писалось в `<cwd>/.mark2.toml` каждого прогона. Задача с
+    /// `context_limit` (см. [`TaskRecord::context_limit`]) дописывает к этой
+    /// базе секцию `[models."<id модели>"]`.
     pub project_config: String,
     /// Матрица моделей после фильтра `--models`.
     pub models: Vec<ModelSpec>,
@@ -74,6 +77,13 @@ pub struct TaskRecord {
     pub repeats: usize,
     /// Теги задачи.
     pub tags: Vec<String>,
+    /// Политика доступа к тулам. В старых `results.json` поля нет — тогда
+    /// гоняли только `--yolo`.
+    #[serde(default)]
+    pub policy: TaskPolicy,
+    /// Окно модели в токенах, если задача его задавала.
+    #[serde(default)]
+    pub context_limit: Option<u64>,
     /// Промпт целиком — прогон должен быть воспроизводим по одному файлу.
     pub prompt: String,
 }
@@ -222,6 +232,8 @@ mod tests {
             timeout_seconds: 120,
             repeats: 3,
             tags: vec![],
+            policy: TaskPolicy::Yolo,
+            context_limit: None,
             prompt: "…".into(),
         };
         assert_eq!(record.name(), "T01-create-file");
