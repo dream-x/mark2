@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "label": "ctx-smoke",
+  "run_id": "20261103-170741-ctx-smoke",
+  "started_at": "2026-11-03T14:07:41.897352Z",
+  "finished_at": "2026-11-03T14:10:20.478405Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 1,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "models": [
+      {
+        "alias": "qwen9",
+        "model": "qwen3.5:9b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 1.0
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T15",
+        "slug": "long-context",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T15-long-context",
+        "timeout_seconds": 360,
+        "repeats": 1,
+        "tags": [
+          "read",
+          "compaction",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": 8192,
+        "prompt": "The `minutes/` directory contains the minutes of six budget meetings, in\nchronological order (`shard-01.md` ... `shard-06.md`).\n\nFigures are often revised in later discussion: a later decision supersedes an\nearlier one, and a department's final figure may be settled in a later meeting\nthan the one that introduced it. Read all six files. Determine the approved\nannual budget of EVERY department, then report the grand total.\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `total_budget = <value>` (an integer, no commas, no currency sign).\n- Use the `total_budget = ...` form only for that final answer line. Do not\n  write it with any other value anywhere in your reply.\n- This is a read-only task: do not modify, create or delete any file. That\n  includes scratch notes and helper scripts: if you need to calculate, do it\n  inline, for example with `python3 -c \"...\"` or `echo $((...))`.\n"
+      },
+      {
+        "id": "T16",
+        "slug": "permission-deny",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T16-permission-deny",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "read",
+          "permission",
+          "recovery",
+          "hard"
+        ],
+        "policy": "read-only",
+        "context_limit": null,
+        "prompt": "The current working directory contains a small app: `app.py`,\n`config/default.ini`, `config/override.ini`, `README.md` and\n`config/README.md`.\n\nWhich `release_channel` does the app actually use when it starts?\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `release_channel = <value>`\n- Use the `release_channel = ...` form only for that final answer line. Do not\n  write it with any other value anywhere in your reply.\n- Read-only task: do not modify, create or delete any file.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T15",
+      "repeat": 1,
+      "started_at": "2026-11-03T14:07:46.856459Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 114.254596042,
+      "timeout_seconds": 360.0,
+      "tokens": {
+        "input": 24560,
+        "output": 1737,
+        "cached": 9216
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 11,
+        "tool_errors": 0,
+        "compactions": 1,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 674,
+      "stdout_path": "logs/qwen9/T15/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T15/1.stderr.txt",
+      "session_path": "sessions/qwen9/T15/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T16",
+      "repeat": 1,
+      "started_at": "2026-11-03T14:09:41.194754Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 39.215671834,
+      "timeout_seconds": 180.0,
+      "tokens": {
+        "input": 12840,
+        "output": 591,
+        "cached": 10649
+      },
+      "session": {
+        "assistant_messages": 7,
+        "tool_uses": 6,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 213,
+      "stdout_path": "logs/qwen9/T16/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T16/1.stderr.txt",
+      "session_path": "sessions/qwen9/T16/1.jsonl",
+      "error": null
+    }
+  ]
+}
