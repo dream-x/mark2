@@ -16,15 +16,24 @@
 //! ищет его от рабочей директории вверх до корня, ближайший выигрывает, и
 //! содержимое уходит отдельной секцией **в конец** промпта — после стабильной
 //! части, чтобы её префикс не менялся от проекта к проекту.
+//!
+//! Память агента ([`crate::memory`]) — ещё одна секция, `## Memory`, самая
+//! последняя: её правит сама модель, так что меняется она чаще всего. Нет
+//! файла памяти (или он пуст) — нет и секции, промпт байт-в-байт тот же.
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+
+use crate::memory::Memory;
 
 /// Имя файла проектных инструкций.
 pub const AGENTS_MD: &str = "AGENTS.md";
 
 /// Заголовок секции с проектными инструкциями.
 const PROJECT_SECTION: &str = "# Project instructions";
+
+/// Заголовок секции памяти.
+pub const MEMORY_SECTION: &str = "## Memory";
 
 /// Личность и правила агента без проектной секции.
 ///
@@ -58,6 +67,38 @@ pub fn system_prompt(cwd: &Path) -> String {
         Some((path, content)) => with_project_instructions(&base, &path, &content),
         None => base,
     }
+}
+
+/// [`system_prompt`] плюс секция памяти, если память есть. `None` — ровно
+/// [`system_prompt`], без единого лишнего байта.
+pub fn system_prompt_with_memory(cwd: &Path, memory: Option<&Memory>) -> String {
+    let prompt = system_prompt(cwd);
+    match memory {
+        Some(memory) => with_memory(&prompt, memory, cwd),
+        None => prompt,
+    }
+}
+
+/// Дописать секцию памяти в конец промпта: заголовок, однострочная конвенция
+/// (какой файл, когда инъектируется, как обновлять) и содержимое — с пометкой,
+/// если оно обрезано по капу.
+///
+/// Путь — относительно `cwd`, если файл внутри него: тем же путём модель
+/// потом зовёт `write`/`edit`.
+pub fn with_memory(base: &str, memory: &Memory, cwd: &Path) -> String {
+    let mut prompt = format!(
+        "{base}\n\n{MEMORY_SECTION}\n\n\
+         Your persistent memory file `{path}`, injected at session start. When asked to \
+         remember something durable, update that file with write/edit; keep it short, facts \
+         only.\n\n{content}",
+        path = memory.display_path(cwd),
+        content = memory.content,
+    );
+    if let Some(marker) = memory.truncation_marker() {
+        prompt.push('\n');
+        prompt.push_str(&marker);
+    }
+    prompt
 }
 
 /// Дописать секцию проектных инструкций в конец промпта.
@@ -209,6 +250,99 @@ mod tests {
             prompt.contains(&dir.path().join(AGENTS_MD).display().to_string()),
             "{prompt}"
         );
+    }
+
+    /// Нет файла памяти — промпт байт-в-байт прежний: ни секции, ни строки о
+    /// конвенции. Пустой файл и файл из пробелов — то же самое.
+    #[test]
+    fn no_memory_file_leaves_the_prompt_byte_identical() {
+        use crate::memory::{MEMORY_FILE, load_memory};
+
+        let dir = tempdir();
+        std::fs::write(dir.path().join(AGENTS_MD), "правила").unwrap();
+        let before = system_prompt(dir.path());
+
+        let memory = load_memory(dir.path(), None);
+        assert_eq!(memory, None);
+        assert_eq!(system_prompt_with_memory(dir.path(), None), before);
+
+        for empty in ["", "\n\n", " \t\n"] {
+            std::fs::write(dir.path().join(MEMORY_FILE), empty).unwrap();
+            let memory = load_memory(dir.path(), None);
+            assert_eq!(memory, None, "{empty:?}");
+            let prompt = system_prompt_with_memory(dir.path(), memory.as_ref());
+            assert_eq!(prompt, before, "{empty:?}");
+            assert!(!prompt.contains(MEMORY_SECTION));
+            assert!(!prompt.contains("memory"), "ни слова о памяти: {prompt}");
+        }
+    }
+
+    /// Память — последняя секция: после базы и AGENTS.md, с путём от cwd,
+    /// конвенцией одной строкой и содержимым.
+    #[test]
+    fn memory_goes_into_the_last_section_with_the_convention() {
+        use crate::memory::{MEMORY_FILE, load_memory};
+
+        let dir = tempdir();
+        std::fs::write(dir.path().join(AGENTS_MD), "правила проекта").unwrap();
+        std::fs::write(
+            dir.path().join(MEMORY_FILE),
+            "# Memory\n\n- The staging deploy port is 7342.\n\n",
+        )
+        .unwrap();
+
+        let memory = load_memory(dir.path(), None).unwrap();
+        let prompt = system_prompt_with_memory(dir.path(), Some(&memory));
+        let without = system_prompt(dir.path());
+        assert!(prompt.starts_with(&without), "память — в конец");
+
+        let section = &prompt[without.len()..];
+        assert_eq!(
+            section,
+            "\n\n## Memory\n\n\
+             Your persistent memory file `.mark2.memory.md`, injected at session start. When \
+             asked to remember something durable, update that file with write/edit; keep it \
+             short, facts only.\n\n\
+             # Memory\n\n- The staging deploy port is 7342."
+        );
+        // Конвенция — ровно одна строка.
+        let convention = section.lines().nth(4).unwrap();
+        assert!(convention.starts_with("Your persistent memory file"));
+        assert!(convention.ends_with("facts only."));
+    }
+
+    /// Файл памяти выше cwd — путь абсолютный: относительного «от cwd» нет.
+    #[test]
+    fn memory_outside_the_cwd_is_shown_by_its_absolute_path() {
+        use crate::memory::{MEMORY_FILE, load_memory};
+
+        let dir = tempdir();
+        let nested = dir.path().join("pkg");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(dir.path().join(MEMORY_FILE), "- факт\n").unwrap();
+
+        let memory = load_memory(&nested, None).unwrap();
+        let prompt = system_prompt_with_memory(&nested, Some(&memory));
+        let absolute = dir.path().join(MEMORY_FILE).display().to_string();
+        assert!(prompt.contains(&format!("`{absolute}`")), "{prompt}");
+        assert!(prompt.ends_with("- факт"), "{prompt}");
+    }
+
+    #[test]
+    fn truncated_memory_carries_the_marker_in_the_prompt() {
+        use crate::memory::{MEMORY_CAP_BYTES, Memory};
+
+        let text = "- one more fact to keep\n".repeat(400);
+        let memory = Memory::from_text("/w/.mark2.memory.md", &text).unwrap();
+        let prompt = with_memory("base", &memory, Path::new("/w"));
+        let marker = format!(
+            "\n[memory truncated: {} of {} bytes shown]",
+            memory.injected_bytes(),
+            text.len()
+        );
+        assert!(prompt.ends_with(&marker), "{prompt}");
+        assert!(memory.injected_bytes() <= MEMORY_CAP_BYTES);
+        assert!(prompt.contains(&memory.content));
     }
 
     /// Директория с именем `AGENTS.md` не должна прерывать поиск.

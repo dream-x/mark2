@@ -1542,6 +1542,8 @@ mod tests {
         std::fs::create_dir_all(setup.join("src")).unwrap();
         std::fs::write(setup.join("src/main.py"), "print(1)\n").unwrap();
         std::fs::write(setup.join("README"), "hi").unwrap();
+        // Dotfile — так в setup/ задач T18/T19 лежит память агента.
+        std::fs::write(setup.join(".mark2.memory.md"), "# Memory\n").unwrap();
 
         let target = TempDir::new().unwrap();
         copy_dir_all(&setup, target.path()).unwrap();
@@ -1552,6 +1554,10 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(target.path().join("README")).unwrap(),
             "hi"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target.path().join(".mark2.memory.md")).unwrap(),
+            "# Memory\n"
         );
     }
 

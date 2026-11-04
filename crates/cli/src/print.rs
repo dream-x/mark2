@@ -112,6 +112,9 @@ pub async fn run(
             Event::Nudge { guard, message, .. } => {
                 let _ = writeln!(err, "{}", render::nudge_line(*guard, message, opts));
             }
+            Event::Warning { message } => {
+                let _ = writeln!(err, "{}", render::warning_line(message, opts));
+            }
             Event::Usage { usage: chunk } => accumulate(&mut usage, chunk),
             Event::ArgumentsCoerced { .. } => coerced_calls += 1,
             Event::TurnFinished { reason: finished } => {
@@ -317,6 +320,44 @@ mod tests {
             stderr,
             reason,
         }
+    }
+
+    /// Память не влезла в кап: предупреждение — в stderr строкой `warning:`,
+    /// в stdout только ответ; модель видит память с пометкой об обрезке.
+    #[tokio::test]
+    async fn truncated_memory_warning_goes_to_stderr() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = "- a durable fact worth keeping around\n".repeat(200);
+        std::fs::write(dir.path().join(mark2_core::memory::MEMORY_FILE), &memory).unwrap();
+        let provider = MockProvider::new(vec![answer("ок", None)]);
+        let agent = Agent::new(
+            Arc::clone(&provider) as Arc<dyn Provider>,
+            ToolRegistry::new(),
+            AgentConfig::new("mock-model").with_cwd(dir.path()),
+        );
+        assert!(agent.memory().is_some_and(|memory| memory.truncated));
+
+        let (handle, mut events) = agent.spawn();
+        handle.submit(Op::user_input("привет"));
+        let mut stdout: Vec<u8> = Vec::new();
+        let mut stderr: Vec<u8> = Vec::new();
+        let reason = run(&handle, &mut events, &mut stdout, &mut stderr).await;
+        handle.shutdown().await;
+
+        assert_eq!(reason, StopReason::Completed);
+        assert_eq!(std::str::from_utf8(&stdout).unwrap(), "ок\n");
+        let stderr = String::from_utf8(stderr).unwrap();
+        let warnings = lines_with(&stderr, "warning: ");
+        assert_eq!(warnings.len(), 1, "{stderr}");
+        assert!(warnings[0].contains(".mark2.memory.md"), "{stderr}");
+        assert!(warnings[0].contains(&memory.len().to_string()), "{stderr}");
+        // Файл не тронут, а в промпте — пометка об обрезке.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(mark2_core::memory::MEMORY_FILE)).unwrap(),
+            memory
+        );
+        let system = &provider.requests()[0].system;
+        assert!(system.contains("[memory truncated: "), "{system}");
     }
 
     #[tokio::test]

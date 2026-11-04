@@ -599,7 +599,7 @@ pub(crate) mod tests {
             .join(DEFAULT_TASKS_DIR);
         let tasks = discover_tasks(&dir).unwrap();
         let ids: Vec<&str> = tasks.iter().map(|task| task.id.as_str()).collect();
-        for expected in (1..=17).map(|n| format!("T{n:02}")) {
+        for expected in (1..=19).map(|n| format!("T{n:02}")) {
             assert!(ids.contains(&expected.as_str()), "нет {expected}: {ids:?}");
         }
         let first = tasks.iter().find(|task| task.id == "T01").unwrap();
@@ -621,6 +621,34 @@ pub(crate) mod tests {
         let uitest = std::fs::canonicalize(dir.join("..").join(UITEST_DIR)).unwrap();
         assert_eq!(project.uitest_dir(), Some(uitest.clone()));
         assert!(uitest.join(UITEST_BOOTSTRAP).is_file());
+
+        // Задачи памяти: файл памяти — dotfile в setup/, ранер копирует его
+        // в cwd прогона, и mark2 находит его там как ближайший.
+        for (id, slug, tag) in [
+            ("T18", "memory-recall", "read"),
+            ("T19", "memory-store", "write"),
+        ] {
+            let task = tasks.iter().find(|task| task.id == id).unwrap();
+            assert_eq!(task.slug, slug);
+            assert_eq!(task.timeout_seconds, 120);
+            assert_eq!(task.policy, TaskPolicy::Yolo);
+            assert!(
+                task.tags.iter().any(|t| t == "memory"),
+                "{id}: {:?}",
+                task.tags
+            );
+            assert!(task.tags.iter().any(|t| t == tag), "{id}: {:?}", task.tags);
+            let memory = task
+                .setup_dir()
+                .expect("у задачи памяти есть setup/")
+                .join(mark2_core::memory::MEMORY_FILE);
+            let text = std::fs::read_to_string(&memory).unwrap();
+            assert!(
+                mark2_core::Memory::from_text(&memory, &text).is_some(),
+                "{id}: память в setup/ должна быть непустой — иначе она выключена"
+            );
+            assert!(text.starts_with("# Memory\n"), "{id}: {text:?}");
+        }
     }
 
     /// Пути задачи используются из tmp-cwd прогона (`sh verify.sh`, копия

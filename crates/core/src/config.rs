@@ -147,6 +147,13 @@ pub struct AgentSettings {
     /// там, где ждут целое; см. [`crate::tools::ToolRegistry::coerce_input`]).
     /// По умолчанию включено; `false` — для абляции в бенче.
     pub arg_coercion: Option<bool>,
+    /// Файл памяти агента вместо ближайшего `.mark2.memory.md` (см.
+    /// [`crate::memory`]). Относительный путь резолвится от директории
+    /// конфиг-файла, в котором написан ([`Config::parse`]); пустая строка —
+    /// ошибка конфига. Файла на диске может и не быть — тогда памяти просто
+    /// нет, к ближайшему `.mark2.memory.md` поиск не откатывается.
+    #[serde(default, deserialize_with = "de_memory_file")]
+    pub memory_file: Option<PathBuf>,
 }
 
 /// Настройки одной модели: `[models."qwen3-coder"]`.
@@ -220,17 +227,29 @@ impl Config {
                 loop_detection: other.agent.loop_detection.or(agent.loop_detection),
                 write_churn: other.agent.write_churn.or(agent.write_churn),
                 arg_coercion: other.agent.arg_coercion.or(agent.arg_coercion),
+                memory_file: other.agent.memory_file.or(agent.memory_file),
             },
             models,
         }
     }
 
-    /// Разобрать конфиг из строки. `path` нужен только для текста ошибки.
+    /// Разобрать конфиг из строки. `path` — путь файла: он попадает в текст
+    /// ошибки, а от его директории резолвятся относительные пути внутри
+    /// (`memory_file`): «`notes/memory.md`» в `/repo/.mark2.toml` — это
+    /// `/repo/notes/memory.md`, откуда бы ни запустили агента.
     pub fn parse(text: &str, path: impl Into<PathBuf>) -> ConfigResult<Config> {
-        toml::from_str(text).map_err(|source| ConfigError::Parse {
-            path: path.into(),
-            source,
-        })
+        let path = path.into();
+        let mut config: Config = match toml::from_str(text) {
+            Ok(config) => config,
+            Err(source) => return Err(ConfigError::Parse { path, source }),
+        };
+        if let Some(file) = config.agent.memory_file.as_mut()
+            && file.is_relative()
+            && let Some(dir) = path.parent()
+        {
+            *file = dir.join(&*file);
+        }
+        Ok(config)
     }
 
     /// Прочитать конфиг из файла. Отсутствующий файл — не ошибка (`Ok(None)`):
@@ -319,12 +338,36 @@ pub fn user_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(USER_CONFIG_RELATIVE))
 }
 
-/// Найти ближайший `.mark2.toml`, поднимаясь от `from` к корню.
-pub fn find_project_config(from: impl AsRef<Path>) -> Option<PathBuf> {
+/// Найти ближайший к `from` файл с именем `name`, поднимаясь к корню:
+/// выигрывает первый найденный. Директория с таким именем — не кандидат.
+///
+/// Общий обход для проектного конфига и файла памяти
+/// ([`crate::memory::MEMORY_FILE`]): каждый ищется независимо, по своему
+/// ближайшему, так что лежать они могут в разных директориях.
+pub fn find_upwards(from: impl AsRef<Path>, name: &str) -> Option<PathBuf> {
     from.as_ref()
         .ancestors()
-        .map(|dir| dir.join(PROJECT_CONFIG_FILE))
+        .map(|dir| dir.join(name))
         .find(|candidate| candidate.is_file())
+}
+
+/// Найти ближайший `.mark2.toml`, поднимаясь от `from` к корню.
+pub fn find_project_config(from: impl AsRef<Path>) -> Option<PathBuf> {
+    find_upwards(from, PROJECT_CONFIG_FILE)
+}
+
+/// Путь файла памяти: пустая строка — ошибка (скорее всего, недописанный
+/// ключ), а не «искать как обычно» — для этого ключ убирают.
+fn de_memory_file<'de, D: Deserializer<'de>>(de: D) -> Result<Option<PathBuf>, D::Error> {
+    let Some(raw) = Option::<String>::deserialize(de)? else {
+        return Ok(None);
+    };
+    if raw.trim().is_empty() {
+        return Err(de::Error::custom(
+            "memory_file: пустой путь; убери ключ, чтобы искать ближайший .mark2.memory.md",
+        ));
+    }
+    Ok(Some(PathBuf::from(raw)))
 }
 
 /// Политика доступа из строки: терпит и `ask_writes`, и `ask-writes`.
@@ -554,6 +597,79 @@ context_limit = 8192
 
         let error = Config::parse("[agent]\narg_coercion = \"no\"\n", "cfg.toml").unwrap_err();
         assert!(error.chain().contains("cfg.toml"), "{}", error.chain());
+    }
+
+    /// `memory_file`: относительный путь — от директории конфиг-файла,
+    /// абсолютный — как есть; старший слой перекрывает младший.
+    #[test]
+    fn memory_file_is_resolved_from_the_config_directory() {
+        let project = Config::parse(
+            "[agent]\nmemory_file = \"notes/memory.md\"\n",
+            "/repo/.mark2.toml",
+        )
+        .unwrap();
+        assert_eq!(
+            project.agent.memory_file.as_deref(),
+            Some(Path::new("/repo/notes/memory.md"))
+        );
+
+        let user = Config::parse(
+            "[agent]\nmemory_file = \"/abs/memory.md\"\n",
+            "/home/u/.config/mark2/config.toml",
+        )
+        .unwrap();
+        assert_eq!(
+            user.agent.memory_file.as_deref(),
+            Some(Path::new("/abs/memory.md"))
+        );
+
+        // Не сказано — слой молчит: ищется ближайший `.mark2.memory.md`.
+        assert_eq!(layer("[agent]\n").agent.memory_file, None);
+        // Проектный слой старше пользовательского и уже резолвлен от своего файла.
+        assert_eq!(
+            user.clone().merge(project.clone()).agent.memory_file,
+            project.agent.memory_file
+        );
+        assert_eq!(
+            user.clone().merge(layer("")).agent.memory_file,
+            user.agent.memory_file
+        );
+    }
+
+    /// Пустая строка — ошибка конфига с путём файла, а не тихое «искать как
+    /// обычно».
+    #[test]
+    fn empty_memory_file_is_a_config_error() {
+        for bad in ["\"\"", "\"   \"", "7"] {
+            let error = Config::parse(
+                &format!("[agent]\nmemory_file = {bad}\n"),
+                "/repo/.mark2.toml",
+            )
+            .unwrap_err();
+            let text = error.chain();
+            assert!(text.contains("/repo/.mark2.toml"), "{bad}: {text}");
+            assert!(text.contains("memory_file"), "{bad}: {text}");
+        }
+    }
+
+    /// Конфиг и память ищутся одним обходом, но независимо: каждый — свой
+    /// ближайший, директории могут не совпадать.
+    #[test]
+    fn find_upwards_finds_each_name_by_its_own_nearest() {
+        let root = tempfile::tempdir().unwrap();
+        let nested = root.path().join("pkg").join("src");
+        std::fs::create_dir_all(&nested).unwrap();
+        let config = root.path().join(PROJECT_CONFIG_FILE);
+        let memory = root.path().join("pkg").join(crate::memory::MEMORY_FILE);
+        std::fs::write(&config, "").unwrap();
+        std::fs::write(&memory, "# Memory\n").unwrap();
+
+        assert_eq!(find_project_config(&nested), Some(config.clone()));
+        assert_eq!(
+            find_upwards(&nested, crate::memory::MEMORY_FILE),
+            Some(memory)
+        );
+        assert_eq!(find_upwards(&nested, "нет-такого"), None);
     }
 
     #[test]

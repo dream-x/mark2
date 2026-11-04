@@ -117,6 +117,7 @@ use uuid::Uuid;
 
 use crate::compact::{self, CompactionConfig, CompactionError};
 use crate::event::{ApprovalDecision, Event, Guard, Op, StopReason};
+use crate::memory::{self, Memory};
 use crate::message::{ContentBlock, Message, Usage};
 use crate::permission::{self, PermissionCheck, PermissionPolicy};
 use crate::prompt;
@@ -148,8 +149,8 @@ pub struct AgentConfig {
     pub temperature: Option<f32>,
     /// Политика доступа к тулам.
     pub policy: PermissionPolicy,
-    /// Рабочая директория: от неё резолвятся пути тулов и в ней ищется
-    /// `AGENTS.md`.
+    /// Рабочая директория: от неё резолвятся пути тулов и от неё вверх ищутся
+    /// `AGENTS.md` и `.mark2.memory.md`.
     pub cwd: PathBuf,
     /// Когда и как сжимать историю.
     pub compaction: CompactionConfig,
@@ -165,6 +166,9 @@ pub struct AgentConfig {
     /// это `write_churn = false`, `true` — порог по умолчанию); `1` равносилен
     /// `2` (иначе подсказку получала бы любая первая запись).
     pub write_churn: usize,
+    /// Файл памяти вместо ближайшего `.mark2.memory.md` от `cwd`
+    /// ([`crate::memory`]); относительный — от `cwd`. Файла нет — памяти нет.
+    pub memory_file: Option<PathBuf>,
 }
 
 impl Default for AgentConfig {
@@ -179,6 +183,7 @@ impl Default for AgentConfig {
             compaction: CompactionConfig::default(),
             loop_detection: DEFAULT_LOOP_DETECTION,
             write_churn: DEFAULT_WRITE_CHURN,
+            memory_file: None,
         }
     }
 }
@@ -247,18 +252,27 @@ impl AgentConfig {
         self.write_churn = threshold;
         self
     }
+
+    /// Задать файл памяти явно, вместо поиска `.mark2.memory.md` от `cwd`.
+    #[must_use]
+    pub fn with_memory_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.memory_file = Some(path.into());
+        self
+    }
 }
 
 /// Агент: провайдер + тулы + конфиг, ещё не запущенный.
 ///
-/// Собирается синхронно (в том числе читает `AGENTS.md`), запускается
-/// [`Agent::spawn`].
+/// Собирается синхронно (в том числе читает `AGENTS.md` и память),
+/// запускается [`Agent::spawn`].
 pub struct Agent {
     provider: Arc<dyn Provider>,
     registry: ToolRegistry,
     config: AgentConfig,
     recorder: Option<SessionRecorder>,
     system: String,
+    /// Память, инъектированная в `system`; `None` — её там нет.
+    memory: Option<Memory>,
     tool_defs: Vec<ToolDef>,
     history: Vec<Message>,
 }
@@ -270,6 +284,7 @@ impl std::fmt::Debug for Agent {
             .field("config", &self.config)
             .field("tools", &self.registry.names())
             .field("recorded", &self.recorder.is_some())
+            .field("memory", &self.memory.as_ref().map(|memory| &memory.path))
             .field("history_len", &self.history.len())
             .finish()
     }
@@ -277,11 +292,14 @@ impl std::fmt::Debug for Agent {
 
 impl Agent {
     /// Собрать агента. Системный промпт строится здесь один раз
-    /// ([`prompt::system_prompt`], включая `AGENTS.md` рядом с `cwd`), список
-    /// тулов фиксируется в порядке регистрации — оба обязаны быть стабильными
-    /// между запросами.
+    /// ([`prompt::system_prompt_with_memory`]: `AGENTS.md` рядом с `cwd` и
+    /// память агента, [`crate::memory`]), список тулов фиксируется в порядке
+    /// регистрации — оба обязаны быть стабильными между запросами. Поэтому и
+    /// память читается один раз: её правки по ходу сессии попадут в промпт
+    /// следующей.
     pub fn new(provider: Arc<dyn Provider>, registry: ToolRegistry, config: AgentConfig) -> Self {
-        let system = prompt::system_prompt(&config.cwd);
+        let memory = memory::load_memory(&config.cwd, config.memory_file.as_deref());
+        let system = prompt::system_prompt_with_memory(&config.cwd, memory.as_ref());
         let tool_defs = registry.defs();
         Self {
             provider,
@@ -289,6 +307,7 @@ impl Agent {
             config,
             recorder: None,
             system,
+            memory,
             tool_defs,
             history: Vec::new(),
         }
@@ -303,15 +322,23 @@ impl Agent {
     }
 
     /// Заменить системный промпт целиком (тесты, эвалы, `--system` в CLI).
+    /// Память в нём уже не инъектирована — [`Agent::memory`] становится `None`.
     #[must_use]
     pub fn with_system_prompt(mut self, system: impl Into<String>) -> Self {
         self.system = system.into();
+        self.memory = None;
         self
     }
 
     /// Системный промпт, с которым агент пойдёт к модели.
     pub fn system_prompt(&self) -> &str {
         &self.system
+    }
+
+    /// Память, инъектированная в системный промпт (для шапки сессии и
+    /// отладки); `None` — памяти нет или промпт заменён целиком.
+    pub fn memory(&self) -> Option<&Memory> {
+        self.memory.as_ref()
     }
 
     /// Настройки агента.
@@ -324,10 +351,23 @@ impl Agent {
     /// Возвращает ручку для [`Op`] и приёмник [`Event`]. Задача живёт, пока жив
     /// хотя бы один [`AgentHandle`]: когда последний уходит, цикл дочитывает
     /// очередь, закрывает сессию и завершается.
+    ///
+    /// Если память обрезана по капу, первым событием стрима — ещё до хода —
+    /// идёт [`Event::Warning`]: промпт собран, и человек должен узнать, что
+    /// модель видит память не целиком.
     pub fn spawn(self) -> (AgentHandle, UnboundedReceiver<Event>) {
         let (op_tx, op_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let cancel = CancellationToken::new();
+
+        if let Some(message) = self
+            .memory
+            .as_ref()
+            .and_then(|memory| memory.truncation_warning(&self.config.cwd))
+        {
+            // Приёмник ещё у нас в руках — отправка не может не пройти.
+            let _ = event_tx.send(Event::Warning { message });
+        }
 
         let agent_loop = AgentLoop {
             provider: self.provider,
@@ -3307,6 +3347,167 @@ mod tests {
         assert_eq!(agent.config().max_turns, DEFAULT_MAX_TURNS);
         assert_eq!(agent.config().policy, PermissionPolicy::AskWrites);
         assert!(format!("{agent:?}").contains("mock"));
+    }
+
+    // ──────────────────────────── память ────────────────────────────
+
+    /// Нет файла памяти — промпт агента ровно тот же, что до памяти:
+    /// [`prompt::system_prompt`] байт в байт.
+    #[test]
+    fn without_a_memory_file_the_prompt_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = Agent::new(
+            MockProvider::new(vec![text_script("ок")]),
+            ToolRegistry::new(),
+            AgentConfig::new("mock-model").with_cwd(dir.path()),
+        );
+        assert_eq!(agent.memory(), None);
+        assert_eq!(agent.system_prompt(), prompt::system_prompt(dir.path()));
+        assert_eq!(agent.system_prompt(), prompt::base_prompt(dir.path()));
+    }
+
+    /// Файл памяти в `cwd` — в конце промпта; явный `memory_file` главнее
+    /// поиска; `with_system_prompt` память выбрасывает вместе с промптом.
+    #[test]
+    fn memory_is_injected_at_build_time() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(memory::MEMORY_FILE),
+            "# Memory\n- staging port 7342\n",
+        )
+        .unwrap();
+        let agent = Agent::new(
+            MockProvider::new(vec![text_script("ок")]),
+            ToolRegistry::new(),
+            AgentConfig::new("mock-model").with_cwd(dir.path()),
+        );
+        let memory = agent.memory().expect("память найдена");
+        assert_eq!(memory.path, dir.path().join(memory::MEMORY_FILE));
+        assert!(
+            agent
+                .system_prompt()
+                .starts_with(&prompt::system_prompt(dir.path()))
+        );
+        assert!(agent.system_prompt().contains(prompt::MEMORY_SECTION));
+        assert!(agent.system_prompt().ends_with("- staging port 7342"));
+
+        let replaced = agent.with_system_prompt("s");
+        assert_eq!(replaced.memory(), None);
+        assert_eq!(replaced.system_prompt(), "s");
+
+        std::fs::write(dir.path().join("other.md"), "- явная память\n").unwrap();
+        let agent = Agent::new(
+            MockProvider::new(vec![text_script("ок")]),
+            ToolRegistry::new(),
+            AgentConfig::new("mock-model")
+                .with_cwd(dir.path())
+                .with_memory_file("other.md"),
+        );
+        assert!(agent.system_prompt().ends_with("- явная память"));
+        assert!(!agent.system_prompt().contains("7342"));
+    }
+
+    /// Память — в системном промпте, а компакция его не трогает: после сжатия
+    /// истории следующий запрос несёт тот же промпт с той же памятью.
+    #[tokio::test]
+    async fn memory_survives_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(memory::MEMORY_FILE),
+            "# Memory\n- The staging deploy port is 7342.\n",
+        )
+        .unwrap();
+        let provider = MockProvider::new(vec![
+            text_script_with_usage("первый ответ", Usage::new(4000, 96)),
+            text_script("Task: разобраться. Next: продолжить"),
+            text_script("7342"),
+        ]);
+        let agent = Agent::new(
+            provider.clone(),
+            ToolRegistry::with_defaults(EditStrategy::SearchReplace),
+            AgentConfig::new("mock-model")
+                .with_cwd(dir.path())
+                .with_compaction(CompactionConfig::new().with_context_limit(5000)),
+        );
+        let system = agent.system_prompt().to_string();
+        assert!(system.contains("The staging deploy port is 7342."));
+
+        let (handle, mut events) = agent.spawn();
+        let mut tags_seen = Vec::new();
+        for text in ["первый вопрос", "какой порт staging?"] {
+            handle.submit(Op::user_input(text));
+            loop {
+                let event = tokio::time::timeout(EVENT_TIMEOUT, events.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let finished = matches!(event, Event::TurnFinished { .. });
+                tags_seen.push(serde_json::to_value(&event).unwrap()["type"].clone());
+                if finished {
+                    break;
+                }
+            }
+        }
+        handle.shutdown().await;
+        assert!(tags_seen.contains(&json!("compacted")), "{tags_seen:?}");
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].system, system);
+        assert_eq!(requests[1].system, compact::SUMMARY_SYSTEM_PROMPT);
+        // После компакции: история — саммари, а промпт с памятью — байт в байт прежний.
+        assert!(is_summary(&requests[2].messages[0]));
+        assert_eq!(requests[2].system, system);
+        // Файл памяти компакция тоже не трогает.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(memory::MEMORY_FILE)).unwrap(),
+            "# Memory\n- The staging deploy port is 7342.\n"
+        );
+    }
+
+    /// Память не влезла в кап — первым событием, ещё до хода, идёт
+    /// предупреждение; дальше ход как обычно.
+    #[tokio::test]
+    async fn truncated_memory_is_announced_by_a_warning_event() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(memory::MEMORY_FILE),
+            "- one more fact\n".repeat(1000),
+        )
+        .unwrap();
+        let (handle, mut events) = Agent::new(
+            MockProvider::new(vec![text_script("ок")]),
+            ToolRegistry::new(),
+            AgentConfig::new("mock-model").with_cwd(dir.path()),
+        )
+        .spawn();
+        handle.submit(Op::user_input("привет"));
+
+        let mut collected = Vec::new();
+        loop {
+            let event = tokio::time::timeout(EVENT_TIMEOUT, events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let finished = matches!(event, Event::TurnFinished { .. });
+            collected.push(event);
+            if finished {
+                break;
+            }
+        }
+        handle.shutdown().await;
+
+        let Event::Warning { message } = &collected[0] else {
+            panic!("первым должно быть предупреждение: {collected:?}");
+        };
+        assert!(message.contains(memory::MEMORY_FILE), "{message}");
+        assert!(matches!(collected[1], Event::TurnStarted { .. }));
+        assert_eq!(stop_reason(&collected), StopReason::Completed);
+        let warnings = collected
+            .iter()
+            .filter(|event| matches!(event, Event::Warning { .. }))
+            .count();
+        assert_eq!(warnings, 1);
     }
 
     // ─────────────────────────── компакция ───────────────────────────

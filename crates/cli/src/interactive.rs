@@ -88,6 +88,10 @@ pub async fn run(
                 let mut stderr = std::io::stderr().lock();
                 let _ = writeln!(stderr, "{}", render::nudge_line(*guard, message, opts));
             }
+            Event::Warning { message } => {
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "{}", render::warning_line(message, opts));
+            }
             Event::MessageComplete { message } => {
                 if let Some(thinking) = render::thinking_only_answer(message) {
                     // С `--show-thinking` рассуждения уже на экране —

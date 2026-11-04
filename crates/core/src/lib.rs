@@ -2,7 +2,7 @@
 //!
 //! Здесь живут нейтральные типы сообщений ([`message`]), SQ/EQ-протокол
 //! ([`event`]: `Op` внутрь / `Event` наружу), trait `Provider`, тулы, agent
-//! loop, запись сессий и компакция контекста.
+//! loop, запись сессий, компакция контекста и память агента ([`memory`]).
 //!
 //! Модули объявлены заранее — по одному на таск плана
 //! `docs/plans/20260824-rust-agent-harness.md`, чтобы параллельные волны
@@ -12,6 +12,7 @@ pub mod agent;
 pub mod compact;
 pub mod config;
 pub mod event;
+pub mod memory;
 pub mod message;
 pub mod permission;
 pub mod prompt;
@@ -23,6 +24,7 @@ pub use agent::{Agent, AgentConfig, AgentHandle};
 pub use compact::{CompactionConfig, CompactionError, CompactionOutcome};
 pub use config::{AgentSettings, Config, ConfigError, ModelConfig, ModelSettings, ProviderConfig};
 pub use event::{ApprovalDecision, Event, Guard, Op, StopReason};
+pub use memory::Memory;
 pub use message::{ContentBlock, Message, MessageMetadata, Role, Usage};
 pub use permission::{PermissionCheck, PermissionPolicy};
 

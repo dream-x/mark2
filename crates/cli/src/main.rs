@@ -29,7 +29,8 @@ use mark2_core::provider::Provider;
 use mark2_core::session::{SessionMeta, SessionRecorder, default_base_dir};
 use mark2_core::tools::ToolRegistry;
 use mark2_core::{
-    Agent, AgentConfig, AgentSettings, Config, Op, PermissionPolicy, ProviderConfig, StopReason,
+    Agent, AgentConfig, AgentSettings, Config, Memory, ModelSettings, Op, PermissionPolicy,
+    ProviderConfig, StopReason,
 };
 use mark2_providers::openai_compat::{CompatOptions, OpenAiCompatProvider, PROVIDER_NAME};
 
@@ -130,6 +131,7 @@ impl Args {
                 loop_detection: None,
                 write_churn: None,
                 arg_coercion: None,
+                memory_file: None,
             },
             models: BTreeMap::new(),
         }
@@ -237,33 +239,22 @@ async fn run(args: Args) -> Result<ExitCode> {
         },
     );
 
-    let mut agent_config = AgentConfig::new(&model)
-        .with_cwd(&cwd)
-        .with_policy(config.agent.policy.unwrap_or_default());
-    if let Some(max_turns) = config.agent.max_turns {
-        agent_config.max_turns = max_turns;
-    }
-    if let Some(threshold) = config.agent.loop_detection {
-        agent_config.loop_detection = threshold;
-    }
-    if let Some(threshold) = config.agent.write_churn {
-        agent_config.write_churn = threshold;
-    }
-    agent_config.max_tokens = config.agent.max_tokens;
-    agent_config.temperature = config.agent.temperature;
-    if let Some(limit) = settings.context_limit {
-        agent_config = agent_config
-            .with_compaction(mark2_core::CompactionConfig::new().with_context_limit(limit));
-    }
-
     let mut agent = Agent::new(
         Arc::new(provider) as Arc<dyn Provider>,
         ToolRegistry::with_defaults(settings.edit_strategy)
             .with_arg_coercion(config.agent.arg_coercion.unwrap_or(true)),
-        agent_config,
+        agent_config(&config, &model, &cwd, settings),
     );
+    if let Some(memory) = agent.memory() {
+        tracing::debug!(
+            path = %memory.path.display(),
+            bytes = memory.injected_bytes(),
+            truncated = memory.truncated,
+            "память в системном промпте"
+        );
+    }
     if !args.no_session
-        && let Some(recorder) = open_session(&cwd, &model, opts).await
+        && let Some(recorder) = open_session(session_meta(&cwd, &model, agent.memory()), opts).await
     {
         tracing::debug!(path = %recorder.path().display(), "сессия пишется");
         agent = agent.with_recorder(recorder);
@@ -285,6 +276,32 @@ async fn run(args: Args) -> Result<ExitCode> {
     Ok(exit_code(reason))
 }
 
+/// Настройки агента из сложенных слоёв конфига; чего слои не сказали — дефолт
+/// ядра.
+fn agent_config(config: &Config, model: &str, cwd: &Path, settings: ModelSettings) -> AgentConfig {
+    let mut agent_config = AgentConfig::new(model)
+        .with_cwd(cwd)
+        .with_policy(config.agent.policy.unwrap_or_default());
+    if let Some(max_turns) = config.agent.max_turns {
+        agent_config.max_turns = max_turns;
+    }
+    if let Some(threshold) = config.agent.loop_detection {
+        agent_config.loop_detection = threshold;
+    }
+    if let Some(threshold) = config.agent.write_churn {
+        agent_config.write_churn = threshold;
+    }
+    agent_config.max_tokens = config.agent.max_tokens;
+    agent_config.temperature = config.agent.temperature;
+    // Относительный путь уже развёрнут от директории своего конфиг-файла.
+    agent_config.memory_file = config.agent.memory_file.clone();
+    if let Some(limit) = settings.context_limit {
+        agent_config = agent_config
+            .with_compaction(mark2_core::CompactionConfig::new().with_context_limit(limit));
+    }
+    agent_config
+}
+
 /// API-ключ из переменной окружения, названной в конфиге.
 ///
 /// Ключ никогда не читается из самого конфига: `.mark2.toml` лежит в
@@ -300,9 +317,21 @@ fn api_key(config: &Config) -> Option<String> {
     }
 }
 
+/// Шапка сессии: где, какой моделью и с какой памятью в промпте.
+fn session_meta(cwd: &Path, model: &str, memory: Option<&Memory>) -> SessionMeta {
+    let meta = SessionMeta::new(cwd.display().to_string(), model, PROVIDER_NAME);
+    match memory {
+        Some(memory) => meta.with_memory(
+            memory.path.display().to_string(),
+            memory.injected_bytes() as u64,
+        ),
+        None => meta,
+    }
+}
+
 /// Открыть сессию на запись. Не смогли — работаем без журнала: потеря записи
 /// не повод не выполнить задачу.
-async fn open_session(cwd: &Path, model: &str, opts: RenderOptions) -> Option<SessionRecorder> {
+async fn open_session(meta: SessionMeta, opts: RenderOptions) -> Option<SessionRecorder> {
     let base_dir = match default_base_dir() {
         Ok(dir) => dir,
         Err(error) => {
@@ -310,7 +339,6 @@ async fn open_session(cwd: &Path, model: &str, opts: RenderOptions) -> Option<Se
             return None;
         }
     };
-    let meta = SessionMeta::new(cwd.display().to_string(), model, PROVIDER_NAME);
     match SessionRecorder::create(&base_dir, meta).await {
         Ok(recorder) => Some(recorder),
         Err(error) => {
@@ -554,6 +582,59 @@ mod tests {
         assert_eq!(api_key(&config), None);
         unsafe { std::env::remove_var(variable) };
         assert_eq!(api_key(&config), None);
+    }
+
+    /// В шапку сессии — путь и размер инъектированной памяти, если она есть.
+    #[test]
+    fn session_meta_records_the_injected_memory() {
+        let cwd = Path::new("/work");
+        let plain = session_meta(cwd, "m", None);
+        assert_eq!(plain.memory, None);
+        assert_eq!(plain.cwd, "/work");
+
+        let memory = Memory::from_text("/work/.mark2.memory.md", "# Memory\n- факт\n").unwrap();
+        let meta = session_meta(cwd, "m", Some(&memory));
+        let recorded = meta.memory.expect("память в шапке");
+        assert_eq!(recorded.path, "/work/.mark2.memory.md");
+        assert_eq!(recorded.bytes, "# Memory\n- факт".len() as u64);
+    }
+
+    /// `memory_file` из проектного конфига доходит до агента: относительный
+    /// путь резолвится от директории конфига, а не от `-C`.
+    #[test]
+    fn memory_file_from_the_config_reaches_the_agent() {
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path().canonicalize().unwrap();
+        let cwd = root_path.join("sub");
+        std::fs::create_dir_all(cwd.join("notes")).unwrap();
+        std::fs::create_dir_all(root_path.join("notes")).unwrap();
+        std::fs::write(
+            root_path.join(".mark2.toml"),
+            "[agent]\nmemory_file = \"notes/mem.md\"\n",
+        )
+        .unwrap();
+        std::fs::write(root_path.join("notes").join("mem.md"), "- из корня\n").unwrap();
+        std::fs::write(cwd.join("notes").join("mem.md"), "- из sub\n").unwrap();
+
+        let path = mark2_core::config::find_project_config(&cwd).unwrap();
+        let config = Config::load_file(&path).unwrap().unwrap();
+        let agent_config = agent_config(&config, "m", &cwd, config.resolve("m"));
+        assert_eq!(
+            agent_config.memory_file.as_deref(),
+            Some(root_path.join("notes").join("mem.md").as_path())
+        );
+        let agent = Agent::new(
+            Arc::new(OpenAiCompatProvider::new(
+                "http://127.0.0.1:9/v1",
+                None,
+                CompatOptions::default(),
+            )) as Arc<dyn Provider>,
+            ToolRegistry::new(),
+            agent_config,
+        );
+        let memory = agent.memory().expect("память найдена");
+        assert_eq!(memory.path, root_path.join("notes").join("mem.md"));
+        assert!(agent.system_prompt().ends_with("- из корня"));
     }
 
     #[test]

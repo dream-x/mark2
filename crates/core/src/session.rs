@@ -102,6 +102,18 @@ pub struct SessionMeta {
     pub model: String,
     /// Имя провайдера.
     pub provider: String,
+    /// Память агента, инъектированная в системный промпт (для отладки:
+    /// «что модель знала на старте»); `None` — памяти не было.
+    pub memory: Option<SessionMemory>,
+}
+
+/// Какая память ушла в системный промпт сессии ([`crate::memory`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionMemory {
+    /// Путь файла памяти.
+    pub path: String,
+    /// Сколько байт содержимого инъектировано (после капа).
+    pub bytes: u64,
 }
 
 impl SessionMeta {
@@ -116,6 +128,7 @@ impl SessionMeta {
             cwd: cwd.into(),
             model: model.into(),
             provider: provider.into(),
+            memory: None,
         }
     }
 
@@ -123,6 +136,16 @@ impl SessionMeta {
     #[must_use]
     pub fn with_id(mut self, id: impl Into<String>) -> Self {
         self.id = id.into();
+        self
+    }
+
+    /// Записать в шапку инъектированную память: путь и размер.
+    #[must_use]
+    pub fn with_memory(mut self, path: impl Into<String>, bytes: u64) -> Self {
+        self.memory = Some(SessionMemory {
+            path: path.into(),
+            bytes,
+        });
         self
     }
 }
@@ -144,6 +167,10 @@ pub enum SessionItem {
         model: String,
         /// Имя провайдера.
         provider: String,
+        /// Инъектированная память; без неё ключа в строке нет вовсе — шапки
+        /// сессий без памяти байт-в-байт прежние, старые читаются как есть.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        memory: Option<SessionMemory>,
     },
     /// Сообщение диалога в нейтральном формате (включая флаги видимости —
     /// сессия хранит и то, что скрыто компакцией).
@@ -201,12 +228,14 @@ impl From<SessionMeta> for SessionItem {
             cwd,
             model,
             provider,
+            memory,
         } = meta;
         Self::Meta {
             id,
             cwd,
             model,
             provider,
+            memory,
         }
     }
 }
@@ -612,6 +641,7 @@ mod tests {
                 cwd: "/w".into(),
                 model: "m".into(),
                 provider: "p".into(),
+                memory: None,
             }
         );
         assert_eq!(loaded.lines[1].item, SessionItem::turn_started("t1"));
@@ -748,12 +778,40 @@ mod tests {
                 cwd: "/w".into(),
                 model: "m".into(),
                 provider: "p".into(),
+                memory: None,
             },
         };
         assert_eq!(
             serde_json::to_string(&line).unwrap(),
             r#"{"ts":"2026-08-24T09:00:00Z","type":"meta","id":"s1","cwd":"/w","model":"m","provider":"p"}"#
         );
+    }
+
+    /// Память в шапке: путь и размер; без памяти ключа нет вовсе.
+    #[tokio::test]
+    async fn meta_records_the_injected_memory() {
+        let dir = TempDir::new();
+        let meta = meta().with_memory("/work/mark2/.mark2.memory.md", 120);
+        let recorder = SessionRecorder::create(dir.path(), meta.clone())
+            .await
+            .unwrap();
+        let path = recorder.path().to_path_buf();
+        recorder.close().await;
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            raw.contains(r#""memory":{"path":"/work/mark2/.mark2.memory.md","bytes":120}"#),
+            "{raw}"
+        );
+        let loaded = load_session(&path).await.unwrap();
+        assert_eq!(loaded.lines[0].item, SessionItem::from(meta));
+
+        // Старая шапка без ключа читается: памяти не было.
+        let old: SessionLine = serde_json::from_str(
+            r#"{"ts":"2026-08-24T09:00:00Z","type":"meta","id":"s1","cwd":"/w","model":"m","provider":"p"}"#,
+        )
+        .unwrap();
+        assert!(matches!(old.item, SessionItem::Meta { memory: None, .. }));
     }
 
     #[test]
