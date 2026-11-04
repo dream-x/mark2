@@ -79,6 +79,12 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     pub max_turns: Option<usize>,
 
+    /// Температура сэмплинга, от 0 до 2; 0 — самый воспроизводимый ответ.
+    // allow_negative_numbers: `--temperature -1` — значение вне диапазона, а
+    // не «неизвестный флаг -1».
+    #[arg(long, value_name = "T", value_parser = parse_temperature, allow_negative_numbers = true)]
+    pub temperature: Option<f32>,
+
     /// Print mode: только ответ модели в stdout, вопросов не задаём.
     #[arg(short = 'p', long)]
     pub print: bool,
@@ -105,6 +111,20 @@ pub enum PolicyArg {
     AskWrites,
     /// Только чтение.
     ReadOnly,
+}
+
+/// Какую температуру принимает `--temperature`: OpenAI-совместимые API выше 2
+/// запрос отвергают, а отрицательная бессмысленна.
+const TEMPERATURE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=2.0;
+
+/// Разбор `--temperature`. Ошибка становится обычной ошибкой clap (код 2) — до
+/// запроса к модели, а не отказом сервера посреди хода. `nan` и `inf` `f32`
+/// разбирает, но в диапазон они не входят.
+fn parse_temperature(value: &str) -> Result<f32, String> {
+    match value.parse::<f32>() {
+        Ok(temperature) if TEMPERATURE_RANGE.contains(&temperature) => Ok(temperature),
+        _ => Err("ожидается число от 0 до 2 включительно".to_string()),
+    }
 }
 
 impl From<PolicyArg> for PermissionPolicy {
@@ -168,7 +188,7 @@ impl Args {
                 max_turns: self.max_turns,
                 policy: self.policy_override(),
                 max_tokens: None,
-                temperature: None,
+                temperature: self.temperature,
                 loop_detection: None,
                 write_churn: None,
                 arg_coercion: None,
@@ -441,6 +461,7 @@ mod tests {
         assert!(!args.show_thinking);
         assert_eq!(args.model, None);
         assert_eq!(args.policy, None);
+        assert_eq!(args.temperature, None);
         assert_eq!(args.cwd, None);
 
         assert!(Args::try_parse_from(["mark2"]).is_err());
@@ -460,6 +481,8 @@ mod tests {
             "read-only",
             "--max-turns",
             "7",
+            "--temperature",
+            "0.7",
             "--print",
             "--no-session",
             "--cwd",
@@ -474,6 +497,7 @@ mod tests {
         assert_eq!(args.api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
         assert_eq!(args.policy, Some(PolicyArg::ReadOnly));
         assert_eq!(args.max_turns, Some(7));
+        assert_eq!(args.temperature, Some(0.7));
         assert!(args.print);
         assert!(args.no_session);
         assert_eq!(args.cwd, Some(PathBuf::from("/tmp")));
@@ -629,6 +653,59 @@ mod tests {
         );
     }
 
+    /// `--temperature` — слой флагов, как `--model`: перекрывает
+    /// `[agent] temperature` из файла и доходит до агента; без флага остаётся
+    /// значение из файла. Ради `0` флаг и заведён — ревью детерминированное.
+    #[test]
+    fn temperature_flag_wins_over_the_config_and_reaches_the_agent() {
+        let files = Config::parse("[agent]\ntemperature = 0.4\n", "test.toml").unwrap();
+        let cwd = Path::new("/work");
+
+        for (flag, expected) in [("0", 0.0), ("0.0", 0.0), ("1.25", 1.25), ("2", 2.0)] {
+            let args = parse(&["mark2", "--temperature", flag, "задача"]);
+            assert_eq!(args.overrides().agent.temperature, Some(expected), "{flag}");
+            let merged = files.clone().merge(args.overrides());
+            assert_eq!(merged.agent.temperature, Some(expected), "{flag}");
+            let agent = agent_config(&merged, "m", cwd, merged.resolve("m"));
+            assert_eq!(agent.temperature, Some(expected), "{flag}");
+        }
+
+        let silent = files.clone().merge(parse(&["mark2", "задача"]).overrides());
+        assert_eq!(silent.agent.temperature, Some(0.4));
+        let agent = agent_config(&silent, "m", cwd, silent.resolve("m"));
+        assert_eq!(agent.temperature, Some(0.4));
+
+        // Ни флага, ни файла — температуру выбирает сервер.
+        let nothing = Config::default().merge(parse(&["mark2", "задача"]).overrides());
+        let agent = agent_config(&nothing, "m", cwd, nothing.resolve("m"));
+        assert_eq!(agent.temperature, None);
+    }
+
+    /// Вне 0..=2 (и не число вовсе) — ошибка clap с кодом 2, как у любой
+    /// опечатки во флагах, а не отказ сервера посреди хода.
+    #[test]
+    fn temperature_outside_zero_to_two_is_a_usage_error() {
+        let bad = [
+            "2.01", "3", "-0.5", "-1", "abc", "", "nan", "inf", "0,5", "1e3",
+        ];
+        for value in bad {
+            let joined = format!("--temperature={value}");
+            for argv in [
+                vec!["mark2", joined.as_str(), "задача"],
+                // Отдельным словом — тоже, в том числе отрицательное: это
+                // значение вне диапазона, а не «неизвестный флаг -1».
+                vec!["mark2", "--temperature", value, "задача"],
+            ] {
+                let error = Args::try_parse_and_validate(&argv).expect_err(value);
+                assert_eq!(error.exit_code(), 2, "{argv:?}: {error}");
+                assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+                let message = error.to_string();
+                assert!(message.contains("--temperature"), "{message}");
+                assert!(message.contains("от 0 до 2"), "{message}");
+            }
+        }
+    }
+
     #[test]
     fn missing_model_is_an_error_that_says_what_to_do() {
         let config = Config::default();
@@ -766,6 +843,7 @@ mod tests {
         let help = Args::command().render_help().to_string();
         assert!(help.contains("--model"), "{help}");
         assert!(help.contains("--yolo"), "{help}");
+        assert!(help.contains("--temperature"), "{help}");
         assert!(help.contains(".mark2.toml"), "{help}");
         assert!(help.contains("stdin"), "{help}");
         assert!(!Args::command().get_version().unwrap_or_default().is_empty());

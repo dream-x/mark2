@@ -4,7 +4,9 @@
 //! что `main` их действительно связывает: ошибка аргументов уходит кодом 2,
 //! пустой stdin — кодом 1 до любого запроса, а промпт больше лимита argv
 //! Linux (128 КиБ на аргумент) доходит до сервера модели целиком. Сервер —
-//! заглушка на один запрос, отвечающая SSE-стримом из одного текста.
+//! заглушка на один запрос, отвечающая SSE-стримом из одного текста. Здесь же —
+//! что `--temperature` из такого вызова (так зовёт mark2 `scripts/review.sh`)
+//! перекрывает проектный `.mark2.toml` в самом запросе к модели.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -161,4 +163,46 @@ fn stdin_prompt_beyond_the_argv_limit_reaches_the_model_whole() {
     assert_eq!(text(&output.stdout), "ok\n");
     let request = server.join().unwrap();
     assert!(request.contains(&prompt), "промпт дошёл не целиком");
+}
+
+/// Температура из тела запроса к модели.
+fn sent_temperature(request: &str) -> Option<f64> {
+    let body: serde_json::Value = serde_json::from_str(request).expect("тело запроса — JSON");
+    body.get("temperature").map(|t| t.as_f64().expect("число"))
+}
+
+/// Слои по-настоящему: `.mark2.toml` в `-C` говорит 0.9, флаг — 0, и в запрос
+/// уходит 0; без флага уходит значение из файла.
+#[test]
+fn temperature_flag_beats_the_project_config_in_the_request() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join(".mark2.toml"),
+        "[agent]\ntemperature = 0.9\n",
+    )
+    .unwrap();
+
+    let (base_url, server) = serve_once("ok");
+    let flag = [
+        "-p",
+        "--policy",
+        "read-only",
+        "--model",
+        "m",
+        "--base-url",
+        &base_url,
+        "--temperature",
+        "0",
+        "-",
+    ];
+    let output = run(mark2(home.path(), &flag), "задача");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(sent_temperature(&server.join().unwrap()), Some(0.0));
+
+    let (base_url, server) = serve_once("ok");
+    let silent = ["-p", "--model", "m", "--base-url", &base_url, "-"];
+    let output = run(mark2(home.path(), &silent), "задача");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let from_file = sent_temperature(&server.join().unwrap()).expect("температура из файла");
+    assert!((from_file - 0.9).abs() < 1e-6, "{from_file}");
 }

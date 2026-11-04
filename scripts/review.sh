@@ -10,6 +10,9 @@
 #
 # Environment:
 #   MARK2_REVIEW_MODEL           model id (default: qwen3.6:35b-a3b-coding)
+#   MARK2_REVIEW_TEMPERATURE     sampling temperature, 0 to 2, passed as
+#                                mark2 --temperature over any config file
+#                                (default: 0, the most repeatable verdict)
 #   MARK2_REVIEW_BASE_URL        OpenAI-compatible base URL
 #                                (default: http://localhost:11434/v1)
 #   MARK2_REVIEW_BIN             mark2 command, split on spaces (default:
@@ -56,6 +59,9 @@ prompt_file=$tool_root/prompts/review.md
 [ -r "$prompt_file" ] || die "reviewer prompt not found: $prompt_file"
 
 model=${MARK2_REVIEW_MODEL:-qwen3.6:35b-a3b-coding}
+# mark2 checks the range itself: a bad value is its usage error, and the
+# review fails with exit 1 (never 2, that would read as needs-work).
+temperature=${MARK2_REVIEW_TEMPERATURE:-0}
 base_url=${MARK2_REVIEW_BASE_URL:-http://localhost:11434/v1}
 max_bytes=${MARK2_REVIEW_MAX_DIFF_BYTES:-122880}
 case $max_bytes in
@@ -259,7 +265,7 @@ parse_verdict() {
         tail -n 1
 }
 
-note "reviewing $what with $model at $base_url"
+note "reviewing $what with $model at $base_url, temperature $temperature"
 answer=$tmp/answer
 # A local model sometimes lists its findings and stops without the verdict
 # line; one fresh run usually fixes that. mark2 failures are not retried.
@@ -270,7 +276,8 @@ while :; do
     # ("-p -"): a single argv string is capped at 128 KiB on Linux.
     {
         run_mark2 -p --policy read-only -C "$repo_root" \
-            --base-url "$base_url" --model "$model" - <"$tmp/prompt" &
+            --base-url "$base_url" --model "$model" --temperature "$temperature" \
+            - <"$tmp/prompt" &
         pid=$!
         echo "$pid" >"$tmp/pid"
         # exec, not a redirect on the call: dash keeps a saved copy of the

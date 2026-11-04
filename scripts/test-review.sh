@@ -37,13 +37,21 @@ check() { # check NAME COMMAND...
 # Fake mark2: arguments one per line, the prompt saved whole, a call counter,
 # and FAKE_FIRST_ANSWER (if set) instead of FAKE_ANSWER on the first call. Like
 # the real one, it takes the prompt from the last argument, or from stdin when
-# that argument is "-", and refuses an empty stdin.
+# that argument is "-", refuses an empty stdin, and rejects a --temperature
+# that is not a number from 0 to 2 with exit 2 (a clap usage error).
 fake=$work/fake-mark2
 cat >"$fake" <<'EOF'
 #!/bin/sh
 : >"$FAKE_DIR/args"
+prev=
+temperature=
+temperature_given=
 for arg in "$@"; do
     printf '%s\n' "$arg" >>"$FAKE_DIR/args"
+    case $prev in
+        --temperature) temperature=$arg temperature_given=yes ;;
+    esac
+    prev=$arg
     last=$arg
 done
 if [ "$last" = - ]; then
@@ -57,6 +65,12 @@ else
 fi
 calls=$(($(cat "$FAKE_DIR/calls" 2>/dev/null || echo 0) + 1))
 echo "$calls" >"$FAKE_DIR/calls"
+if [ -n "$temperature_given" ] &&
+    ! awk -v t="$temperature" \
+        'BEGIN { exit !(t ~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)$/ && t + 0 <= 2) }'; then
+    printf "error: invalid value '%s' for '--temperature <T>'\n" "$temperature" >&2
+    exit 2
+fi
 [ -z "${FAKE_SLEEP:-}" ] || exec sleep "$FAKE_SLEEP"
 if [ "$calls" -eq 1 ] && [ -n "${FAKE_FIRST_ANSWER:-}" ]; then
     printf '%s\n' "$FAKE_FIRST_ANSWER"
@@ -75,8 +89,8 @@ FAKE_FIRST_ANSWER=
 export FAKE_DIR FAKE_ANSWER FAKE_STATUS FAKE_FIRST_ANSWER
 MARK2_REVIEW_BIN=$fake
 export MARK2_REVIEW_BIN
-unset MARK2_REVIEW_MODEL MARK2_REVIEW_BASE_URL MARK2_REVIEW_MAX_DIFF_BYTES \
-    MARK2_REVIEW_TIMEOUT_SECS FAKE_SLEEP
+unset MARK2_REVIEW_MODEL MARK2_REVIEW_TEMPERATURE MARK2_REVIEW_BASE_URL \
+    MARK2_REVIEW_MAX_DIFF_BYTES MARK2_REVIEW_TIMEOUT_SECS FAKE_SLEEP
 
 repo=$work/repo
 mkdir "$repo"
@@ -105,6 +119,8 @@ run_stdin() {
     err=$(cat "$work/err")
 }
 called() { [ -f "$work/args" ]; }
+# arg_value FLAG: the argument that follows FLAG in the fake's argv.
+arg_value() { awk -v flag="$1" 'prev == flag { print; exit } { prev = $0 }' "$work/args"; }
 calls_are() { [ "$(cat "$work/calls" 2>/dev/null || echo 0)" -eq "$1" ]; }
 prompt_has() { grep -qF -- "$1" "$work/prompt"; }
 code_is() { [ "$code" -eq "$1" ]; }
@@ -144,9 +160,13 @@ $(cd "$repo" && git rev-parse --show-toplevel)
 --base-url
 http://localhost:11434/v1
 --model
-qwen3.6:35b-a3b-coding"
-check "flags: read-only print mode, default model and URL" \
-    eval '[ "$(sed -n "1,9p" "$work/args")" = "$expected_args" ]'
+qwen3.6:35b-a3b-coding
+--temperature
+0"
+check "flags: read-only print mode, default model, URL and temperature" \
+    eval '[ "$(sed -n "1,11p" "$work/args")" = "$expected_args" ]'
+check "temperature: --temperature 0 by default, a repeatable verdict" \
+    eval '[ "$(arg_value --temperature)" = 0 ]'
 check "prompt travels on stdin, not in argv" \
     eval '[ "$(cat "$work/args")" = "$expected_args
 -" ]'
@@ -162,6 +182,27 @@ run
 unset MARK2_REVIEW_MODEL MARK2_REVIEW_BASE_URL
 check "env overrides model and URL" \
     eval 'grep -qx m1 "$work/args" && grep -qx "http://h:1/v1" "$work/args"'
+
+# --- temperature: 0 unless MARK2_REVIEW_TEMPERATURE says otherwise ---
+export MARK2_REVIEW_TEMPERATURE=0.7
+run
+check "temperature: env overrides the default" \
+    eval 'code_is 0 && [ "$(arg_value --temperature)" = 0.7 ]'
+check "temperature: stderr names the one in use" \
+    eval 'printf "%s" "$err" | grep -q "temperature 0.7"'
+export MARK2_REVIEW_TEMPERATURE=
+run
+check "temperature: an empty env value falls back to 0" \
+    eval 'code_is 0 && [ "$(arg_value --temperature)" = 0 ]'
+# The range is mark2's to check: its usage error (exit 2) must not pass for
+# VERDICT: needs-work (also 2).
+export MARK2_REVIEW_TEMPERATURE=3
+run
+unset MARK2_REVIEW_TEMPERATURE
+check "temperature: out of range is a failure (exit 1), not needs-work" code_is 1
+check "temperature: mark2's error reaches stderr" \
+    eval 'printf "%s" "$err" | grep -q "invalid value .3. for .--temperature"'
+check "temperature: a usage error is not retried" calls_are 1
 
 # --- verdict parsing and exit codes ---
 # Variables are set and reset explicitly: assignments in front of a shell
