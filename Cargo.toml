@@ -50,6 +50,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Прочее
+# regex: поиск тулом `grep` (линейное время, без катастрофического бэктрекинга).
+regex = "1"
 dirs = "6"
 jiff = "0.2"
 uuid = { version = "1", features = ["v4", "serde"] }

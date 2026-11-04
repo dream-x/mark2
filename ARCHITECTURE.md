@@ -18,7 +18,7 @@ flowchart LR
     A -- ProviderRequest --> P[Provider trait]
     P --> O[openai_compat\nSSE-стриминг]
     O --> S[(ollama / llama-server /\nLM Studio / OpenRouter)]
-    A -- "execute(name, input)" --> T[ToolRegistry\nbash · read · write · edit]
+    A -- "execute(name, input)" --> T[ToolRegistry\nbash · read · grep · write · edit]
     A -- SessionItem --> J[SessionRecorder\nJSONL append-only]
 ```
 
@@ -31,7 +31,7 @@ flowchart LR
 | — `event.rs` | `Event` и `Op` — serde-tagged, snake_case, стабильные wire-имена |
 | — `provider.rs` | `trait Provider` (один обязательный метод `stream()`), `ProviderRequest`, `StreamChunk`, `ToolDef`, `ProviderError` (в т.ч. `ContextLengthExceeded` — на нём висит компакция) |
 | — `agent.rs` | Цикл: `Agent::spawn() → (AgentHandle, Receiver<Event>)`; сэмплинг → тул-коллы → результаты → повтор; permission-гейт, отмена, интеграция компакции и сессий |
-| — `tools/` | `trait Tool` + `ToolRegistry` (schemars-схемы, приведение типов аргументов к схеме — `coerce.rs`, jsonschema-валидация, retry-with-error); bash/read/write/edit |
+| — `tools/` | `trait Tool` + `ToolRegistry` (schemars-схемы, приведение типов аргументов к схеме — `coerce.rs`, jsonschema-валидация, retry-with-error); bash/read/grep/write/edit (`grep` — read-only поиск внутри cwd с капами) |
 | — `permission.rs` | `PermissionPolicy`: Yolo / AskWrites / ReadOnly |
 | — `prompt.rs` | Системный промпт (≤1000 токенов вместе со схемами тулов) + поиск AGENTS.md вверх от cwd (ближайший выигрывает) + секция `## Memory` последней, если есть память |
 | — `memory.rs` | Память агента: поиск `.mark2.memory.md` (или `[agent] memory_file`), кап 4096 байт с обрезкой по строке, путь для модели |

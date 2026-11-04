@@ -10,8 +10,8 @@
 //! [`crate::tools`]: ошибки — это данные для модели.
 //!
 //! Разделение тулов примитивное и намеренно консервативное: мутирует всё, что
-//! может изменить диск или систему (`bash`, `write`, `edit`), а `read` (и любой
-//! незнакомый реестру тул чтения) свободен. `bash` считается мутирующим, даже
+//! может изменить диск или систему (`bash`, `write`, `edit`), а `read`, `grep`
+//! (и любой незнакомый реестру тул чтения) свободны. `bash` считается мутирующим, даже
 //! когда модель зовёт его ради `ls`: разобрать шелл-строку надёжно нельзя, а
 //! ошибаться безопаснее в сторону вопроса.
 
@@ -106,8 +106,8 @@ impl PermissionCheck {
 pub fn read_only_denial(tool_name: &str) -> String {
     format!(
         "Permission denied: `{tool_name}` is blocked because this session is read-only. \
-         Only read-only tools such as `read` are available; calling `{tool_name}` again will \
-         fail the same way. Inspect what you need and describe the change in your answer instead."
+         Only read-only tools such as `read` and `grep` are available; calling `{tool_name}` \
+         again will fail the same way. Inspect what you need and describe the change in your answer instead."
     )
 }
 
@@ -131,7 +131,7 @@ pub fn interrupted_result() -> String {
 mod tests {
     use super::*;
 
-    const READ_ONLY_TOOLS: [&str; 2] = ["read", "some_future_search_tool"];
+    const READ_ONLY_TOOLS: [&str; 3] = ["read", "grep", "some_future_search_tool"];
 
     #[test]
     fn default_policy_asks_before_writes() {
@@ -187,11 +187,35 @@ mod tests {
             assert!(reason.contains("read-only"), "{reason}");
             // Модель должна понять, что повтор бессмыслен.
             assert!(reason.contains("again"), "{reason}");
+            // …и чем искать вместо `bash` с grep.
+            assert!(reason.contains("`grep`"), "{reason}");
         }
         for tool in READ_ONLY_TOOLS {
             assert!(
                 PermissionPolicy::ReadOnly.check(tool).is_allowed(),
                 "{tool}"
+            );
+        }
+    }
+
+    /// Из реестра по умолчанию в read-only сессии остаются ровно `grep` и
+    /// `read`: новый тул обязан быть классифицирован осознанно, а поиск —
+    /// доступен ревьюверу наравне с чтением.
+    #[test]
+    fn read_only_keeps_exactly_grep_and_read_from_the_default_registry() {
+        use crate::tools::{EditStrategy, ToolRegistry};
+
+        let registry = ToolRegistry::with_defaults(EditStrategy::SearchReplace);
+        let allowed: Vec<&str> = registry
+            .names()
+            .into_iter()
+            .filter(|name| PermissionPolicy::ReadOnly.check(name).is_allowed())
+            .collect();
+        assert_eq!(allowed, ["grep", "read"]);
+        for name in registry.names() {
+            assert!(
+                is_mutating(name) || PermissionPolicy::AskWrites.check(name).is_allowed(),
+                "{name}"
             );
         }
     }

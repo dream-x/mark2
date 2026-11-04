@@ -1851,7 +1851,7 @@ mod tests {
                 .iter()
                 .map(|tool| tool.name.as_str())
                 .collect::<Vec<_>>(),
-            ["bash", "edit", "read", "write"]
+            ["bash", "edit", "grep", "read", "write"]
         );
         assert_eq!(requests[1].messages.len(), 3);
         assert_eq!(requests[1].messages[0].role, Role::User);
@@ -2218,6 +2218,41 @@ mod tests {
         let results = tool_results(&events);
         assert!(!results[0].2, "{}", results[0].1);
         assert!(results[0].1.contains("содержимое"));
+        harness.finish().await;
+    }
+
+    /// `grep` в `ReadOnly` — наравне с `read`: исполняется без вопроса.
+    #[tokio::test]
+    async fn read_only_allows_grep() {
+        let mut harness = Harness::new(
+            vec![
+                tools_script(
+                    "",
+                    &[(
+                        "call_1",
+                        "grep",
+                        json!({"pattern": "fn \\w+", "path": "src"}),
+                    )],
+                ),
+                text_script("нашёл"),
+            ],
+            PermissionPolicy::ReadOnly,
+            DEFAULT_MAX_TURNS,
+        )
+        .await;
+        std::fs::create_dir_all(harness.path("src")).unwrap();
+        std::fs::write(harness.path("src/lib.rs"), "pub fn answer() {}\n").unwrap();
+
+        let events = harness.turn("где answer?").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert!(
+            !tags(&events).contains(&"approval_required".to_string()),
+            "{:?}",
+            tags(&events)
+        );
+        let results = tool_results(&events);
+        assert!(!results[0].2, "{}", results[0].1);
+        assert_eq!(results[0].1, "src/lib.rs:1: pub fn answer() {}");
         harness.finish().await;
     }
 

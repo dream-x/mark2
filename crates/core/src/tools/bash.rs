@@ -66,7 +66,8 @@ impl Tool for BashTool {
          use relative paths, do not `cd` to absolute paths. \
          Returns stdout and stderr merged, truncated at 30000 bytes; \
          a non-zero exit code is reported and counts as an error. \
-         Use it for builds, tests, git, and for finding files (ls, find, grep)."
+         Use it for builds, tests, git, and for finding files (ls, find); \
+         search file contents with the `grep` tool."
     }
 
     fn input_schema(&self) -> Value {
@@ -500,5 +501,17 @@ mod tests {
             description.contains("do not `cd` to absolute paths"),
             "{description}"
         );
+    }
+
+    /// Поиск по содержимому — тулом `grep`, а не шеллом: в read-only сессии
+    /// `bash` отбивается политикой, а модель тянулась к нему именно ради grep.
+    #[test]
+    fn description_sends_content_search_to_the_grep_tool() {
+        let description = BashTool::new().description().to_string();
+        assert!(
+            description.contains("search file contents with the `grep` tool"),
+            "{description}"
+        );
+        assert!(!description.contains("find, grep"), "{description}");
     }
 }

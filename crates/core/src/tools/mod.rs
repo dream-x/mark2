@@ -1,5 +1,6 @@
-//! Тулы агента: контракт [`Tool`], реестр [`ToolRegistry`] и четыре базовых
-//! инструмента — [`BashTool`], [`ReadTool`], [`WriteTool`], [`EditTool`].
+//! Тулы агента: контракт [`Tool`], реестр [`ToolRegistry`] и пять базовых
+//! инструментов — [`BashTool`], [`EditTool`], [`GrepTool`], [`ReadTool`],
+//! [`WriteTool`].
 //!
 //! Четыре свойства этого модуля важны за пределами «просто вызвать функцию»:
 //!
@@ -21,6 +22,7 @@
 pub mod bash;
 mod coerce;
 pub mod edit;
+pub mod grep;
 pub mod read;
 pub mod write;
 
@@ -36,6 +38,7 @@ use crate::provider::ToolDef;
 
 pub use bash::BashTool;
 pub use edit::{EditStrategy, EditTool, UnknownEditStrategy};
+pub use grep::GrepTool;
 pub use read::ReadTool;
 pub use write::WriteTool;
 
@@ -199,12 +202,13 @@ impl ToolRegistry {
         Self::default()
     }
 
-    /// Реестр из четырёх базовых тулов в фиксированном порядке:
-    /// `bash`, `edit`, `read`, `write`.
+    /// Реестр из пяти базовых тулов в фиксированном порядке:
+    /// `bash`, `edit`, `grep`, `read`, `write`.
     pub fn with_defaults(edit_strategy: EditStrategy) -> Self {
         let mut registry = Self::new();
         registry.register(Box::new(BashTool::new()));
         registry.register(Box::new(EditTool::new(edit_strategy)));
+        registry.register(Box::new(GrepTool::new()));
         registry.register(Box::new(ReadTool::new()));
         registry.register(Box::new(WriteTool::new()));
         registry
@@ -458,7 +462,7 @@ mod tests {
     #[test]
     fn defs_are_in_registration_order() {
         let names: Vec<String> = registry().defs().into_iter().map(|def| def.name).collect();
-        assert_eq!(names, ["bash", "edit", "read", "write"]);
+        assert_eq!(names, ["bash", "edit", "grep", "read", "write"]);
     }
 
     /// Порядок и содержимое `defs()` обязаны быть байт-в-байт стабильными —
@@ -493,7 +497,7 @@ mod tests {
     #[test]
     fn registry_lookup_helpers() {
         let registry = registry();
-        assert_eq!(registry.len(), 4);
+        assert_eq!(registry.len(), 5);
         assert!(!registry.is_empty());
         assert_eq!(registry.get("bash").map(Tool::name), Some("bash"));
         assert!(registry.get("nope").is_none());
@@ -511,7 +515,7 @@ mod tests {
             out.content
         );
         assert!(
-            out.content.contains("bash, edit, read, write"),
+            out.content.contains("bash, edit, grep, read, write"),
             "{}",
             out.content
         );
@@ -673,6 +677,22 @@ mod tests {
         }
     }
 
+    /// `case_insensitive` строкой (`"true"`) доходит до `grep` уже булевым.
+    #[tokio::test]
+    async fn grep_accepts_case_insensitive_as_a_boolean_string() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "Needle\n").unwrap();
+        let out = registry()
+            .execute(
+                "grep",
+                json!({"pattern": "needle", "case_insensitive": "true"}),
+                &ToolCtx::new(dir.path()),
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, "a.txt:1: Needle");
+    }
+
     /// Неприводимое остаётся невалидным — с тем же текстом ошибки, что и без
     /// приведения.
     #[tokio::test]
@@ -704,6 +724,7 @@ mod tests {
                 json!({"path": "a.txt", "old_string": "a", "new_string": "b", "replace_all": "yes"}),
             ),
             ("write", json!({"path": "a.txt", "content": 60})),
+            ("grep", json!({"pattern": "x", "case_insensitive": "yes"})),
         ];
         for (name, input) in cases {
             let expected = raw_validation_message(&registry, name, &input);

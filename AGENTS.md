@@ -9,7 +9,7 @@ OpenAI-compatible. План: `docs/plans/20260824-rust-agent-harness.md`.
 ## Структура
 
 - `crates/core` (`mark2-core`) — нейтральные типы сообщений и событий, trait `Provider`,
-  agent loop, тулы (bash/read/write/edit), сессии JSONL, компакция, конфиг.
+  agent loop, тулы (bash/read/grep/write/edit), сессии JSONL, компакция, конфиг.
 - `crates/providers` (`mark2-providers`) — реализации провайдеров: `openai_compat`,
   SSE-парсинг, JSON-repair для tool-аргументов слабых моделей.
 - `crates/cli` (`mark2-cli`, бинарь `mark2`) — clap, интерактив и `-p` print mode,

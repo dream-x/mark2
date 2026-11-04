@@ -435,7 +435,7 @@ mod tests {
         assert_eq!(requests[0].model, "mock-model");
         assert_eq!(requests[0].messages.len(), 1);
         assert_eq!(requests[0].messages[0].text(), "что там с тестами?");
-        assert_eq!(requests[0].tools.len(), 4);
+        assert_eq!(requests[0].tools.len(), 5);
     }
 
     #[tokio::test]
