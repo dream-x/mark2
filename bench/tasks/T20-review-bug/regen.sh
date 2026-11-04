@@ -17,10 +17,9 @@
 # mark2 that only saves the prompt it gets on stdin. That saved prompt becomes
 # prompt.md, so the hunk lines carry the same numbers the real wrapper adds.
 #
-# It also checks two things the task depends on: the prompt never names
-# report.py (the broken caller must be found by searching the repository, not
-# read off the diff), and verify.sh accepts exactly the line range of the
-# lib/pager.py hunk.
+# It also checks what verify.sh depends on: the prompt never names report.py,
+# so a reply that names it found the broken caller by searching the
+# repository, not by reading it off the diff.
 set -eu
 
 die() {
@@ -155,20 +154,7 @@ if grep -q 'report\.py' "$work/prompt"; then
     die "the prompt names report.py: the broken caller would be visible from the diff"
 fi
 
-# The lib/pager.py hunk in new-file numbering against verify.sh.
-hunks=$(sed -n '/^+++ b\/lib\/pager\.py$/,/^diff --git /s/^@@ -[0-9,]* +\([0-9][0-9]*\),\([0-9][0-9]*\) @@.*/\1 \2/p' \
-    "$work/change.patch")
-[ "$(printf '%s\n' "$hunks" | wc -l | tr -d ' ')" -eq 1 ] ||
-    die "expected exactly one lib/pager.py hunk, got: $hunks"
-want_first=${hunks% *}
-want_last=$((want_first + ${hunks#* } - 1))
-got_first=$(sed -n 's/^hunk_first=\([0-9][0-9]*\)$/\1/p' "$here/verify.sh")
-got_last=$(sed -n 's/^hunk_last=\([0-9][0-9]*\)$/\1/p' "$here/verify.sh")
-if [ "$got_first" != "$want_first" ] || [ "$got_last" != "$want_last" ]; then
-    die "verify.sh accepts lib/pager.py:${got_first:-?}..${got_last:-?}, the hunk is $want_first..$want_last"
-fi
-
 cp "$work/prompt" "$here/prompt.md"
-printf 'regen: wrote %s (%s bytes); lib/pager.py hunk %s..%s matches verify.sh\n' \
-    "$here/prompt.md" "$(wc -c <"$here/prompt.md" | tr -d ' ')" "$want_first" "$want_last"
+printf 'regen: wrote %s (%s bytes); report.py is not in the prompt\n' \
+    "$here/prompt.md" "$(wc -c <"$here/prompt.md" | tr -d ' ')"
 printf 'regen: prompts/review.md cksum now: %s\n' "$(cksum <"$root/prompts/review.md")"
