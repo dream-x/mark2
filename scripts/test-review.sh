@@ -34,9 +34,10 @@ check() { # check NAME COMMAND...
     if "$@"; then pass "$name"; else fail "$name"; fi
 }
 
-# Fake mark2: arguments one per line (the prompt is the last one, saved whole),
-# a call counter, and FAKE_FIRST_ANSWER (if set) instead of FAKE_ANSWER on the
-# first call.
+# Fake mark2: arguments one per line, the prompt saved whole, a call counter,
+# and FAKE_FIRST_ANSWER (if set) instead of FAKE_ANSWER on the first call. Like
+# the real one, it takes the prompt from the last argument, or from stdin when
+# that argument is "-", and refuses an empty stdin.
 fake=$work/fake-mark2
 cat >"$fake" <<'EOF'
 #!/bin/sh
@@ -45,7 +46,15 @@ for arg in "$@"; do
     printf '%s\n' "$arg" >>"$FAKE_DIR/args"
     last=$arg
 done
-printf '%s' "$last" >"$FAKE_DIR/prompt"
+if [ "$last" = - ]; then
+    cat >"$FAKE_DIR/prompt"
+    [ -s "$FAKE_DIR/prompt" ] || {
+        echo 'error: empty prompt' >&2
+        exit 1
+    }
+else
+    printf '%s' "$last" >"$FAKE_DIR/prompt"
+fi
 calls=$(($(cat "$FAKE_DIR/calls" 2>/dev/null || echo 0) + 1))
 echo "$calls" >"$FAKE_DIR/calls"
 [ -z "${FAKE_SLEEP:-}" ] || exec sleep "$FAKE_SLEEP"
@@ -138,6 +147,9 @@ http://localhost:11434/v1
 qwen3.6:35b-a3b-coding"
 check "flags: read-only print mode, default model and URL" \
     eval '[ "$(sed -n "1,9p" "$work/args")" = "$expected_args" ]'
+check "prompt travels on stdin, not in argv" \
+    eval '[ "$(cat "$work/args")" = "$expected_args
+-" ]'
 check "prompt starts with prompts/review.md" \
     eval '[ "$(head -n 1 "$work/prompt")" = "$(head -n 1 "$here/../prompts/review.md")" ]'
 check "prompt carries the diff" prompt_has '+    2'
@@ -287,6 +299,17 @@ MARK2_REVIEW_MAX_DIFF_BYTES=abc
 run_stdin "$work/big.diff" -
 unset MARK2_REVIEW_MAX_DIFF_BYTES
 check "bad cap value is an error" code_is 1
+# A prompt past the 128 KiB Linux cap on one argv string reaches mark2 whole:
+# it goes on stdin.
+awk 'BEGIN { for (i = 0; i < 3000; i++) printf "// huge filler line %d of the stdin prompt test\n", i }' \
+    >"$work/huge.rs"
+(cd "$work" && git diff --no-index /dev/null huge.rs) >"$work/huge.diff"
+export MARK2_REVIEW_MAX_DIFF_BYTES=1000000
+run_stdin "$work/huge.diff" -
+unset MARK2_REVIEW_MAX_DIFF_BYTES
+check "huge prompt: over 128 KiB, delivered whole" \
+    eval 'code_is 0 && [ "$(wc -c <"$work/prompt" | tr -d " ")" -gt 131072 ] &&
+        prompt_has "huge filler line 2999" && ! prompt_has "[diff truncated"'
 # Cyrillic comments are the norm in this repo: they must reach the model byte
 # for byte (macOS iconv once "cleaned" such a diff by mistake).
 cat >"$work/cyrillic.diff" <<'EOF'

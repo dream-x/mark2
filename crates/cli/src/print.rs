@@ -7,6 +7,11 @@
 //! (`[agent] write_churn: …`) и компакции (`[agent] compaction: …`), ошибки,
 //! предупреждения и итог токенов.
 //!
+//! Текст каждого assistant-сообщения хода начинается с новой строки: модель
+//! часто пишет фразу перед тул-коллом без завершающего `\n`, и без разделителя
+//! она склеилась бы со следующим сообщением («…test module.1. [blocker] …»).
+//! Внутри одного сообщения дельты печатаются как пришли, байт-в-байт.
+//!
 //! Одно исключение из «рассуждений в stdout нет»: если ход закончился
 //! сообщением, в котором есть только thinking (ни текста, ни тул-коллов), —
 //! так qwen3.5 через ollama отвечает в половине прогонов — рассуждения
@@ -50,7 +55,12 @@ pub async fn run(
     let mut usage = Usage::default();
     // Сколько тул-коллов спасло приведение типов аргументов — в итоговую строку.
     let mut coerced_calls = 0usize;
+    // Закончился ли напечатанный в stdout текст переводом строки (до первого
+    // текста — «да»: ответ не начинается с пустой строки).
     let mut ends_with_newline = true;
+    // Было ли сообщение закрыто (`MessageComplete`) после последнего
+    // напечатанного текста: следующий текст — уже другое сообщение хода.
+    let mut message_ended = false;
     // Канал событий, закрывшийся без `TurnFinished`, — тоже конец хода:
     // считаем его прерванным, а не успешным.
     let mut reason = StopReason::Cancelled;
@@ -77,6 +87,7 @@ pub async fn run(
                     let _ = out.write_all(thinking.as_bytes());
                     ends_with_newline = thinking.ends_with('\n');
                 }
+                message_ended = true;
             }
             Event::ToolCallFinished {
                 id,
@@ -137,6 +148,12 @@ pub async fn run(
         if let Some(text) = render::render(&event, opts)
             && !text.is_empty()
         {
+            // Первый текст нового сообщения — с новой строки, если предыдущее
+            // её не закрыло (и если модель не начала с перевода строки сама).
+            if message_ended && !ends_with_newline && !text.starts_with('\n') {
+                let _ = out.write_all(b"\n");
+            }
+            message_ended = false;
             ends_with_newline = text.ends_with('\n');
             let _ = out.write_all(text.as_bytes());
         }
@@ -253,6 +270,22 @@ mod tests {
             message: Message::new(Role::Assistant, blocks),
             usage: Usage::new(100, 20),
         });
+        chunks
+    }
+
+    /// Ответ модели, пришедший несколькими текстовыми дельтами.
+    fn streamed(
+        deltas: &[&str],
+        call: Option<(&str, &str, serde_json::Value)>,
+    ) -> Vec<StreamChunk> {
+        let text: String = deltas.concat();
+        let mut chunks = answer(&text, call);
+        chunks.splice(
+            0..1,
+            deltas
+                .iter()
+                .map(|delta| StreamChunk::TextDelta(delta.to_string())),
+        );
         chunks
     }
 
@@ -423,7 +456,7 @@ mod tests {
 
         assert_eq!(harness.reason, StopReason::Completed);
         // Ни `→ write`, ни `✓` в stdout: только текст ответа.
-        assert_eq!(harness.stdout(), "Пишу файл.Файл создан.\n");
+        assert_eq!(harness.stdout(), "Пишу файл.\nФайл создан.\n");
         assert_eq!(
             std::fs::read_to_string(harness.cwd.join(path)).unwrap(),
             "привет"
@@ -483,6 +516,70 @@ mod tests {
         );
     }
 
+    /// Находка живого ревью: фраза перед тул-коллом без `\n` склеивалась со
+    /// следующим сообщением («…test module.1. [blocker] …»). Теперь каждое
+    /// сообщение — с новой строки; пустое сообщение с одним тул-коллом
+    /// разделитель не съедает, а дельты одного сообщения не разрываются.
+    #[tokio::test]
+    async fn text_of_each_message_starts_on_a_new_line() {
+        let read = |id: &'static str, path: &str| Some((id, "read", json!({"path": path})));
+        let harness = run_turn(
+            vec![
+                streamed(&["Смотрю ", "test module."], read("c1", "a.rs")),
+                answer("", read("c2", "b.rs")),
+                streamed(&["1. [blocker] ", "a.rs:1: x."], None),
+            ],
+            PermissionPolicy::Yolo,
+            "отревьюй",
+        )
+        .await;
+
+        assert_eq!(harness.reason, StopReason::Completed);
+        assert_eq!(
+            harness.stdout(),
+            "Смотрю test module.\n1. [blocker] a.rs:1: x.\n"
+        );
+    }
+
+    /// Строку, которую модель закрыла сама (в конце сообщения или в начале
+    /// следующего), разделитель не дублирует: пустых строк не появляется.
+    #[tokio::test]
+    async fn a_line_closed_by_the_model_gets_no_extra_newline() {
+        let read = |id: &'static str, path: &str| Some((id, "read", json!({"path": path})));
+        let harness = run_turn(
+            vec![
+                answer("Первое.\n", read("c1", "a.rs")),
+                answer("Второе.", read("c2", "b.rs")),
+                answer("\nТретье.\n", None),
+            ],
+            PermissionPolicy::Yolo,
+            "три шага",
+        )
+        .await;
+
+        assert_eq!(harness.reason, StopReason::Completed);
+        assert_eq!(harness.stdout(), "Первое.\nВторое.\nТретье.\n");
+    }
+
+    /// Одиночное сообщение печатается байт-в-байт, как до разделителя:
+    /// дельты подряд, внутренние переводы строк как есть, в конце хода —
+    /// ровно один `\n` (свой у модели или добавленный).
+    #[tokio::test]
+    async fn a_single_message_is_printed_byte_for_byte() {
+        for (deltas, expected) in [
+            (
+                &["Строка 1\n\n", "Стро", "ка 2"][..],
+                "Строка 1\n\nСтрока 2\n",
+            ),
+            (&["ок", "\n"][..], "ок\n"),
+            (&["  отступ", " и хвост  "][..], "  отступ и хвост  \n"),
+        ] {
+            let harness = run_turn(vec![streamed(deltas, None)], PermissionPolicy::Yolo, "x").await;
+            assert_eq!(harness.reason, StopReason::Completed);
+            assert_eq!(harness.stdout(), expected, "{deltas:?}");
+        }
+    }
+
     /// Ключевое решение режима: без интерактива подтверждение не выпрашивается,
     /// а отклоняется — тул не выполняется, модель узнаёт об этом tool result'ом.
     #[tokio::test]
@@ -501,7 +598,7 @@ mod tests {
         .await;
 
         assert_eq!(harness.reason, StopReason::Completed);
-        assert_eq!(harness.stdout(), "Пишу файл.Не смог: нет доступа.\n");
+        assert_eq!(harness.stdout(), "Пишу файл.\nНе смог: нет доступа.\n");
         assert!(
             !harness.cwd.join("note.txt").exists(),
             "тул не должен был выполниться"

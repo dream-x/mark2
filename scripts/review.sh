@@ -14,17 +14,20 @@
 #                                (default: http://localhost:11434/v1)
 #   MARK2_REVIEW_BIN             mark2 command, split on spaces (default:
 #                                target/release/mark2 if built, otherwise
-#                                cargo run -q -p mark2-cli --)
+#                                cargo run -q -p mark2-cli --); it must read
+#                                the prompt from stdin (mark2 -p -), so rebuild
+#                                an old target/release
 #   MARK2_REVIEW_MAX_DIFF_BYTES  diff size cap, larger diffs are cut
-#                                (default: 122880). The prompt travels as one
-#                                argv string, and Linux caps one at 128 KiB.
+#                                (default: 122880, about 35-40k tokens; past
+#                                the model's context the prompt head is lost)
 #   MARK2_REVIEW_TIMEOUT_SECS    wall-clock limit per model run, 0 = none
 #                                (default: 600)
 #
 # The model gets prompts/review.md, the diff stat and the diff with every
-# hunk line numbered by its line in the new file. It sees the repository the
-# diff came from (the git root of the current directory) and may read files
-# there; bash, edit and write are denied by the read-only policy.
+# hunk line numbered by its line in the new file, on mark2's stdin (no argv
+# size limit). It sees the repository the diff came from (the git root of the
+# current directory) and may read files there; bash, edit and write are
+# denied by the read-only policy.
 #
 # An answer without a VERDICT line is retried once.
 #
@@ -203,7 +206,7 @@ fi
 
 # No UTF-8 sanitizing here: macOS iconv rejects valid Cyrillic text at its
 # buffer boundaries. A diff that is not UTF-8 (a Latin-1 file) makes mark2
-# refuse the argument, and the review fails loudly with exit 1.
+# refuse the prompt on stdin, and the review fails loudly with exit 1.
 
 {
     cat "$prompt_file"
@@ -216,7 +219,6 @@ fi
     printf '===== END DIFF =====\n\n'
     printf 'Review the diff above. Your last line must be exactly VERDICT: approve or VERDICT: needs-work.\n'
 } >"$tmp/prompt"
-prompt=$(cat "$tmp/prompt")
 
 # exec: run in the background, the subshell becomes mark2 itself, so $! is
 # the pid the watchdog and the traps signal (cargo run execs mark2 as well).
@@ -264,10 +266,11 @@ answer=$tmp/answer
 attempt=1
 while :; do
     # Stream the answer to stdout and keep a copy; POSIX sh has no pipefail,
-    # so mark2's exit status travels through a file.
+    # so mark2's exit status travels through a file. The prompt goes on stdin
+    # ("-p -"): a single argv string is capped at 128 KiB on Linux.
     {
         run_mark2 -p --policy read-only -C "$repo_root" \
-            --base-url "$base_url" --model "$model" "$prompt" </dev/null &
+            --base-url "$base_url" --model "$model" - <"$tmp/prompt" &
         pid=$!
         echo "$pid" >"$tmp/pid"
         # exec, not a redirect on the call: dash keeps a saved copy of the

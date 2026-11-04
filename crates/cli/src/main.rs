@@ -11,20 +11,22 @@
 //! же [`Config`] и мёржатся последними ([`Args::overrides`]).
 //!
 //! Коды возврата: `0` — ход завершён, `1` — ошибка или упёрлись в `max_turns`,
-//! `130` — прервано пользователем (как принято у Ctrl+C в шелле).
+//! `2` — ошибка в аргументах (clap), `130` — прервано пользователем (как
+//! принято у Ctrl+C в шелле).
 
 mod interactive;
 mod print;
 mod render;
 
 use std::collections::BTreeMap;
-use std::io::IsTerminal;
+use std::ffi::OsString;
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, ValueEnum};
 use mark2_core::provider::Provider;
 use mark2_core::session::{SessionMeta, SessionRecorder, default_base_dir};
 use mark2_core::tools::ToolRegistry;
@@ -36,6 +38,9 @@ use mark2_providers::openai_compat::{CompatOptions, OpenAiCompatProvider, PROVID
 
 use crate::render::RenderOptions;
 
+/// Значение `PROMPT`, означающее «прочитать промпт из stdin до EOF».
+pub const STDIN_PROMPT: &str = "-";
+
 /// Агент для локальных моделей: одна задача — один запуск.
 #[derive(Debug, Clone, Parser)]
 #[command(
@@ -46,7 +51,7 @@ use crate::render::RenderOptions;
                   ./.mark2.toml, флаги.\nСессии пишутся в ~/.mark2/sessions/YYYY/MM/DD/*.jsonl."
 )]
 pub struct Args {
-    /// Задача агенту.
+    /// Задача агенту; `-` — прочитать её из stdin до EOF (только с -p).
     #[arg(value_name = "PROMPT")]
     pub prompt: String,
 
@@ -113,6 +118,42 @@ impl From<PolicyArg> for PermissionPolicy {
 }
 
 impl Args {
+    /// Разобрать argv и проверить то, чего clap не выражает декларативно.
+    ///
+    /// Ошибка — обычная ошибка clap: `main` печатает её с usage и выходит с
+    /// кодом 2, как при любой опечатке во флагах.
+    pub fn try_parse_and_validate<I, T>(argv: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let args = Self::try_parse_from(argv)?;
+        args.validate()?;
+        Ok(args)
+    }
+
+    /// `-` вместо промпта — только в print mode: интерактивный режим читает
+    /// stdin сам (подтверждения `y/N`), и делить его с промптом нечестно.
+    fn validate(&self) -> Result<(), clap::Error> {
+        if self.prompt == STDIN_PROMPT && !self.print {
+            return Err(Self::command().error(
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "PROMPT `-` (промпт из stdin) работает только вместе с -p: \
+                 интерактивный режим читает stdin сам",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Промпт хода: позиционный аргумент как есть, а для `-` — весь stdin.
+    fn resolve_prompt(&self, stdin: &mut dyn Read) -> Result<String> {
+        if self.prompt == STDIN_PROMPT {
+            read_prompt(stdin)
+        } else {
+            Ok(self.prompt.clone())
+        }
+    }
+
     /// Флаги как слой конфига — старший из трёх.
     pub fn overrides(&self) -> Config {
         Config {
@@ -170,6 +211,23 @@ impl Args {
     }
 }
 
+/// Прочитать промпт до EOF (`mark2 -p -`).
+///
+/// Большой промпт так не упирается в лимит argv (на Linux — 128 КиБ на один
+/// аргумент) и не требует экранирования. Текст уходит модели байт-в-байт;
+/// пустой или из одних пробельных символов — ошибка: такой ход модель
+/// потратила бы на догадки, что от неё хотят.
+fn read_prompt(reader: &mut dyn Read) -> Result<String> {
+    let mut prompt = String::new();
+    reader
+        .read_to_string(&mut prompt)
+        .context("не удалось прочитать промпт из stdin (ожидается UTF-8)")?;
+    if prompt.trim().is_empty() {
+        bail!("empty prompt: stdin пуст, а `-p -` берёт промпт из stdin до EOF");
+    }
+    Ok(prompt)
+}
+
 /// Раскрашивать ли вывод: только в терминал и только если не запрещено
 /// `NO_COLOR` (https://no-color.org).
 fn use_color() -> bool {
@@ -189,7 +247,8 @@ fn exit_code(reason: StopReason) -> ExitCode {
 #[tokio::main]
 async fn main() -> ExitCode {
     init_tracing();
-    let args = Args::parse();
+    let args =
+        Args::try_parse_and_validate(std::env::args_os()).unwrap_or_else(|error| error.exit());
     let opts = args.render_options();
     match run(args).await {
         Ok(code) => code,
@@ -229,6 +288,9 @@ async fn run(args: Args) -> Result<ExitCode> {
         context_limit = ?settings.context_limit,
         "настройки модели"
     );
+    // До сессии и агента: пустой stdin не должен оставлять за собой журнал.
+    // Блокирующее чтение здесь безвредно — больше в рантайме ничего не идёт.
+    let prompt = args.resolve_prompt(&mut std::io::stdin().lock())?;
 
     let provider = OpenAiCompatProvider::new(
         config.base_url(),
@@ -261,7 +323,7 @@ async fn run(args: Args) -> Result<ExitCode> {
     }
 
     let (handle, mut events) = agent.spawn();
-    handle.submit(Op::user_input(args.prompt.clone()));
+    handle.submit(Op::user_input(prompt));
 
     let reason = if args.print {
         let mut stdout = std::io::stdout();
@@ -363,10 +425,10 @@ fn warn_no_session(reason: &str, opts: RenderOptions) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
 
+    /// Тем же путём, что и `main`: разбор плюс валидация.
     fn parse(argv: &[&str]) -> Args {
-        Args::try_parse_from(argv).expect("аргументы должны разбираться")
+        Args::try_parse_and_validate(argv).expect("аргументы должны разбираться")
     }
 
     #[test]
@@ -423,6 +485,68 @@ mod tests {
         let short = parse(&["mark2", "-p", "-C", "/tmp", "задача"]);
         assert!(short.print);
         assert_eq!(short.cwd, Some(PathBuf::from("/tmp")));
+    }
+
+    /// `-` — промпт из stdin, и только в print mode; без `-p` — ошибка clap
+    /// с объяснением и кодом 2, как у любой ошибки аргументов.
+    #[test]
+    fn dash_prompt_means_stdin_and_requires_print_mode() {
+        assert_eq!(parse(&["mark2", "-p", "-"]).prompt, STDIN_PROMPT);
+        assert_eq!(parse(&["mark2", "-", "--print"]).prompt, STDIN_PROMPT);
+        assert_eq!(parse(&["mark2", "-p", "--", "-"]).prompt, STDIN_PROMPT);
+
+        for argv in [&["mark2", "-"][..], &["mark2", "--yolo", "--", "-"][..]] {
+            let error = Args::try_parse_and_validate(argv).unwrap_err();
+            assert_eq!(error.exit_code(), 2, "{error}");
+            let message = error.to_string();
+            assert!(message.contains("stdin"), "{message}");
+            assert!(message.contains("-p"), "{message}");
+        }
+        // Обычный промпт без -p валиден, как и раньше.
+        assert_eq!(
+            parse(&["mark2", "задача - с дефисом"]).prompt,
+            "задача - с дефисом"
+        );
+    }
+
+    /// stdin читается до EOF и уходит модели байт-в-байт — в том числе больше
+    /// лимита argv Linux на один аргумент (128 КиБ).
+    #[test]
+    fn stdin_prompt_is_read_to_eof_byte_for_byte() {
+        let args = parse(&["mark2", "-p", "-"]);
+        let text = "Строка 1\n\n  отступ\nпоследняя без перевода строки";
+        assert_eq!(args.resolve_prompt(&mut text.as_bytes()).unwrap(), text);
+
+        let big = format!("{}КОНЕЦ\n", "x".repeat(200 * 1024));
+        assert_eq!(args.resolve_prompt(&mut big.as_bytes()).unwrap(), big);
+    }
+
+    #[test]
+    fn empty_or_broken_stdin_prompt_is_an_error() {
+        let args = parse(&["mark2", "-p", "-"]);
+        for empty in ["", " \n\t\n"] {
+            let error = args.resolve_prompt(&mut empty.as_bytes()).unwrap_err();
+            assert!(error.to_string().starts_with("empty prompt"), "{error}");
+        }
+        // Не UTF-8 — ошибка с причиной, а не мусор в промпте.
+        let error = args.resolve_prompt(&mut &b"\xff\xfe"[..]).unwrap_err();
+        assert!(format!("{error:#}").contains("UTF-8"), "{error:#}");
+    }
+
+    /// Обычный позиционный промпт stdin не трогает: тот остаётся
+    /// интерактивному режиму под подтверждения.
+    #[test]
+    fn positional_prompt_does_not_read_stdin() {
+        struct Untouchable;
+        impl Read for Untouchable {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                panic!("stdin не должен читаться");
+            }
+        }
+        for argv in [&["mark2", "задача"][..], &["mark2", "-p", "задача"][..]] {
+            let args = parse(argv);
+            assert_eq!(args.resolve_prompt(&mut Untouchable).unwrap(), "задача");
+        }
     }
 
     #[test]
@@ -643,6 +767,7 @@ mod tests {
         assert!(help.contains("--model"), "{help}");
         assert!(help.contains("--yolo"), "{help}");
         assert!(help.contains(".mark2.toml"), "{help}");
+        assert!(help.contains("stdin"), "{help}");
         assert!(!Args::command().get_version().unwrap_or_default().is_empty());
     }
 }
