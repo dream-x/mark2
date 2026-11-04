@@ -1,0 +1,604 @@
+{
+  "schema_version": 1,
+  "label": "sensor-off",
+  "run_id": "20261105-012828-sensor-off",
+  "started_at": "2026-11-04T22:28:28.60598Z",
+  "finished_at": "2026-11-04T22:41:48.740494Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 3,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "qwen9",
+        "model": "qwen3.5:9b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 1.0
+      },
+      {
+        "alias": "bolt4",
+        "model": "nemotron-3.5-bolt:e4b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 1.0
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T04",
+        "slug": "fix-bug-test",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T04-fix-bug-test",
+        "timeout_seconds": 240,
+        "repeats": 3,
+        "tags": [
+          "edit",
+          "bash",
+          "verify-loop"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory contains `stats.py` and `test.py`.\n\nRunning `python3 test.py` currently fails. Make it pass.\n\nRules:\n\n- Fix the bug in `stats.py`. The docstrings in `stats.py` describe the intended\n  behaviour and are correct.\n- Do not modify `test.py` in any way, and do not delete or rename it.\n- Run `python3 test.py` yourself at the end and make sure it prints\n  `all tests passed` and exits successfully.\n"
+      },
+      {
+        "id": "T11",
+        "slug": "cascade-bugs",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T11-cascade-bugs",
+        "timeout_seconds": 300,
+        "repeats": 3,
+        "tags": [
+          "edit",
+          "verify-loop",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory contains `textkit.py` and `test.py`.\n\nRunning `python3 test.py` currently fails. Make it pass.\n\nRules:\n\n- Fix the code in `textkit.py`. The docstrings in `textkit.py` describe the\n  intended behaviour and are correct.\n- Do not modify `test.py` in any way, and do not delete or rename it.\n- Run `python3 test.py` yourself at the end and make sure it prints\n  `all tests passed` and exits successfully.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T04",
+      "repeat": 1,
+      "started_at": "2026-11-04T22:28:34.203073Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 14.993826083,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 10801,
+        "output": 691,
+        "cached": 8236
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 268,
+      "stdout_path": "logs/qwen9/T04/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T04/1.stderr.txt",
+      "session_path": "sessions/qwen9/T04/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T04",
+      "repeat": 2,
+      "started_at": "2026-11-04T22:28:49.326578Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 10.435922458,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 7821,
+        "output": 431,
+        "cached": 5588
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 256,
+      "stdout_path": "logs/qwen9/T04/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T04/2.stderr.txt",
+      "session_path": "sessions/qwen9/T04/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T04",
+      "repeat": 3,
+      "started_at": "2026-11-04T22:28:59.899264Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 12.120438375,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 7815,
+        "output": 431,
+        "cached": 5584
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 256,
+      "stdout_path": "logs/qwen9/T04/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T04/3.stderr.txt",
+      "session_path": "sessions/qwen9/T04/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T11",
+      "repeat": 1,
+      "started_at": "2026-11-04T22:29:12.155136Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 152.585505959,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 57417,
+        "output": 5174,
+        "cached": 49936
+      },
+      "session": {
+        "assistant_messages": 12,
+        "tool_uses": 12,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 3
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "normalize_spaces: ok\ntruncate_words: ok\nwrap_line: ok\ncount_sentences: ok\nslugify: ok\nall tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 712,
+      "stdout_path": "logs/qwen9/T11/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T11/1.stderr.txt",
+      "session_path": "sessions/qwen9/T11/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T11",
+      "repeat": 2,
+      "started_at": "2026-11-04T22:31:44.984261Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 72.056388417,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 36022,
+        "output": 1962,
+        "cached": 30706
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 9,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 3
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "normalize_spaces: ok\ntruncate_words: ok\nwrap_line: ok\ncount_sentences: ok\nslugify: ok\nall tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 524,
+      "stdout_path": "logs/qwen9/T11/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T11/2.stderr.txt",
+      "session_path": "sessions/qwen9/T11/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T11",
+      "repeat": 3,
+      "started_at": "2026-11-04T22:32:57.493239Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 95.6742655,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 49227,
+        "output": 2692,
+        "cached": 42813
+      },
+      "session": {
+        "assistant_messages": 11,
+        "tool_uses": 11,
+        "tool_errors": 4,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 4
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "normalize_spaces: ok\ntruncate_words: ok\nwrap_line: ok\ncount_sentences: ok\nslugify: ok\nall tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 694,
+      "stdout_path": "logs/qwen9/T11/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T11/3.stderr.txt",
+      "session_path": "sessions/qwen9/T11/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T04",
+      "repeat": 1,
+      "started_at": "2026-11-04T22:34:36.952677Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 94.816904125,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 29274,
+        "output": 13533,
+        "cached": 26052
+      },
+      "session": {
+        "assistant_messages": 13,
+        "tool_uses": 12,
+        "tool_errors": 4,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 2,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 4
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 16,
+      "stdout_path": "logs/bolt4/T04/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T04/1.stderr.txt",
+      "session_path": "sessions/bolt4/T04/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T04",
+      "repeat": 2,
+      "started_at": "2026-11-04T22:36:11.89654Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 19.811276791,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 12051,
+        "output": 2807,
+        "cached": 9854
+      },
+      "session": {
+        "assistant_messages": 7,
+        "tool_uses": 6,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-rqFYQM/cwd/test.py\", line 27, in <module>\n    main()\n    ~~~~^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-rqFYQM/cwd/test.py\", line 15, in main\n    check(\"median/odd\", stats.median([3, 1, 2]), 2)\n    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-rqFYQM/cwd/test.py\", line 8, in check\n    raise AssertionError(\"%s: got %r, expected %r\" % (label, got, want))\nAssertionError: median/odd: got 1.5, expected 2\nFAIL: python3 test.py did not pass\n"
+      },
+      "answer_chars": 1418,
+      "stdout_path": "logs/bolt4/T04/2.stdout.txt",
+      "stderr_path": "logs/bolt4/T04/2.stderr.txt",
+      "session_path": "sessions/bolt4/T04/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T04",
+      "repeat": 3,
+      "started_at": "2026-11-04T22:36:31.873951Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 14.251984834,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 9751,
+        "output": 1979,
+        "cached": 7778
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 5,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 16,
+      "stdout_path": "logs/bolt4/T04/3.stdout.txt",
+      "stderr_path": "logs/bolt4/T04/3.stderr.txt",
+      "session_path": "sessions/bolt4/T04/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T11",
+      "repeat": 1,
+      "started_at": "2026-11-04T22:36:46.241979Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 14.312935792,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 7623,
+        "output": 1558,
+        "cached": 4583
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "normalize_spaces: ok\n",
+        "stderr": "Traceback (most recent call last):\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-mJq8Il/cwd/test.py\", line 118, in <module>\n    main()\n    ~~~~^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-mJq8Il/cwd/test.py\", line 112, in main\n    test()\n    ~~~~^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-mJq8Il/cwd/test.py\", line 32, in test_truncate_words\n    check(\n    ~~~~~^\n        \"truncate_words/cut\",\n        ^^^^^^^^^^^^^^^^^^^^^\n        textkit.truncate_words(\"one two three four\", 2),\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        \"one two...\",\n        ^^^^^^^^^^^^^\n    )\n    ^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-mJq8Il/cwd/test.py\", line 8, in check\n    raise AssertionError(\"%s: got %r, expected %r\" % (label, got, want))\nAssertionError: truncate_words/cut: got 'one...', expected 'one two...'\nFAIL: python3 test.py did not pass\n"
+      },
+      "answer_chars": 4054,
+      "stdout_path": "logs/bolt4/T11/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T11/1.stderr.txt",
+      "session_path": "sessions/bolt4/T11/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T11",
+      "repeat": 2,
+      "started_at": "2026-11-04T22:37:00.704117Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 86.498170667,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 52764,
+        "output": 11821,
+        "cached": 46490
+      },
+      "session": {
+        "assistant_messages": 13,
+        "tool_uses": 12,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 3
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "normalize_spaces: ok\ntruncate_words: ok\nwrap_line: ok\ncount_sentences: ok\nslugify: ok\nall tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 16,
+      "stdout_path": "logs/bolt4/T11/2.stdout.txt",
+      "stderr_path": "logs/bolt4/T11/2.stderr.txt",
+      "session_path": "sessions/bolt4/T11/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T11",
+      "repeat": 3,
+      "started_at": "2026-11-04T22:38:27.317473Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 201.27320025,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 174920,
+        "output": 28074,
+        "cached": 161256
+      },
+      "session": {
+        "assistant_messages": 24,
+        "tool_uses": 23,
+        "tool_errors": 11,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 2,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 11
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "normalize_spaces: ok\ntruncate_words: ok\nwrap_line: ok\ncount_sentences: ok\nslugify: ok\nall tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 16,
+      "stdout_path": "logs/bolt4/T11/3.stdout.txt",
+      "stderr_path": "logs/bolt4/T11/3.stderr.txt",
+      "session_path": "sessions/bolt4/T11/3.jsonl",
+      "error": null
+    }
+  ]
+}
