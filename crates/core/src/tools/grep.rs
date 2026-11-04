@@ -1,9 +1,18 @@
-//! Тул `grep`: read-only поиск по содержимому файлов регулярным выражением.
+//! Тул `grep`: read-only поиск по содержимому файлов регулярным выражением
+//! и (с `files_only`) листинг файлов по пути.
 //!
 //! Нужен прежде всего read-only сессиям (ревьювер `scripts/review.sh`): без
 //! него модель может только `read` по точному пути и тянется к `bash`, который
-//! политика отбивает. Поэтому тул намеренно маленький — три параметра, вывод
-//! `путь:строка: текст`, — и весь его вес в ограничителях:
+//! политика отбивает. Поэтому тул намеренно маленький — четыре параметра, вывод
+//! `путь:строка: текст`, — и весь его вес в ограничителях.
+//!
+//! **Листинг (`files_only: true`)** закрывает нужду в `ls`/glob без отдельного
+//! тула (преамбула и так у потолка): `pattern` матчится не по строкам, а по
+//! пути файла относительно cwd — ровно тому, что попадёт в вывод, по одному
+//! пути на строку. Содержимое не читается вовсе, поэтому бинарные файлы в
+//! листинг входят (это листинг, а не поиск); обход, замок cwd и капы те же.
+//!
+//! Ограничители:
 //!
 //! * **Только внутри cwd.** И cwd, и `path` канонизируются (`..` и симлинки
 //!   раскрыты), результат обязан лежать внутри cwd — замок общий с `read`
@@ -11,9 +20,9 @@
 //!   на файлы, ни на директории: так нельзя ни выйти наружу, ни зациклиться.
 //! * **Шум не ищется.** Скрытые файлы и директории (имя с точки, включая
 //!   `.git`), `node_modules` и директории-кэши с `CACHEDIR.TAG` (так помечен
-//!   `target/` у cargo) пропускаются; бинарные файлы (NUL в первом блоке) —
-//!   тоже. Корень поиска, названный явно, не фильтруется: `path: ".github"`
-//!   работает.
+//!   `target/` у cargo) пропускаются; при поиске по содержимому бинарные
+//!   файлы (NUL в первом блоке) — тоже. Корень поиска, названный явно, не
+//!   фильтруется: `path: ".github"` работает.
 //! * **Капы ради контекста модели**: число совпадений ([`MAX_MATCHES`]),
 //!   суммарный вывод ([`MAX_OUTPUT_BYTES`], как у `bash`), длина показанной
 //!   строки ([`MAX_LINE_BYTES`], окно вокруг совпадения) и сколько байт файла
@@ -68,6 +77,9 @@ pub struct GrepInput {
     /// Ignore case.
     #[serde(default)]
     pub case_insensitive: Option<bool>,
+    /// List files whose path (not content) matches `pattern`.
+    #[serde(default)]
+    pub files_only: Option<bool>,
 }
 
 /// Тул поиска по файлам.
@@ -107,7 +119,10 @@ impl Tool for GrepTool {
             }
         };
 
-        if input.pattern.is_empty() {
+        let files_only = input.files_only.unwrap_or(false);
+        // Пустой regex совпадает со всем: для поиска по строкам это шум на
+        // весь репозиторий, а для листинга — законное «покажи все файлы».
+        if input.pattern.is_empty() && !files_only {
             return ToolOutput::err(
                 "`pattern` is empty: pass the regular expression to search for.",
             );
@@ -118,6 +133,15 @@ impl Tool for GrepTool {
             .build()
         {
             Ok(regex) => regex,
+            // Листинг зовут с glob-привычками (`*.rs`) — это не regex.
+            Err(error) if files_only => {
+                return ToolOutput::err(format!(
+                    "Invalid regex `{}`: {error}\nWith `files_only`, `pattern` is a regex matched \
+                     against file paths, not a glob: use `\\.rs$` instead of `*.rs`, or `.` for \
+                     every file, then call `grep` again.",
+                    input.pattern
+                ));
+            }
             Err(error) => {
                 return ToolOutput::err(format!(
                     "Invalid regex `{}`: {error}\nEscape special characters such as `(`, `[`, \
@@ -139,7 +163,7 @@ impl Tool for GrepTool {
                 Ok(root) => root,
                 Err(message) => return ToolOutput::err(message),
             };
-            search(&regex, root, ctx.cancel).into_output(&input.pattern)
+            search(&regex, root, files_only, ctx.cancel).into_output(&input.pattern)
         };
         match tokio::task::spawn_blocking(task).await {
             Ok(output) => output,
@@ -207,13 +231,19 @@ struct Root {
     is_dir: bool,
 }
 
-/// Итог поиска: найденные строки и всё, что надо сказать о пропусках.
+/// Итог поиска: найденные строки (или пути — в листинге) и всё, что надо
+/// сказать о пропусках.
 #[derive(Debug, Default)]
 struct Report {
     /// Отображаемый корень (относительно cwd), для текста «ничего не найдено».
     root_display: String,
+    /// Листинг файлов (`files_only`), а не поиск по содержимому.
+    files_only: bool,
     output: String,
+    /// Записи вывода: найденные строки или пути.
     matches: usize,
+    /// Просмотренные файлы: в поиске — прочитанные, в листинге — все
+    /// встреченные обходом.
     files_searched: usize,
     binary_skipped: usize,
     unreadable: usize,
@@ -237,6 +267,8 @@ impl Report {
             return ToolOutput::err("Search was cancelled.");
         }
 
+        // Маркеры обрезки общие для поиска и листинга: «matches» — совпадения
+        // `pattern`, по строке или по пути.
         let mut markers: Vec<String> = Vec::new();
         if self.match_cap_hit {
             markers.push(format!(
@@ -259,10 +291,17 @@ impl Report {
         }
 
         if self.matches == 0 {
-            let mut text = format!(
-                "No matches for `{pattern}` in {} ({} file(s) searched",
-                self.root_display, self.files_searched
-            );
+            let mut text = if self.files_only {
+                format!(
+                    "No file paths match `{pattern}` in {} ({} file(s) checked",
+                    self.root_display, self.files_searched
+                )
+            } else {
+                format!(
+                    "No matches for `{pattern}` in {} ({} file(s) searched",
+                    self.root_display, self.files_searched
+                )
+            };
             if self.binary_skipped > 0 {
                 text.push_str(&format!(", {} binary skipped", self.binary_skipped));
             }
@@ -287,8 +326,9 @@ impl Report {
     }
 }
 
-/// Обойти корень и собрать совпадения.
-fn search(regex: &Regex, root: Root, cancel: CancellationToken) -> Report {
+/// Обойти корень и собрать совпадения: строки файлов или, при `files_only`,
+/// пути.
+fn search(regex: &Regex, root: Root, files_only: bool, cancel: CancellationToken) -> Report {
     let root_display = if root.path == root.cwd {
         "the working directory".to_string()
     } else {
@@ -300,6 +340,7 @@ fn search(regex: &Regex, root: Root, cancel: CancellationToken) -> Report {
         cancel,
         report: Report {
             root_display,
+            files_only,
             ..Report::default()
         },
     };
@@ -356,12 +397,31 @@ impl Search<'_> {
         }
     }
 
-    /// Поиск в одном файле.
+    /// Один файл обхода: поиск в нём или, при `files_only`, сверка его пути.
     fn file(&mut self, path: &Path) {
         if self.cancel.is_cancelled() {
             self.report.cancelled = true;
             return;
         }
+        if self.report.files_only {
+            self.list(path);
+        } else {
+            self.search_lines(path);
+        }
+    }
+
+    /// Листинг: `pattern` против пути относительно cwd — того же, что уйдёт в
+    /// вывод. Файл не открывается: бинарные и нечитаемые в листинг входят.
+    fn list(&mut self, path: &Path) {
+        self.report.files_searched += 1;
+        let display = display_path(self.cwd, path);
+        if self.regex.is_match(&display) {
+            self.push(format!("{display}\n"));
+        }
+    }
+
+    /// Поиск по строкам одного файла.
+    fn search_lines(&mut self, path: &Path) {
         let Some((bytes, clipped)) = self.read_text(path) else {
             return;
         };
@@ -376,22 +436,32 @@ impl Search<'_> {
             let Some(found) = self.regex.find(line) else {
                 continue;
             };
-            if self.report.matches == MAX_MATCHES {
-                self.report.match_cap_hit = true;
-                return;
-            }
             let entry = format!(
                 "{display}:{}: {}\n",
                 index + 1,
                 clip_line(line, found.start())
             );
-            if self.report.output.len() + entry.len() > MAX_OUTPUT_BYTES {
-                self.report.output_cap_hit = true;
+            if !self.push(entry) {
                 return;
             }
-            self.report.output.push_str(&entry);
-            self.report.matches += 1;
         }
+    }
+
+    /// Добавить запись в вывод, соблюдая капы [`MAX_MATCHES`] и
+    /// [`MAX_OUTPUT_BYTES`]. `false` — упёрлись в кап (он отмечен в отчёте),
+    /// обход пора прекращать.
+    fn push(&mut self, entry: String) -> bool {
+        if self.report.matches == MAX_MATCHES {
+            self.report.match_cap_hit = true;
+            return false;
+        }
+        if self.report.output.len() + entry.len() > MAX_OUTPUT_BYTES {
+            self.report.output_cap_hit = true;
+            return false;
+        }
+        self.report.output.push_str(&entry);
+        self.report.matches += 1;
+        true
     }
 
     /// Прочитать файл не длиннее [`MAX_FILE_BYTES`]. `None` — бинарный или
@@ -918,6 +988,319 @@ mod tests {
         assert!(out.content.contains("cancelled"), "{}", out.content);
     }
 
+    /// Листинг: `pattern` — по пути относительно cwd (с директориями), а не по
+    /// имени файла и не относительно корня обхода.
+    #[tokio::test]
+    async fn files_only_matches_paths_relative_to_the_cwd() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "README.md", "readme\n");
+        write(&dir, "build.rs", "fn main() {}\n");
+        write(&dir, "docs/notes.md", "notes\n");
+        write(&dir, "src/lib.rs", "lib\n");
+        write(&dir, "src/tools/grep.rs", "grep\n");
+
+        let out = run(&dir, json!({"pattern": r"\.rs$", "files_only": true})).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, "build.rs\nsrc/lib.rs\nsrc/tools/grep.rs");
+
+        // Совпадение в имени директории — тоже совпадение пути.
+        let out = run(&dir, json!({"pattern": "tools", "files_only": true})).await;
+        assert_eq!(out.content, "src/tools/grep.rs");
+        let out = run(&dir, json!({"pattern": "^src/[^/]+$", "files_only": true})).await;
+        assert_eq!(out.content, "src/lib.rs");
+
+        // `path` сужает обход, но пути (и якоря) — всё так же от cwd.
+        let out = run(
+            &dir,
+            json!({"pattern": "^src/", "path": "src/tools", "files_only": true}),
+        )
+        .await;
+        assert_eq!(out.content, "src/tools/grep.rs");
+        let out = run(
+            &dir,
+            json!({"pattern": "lib", "path": "src/lib.rs", "files_only": true}),
+        )
+        .await;
+        assert_eq!(out.content, "src/lib.rs");
+
+        // Пустой `pattern` в листинге — все файлы, в порядке обхода.
+        let out = run(&dir, json!({"pattern": "", "files_only": true})).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(
+            out.content,
+            "README.md\nbuild.rs\ndocs/notes.md\nsrc/lib.rs\nsrc/tools/grep.rs"
+        );
+    }
+
+    /// Листинг не открывает файлы: бинарные и нечитаемые в нём есть.
+    #[tokio::test]
+    async fn files_only_lists_binary_files_without_reading_them() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "blob.bin", b"\x7fELF\0\0needle\0");
+        write(&dir, "text.txt", "needle\n");
+        write(&dir, "zz.locked", "needle\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = dir.path().join("zz.locked");
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+
+        let out = run(&dir, json!({"pattern": ".", "files_only": true})).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, "blob.bin\ntext.txt\nzz.locked");
+        assert!(
+            !out.content.contains("could not be read"),
+            "{}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn files_only_uses_the_same_walk_filters() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, ".git/config", "x\n");
+        write(&dir, ".hidden.txt", "x\n");
+        write(&dir, "src/.cache/x.txt", "x\n");
+        write(&dir, "node_modules/pkg/index.js", "x\n");
+        write(
+            &dir,
+            "target/CACHEDIR.TAG",
+            "Signature: 8a477f597d28d172789f06886806bc55\n",
+        );
+        write(&dir, "target/debug/out.txt", "x\n");
+        write(&dir, "src/visible.txt", "x\n");
+
+        let out = run(&dir, json!({"pattern": "", "files_only": true})).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, "src/visible.txt");
+
+        // Явно названный корень не фильтруется.
+        let out = run(
+            &dir,
+            json!({"pattern": "", "path": ".git", "files_only": true}),
+        )
+        .await;
+        assert_eq!(out.content, ".git/config");
+        let out = run(
+            &dir,
+            json!({"pattern": "", "path": "target", "files_only": true}),
+        )
+        .await;
+        assert_eq!(out.content, "target/CACHEDIR.TAG\ntarget/debug/out.txt");
+    }
+
+    #[tokio::test]
+    async fn files_only_case_insensitive_applies_to_paths() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "Src/Main.RS", "x\n");
+        write(&dir, "lib.rs", "x\n");
+
+        let out = run(&dir, json!({"pattern": r"src/.*\.rs$", "files_only": true})).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(
+            out.content.starts_with("No file paths match"),
+            "{}",
+            out.content
+        );
+
+        let out = run(
+            &dir,
+            json!({"pattern": r"\.rs$", "files_only": true, "case_insensitive": true}),
+        )
+        .await;
+        assert_eq!(out.content, "Src/Main.RS\nlib.rs");
+    }
+
+    /// Совпадение по содержимому не попадает в листинг, совпадение по имени —
+    /// в поиск по строкам.
+    #[tokio::test]
+    async fn files_only_and_content_search_do_not_mix() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "needle.md", "nothing here\n");
+        write(&dir, "notes.txt", "a needle inside\n");
+
+        let out = run(&dir, json!({"pattern": "needle", "files_only": true})).await;
+        assert_eq!(out.content, "needle.md");
+
+        for input in [
+            json!({"pattern": "needle"}),
+            json!({"pattern": "needle", "files_only": false}),
+        ] {
+            let out = run(&dir, input.clone()).await;
+            assert_eq!(out.content, "notes.txt:1: a needle inside", "{input}");
+        }
+    }
+
+    #[tokio::test]
+    async fn files_only_no_matches_is_an_explicit_answer() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "a.txt", "zzz\n");
+        write(&dir, "b.bin", b"zzz\0");
+        let out = run(&dir, json!({"pattern": "zzz", "files_only": true})).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(
+            out.content,
+            "No file paths match `zzz` in the working directory (2 file(s) checked)."
+        );
+
+        let out = run(
+            &dir,
+            json!({"pattern": "zzz", "path": "a.txt", "files_only": true}),
+        )
+        .await;
+        assert_eq!(
+            out.content,
+            "No file paths match `zzz` in a.txt (1 file(s) checked)."
+        );
+    }
+
+    #[tokio::test]
+    async fn files_only_glob_pattern_gets_a_regex_hint() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "a.rs", "x\n");
+        let out = run(&dir, json!({"pattern": "*.rs", "files_only": true})).await;
+        assert!(out.is_error);
+        assert!(
+            out.content.starts_with("Invalid regex `*.rs`:"),
+            "{}",
+            out.content
+        );
+        assert!(out.content.contains("not a glob"), "{}", out.content);
+        assert!(out.content.contains(r"`\.rs$`"), "{}", out.content);
+
+        // Без `files_only` подсказка прежняя, а пустой `pattern` — ошибка.
+        let out = run(&dir, json!({"pattern": "*.rs"})).await;
+        assert!(out.content.contains("backslash"), "{}", out.content);
+        assert!(!out.content.contains("glob"), "{}", out.content);
+        let out = run(&dir, json!({"pattern": "", "files_only": false})).await;
+        assert!(out.is_error);
+        assert!(
+            out.content.contains("`pattern` is empty"),
+            "{}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn files_only_listing_is_capped_with_the_same_markers() {
+        let dir = TempDir::new().unwrap();
+        for i in 0..MAX_MATCHES + 50 {
+            write(&dir, &format!("f{i:03}.txt"), "");
+        }
+        let out = run(&dir, json!({"pattern": "", "files_only": true})).await;
+        assert!(!out.is_error, "{}", out.content);
+        let paths: Vec<&str> = out
+            .content
+            .lines()
+            .filter(|l| l.ends_with(".txt"))
+            .collect();
+        assert_eq!(paths.len(), MAX_MATCHES);
+        assert_eq!(paths[0], "f000.txt");
+        assert_eq!(
+            paths[MAX_MATCHES - 1],
+            format!("f{:03}.txt", MAX_MATCHES - 1)
+        );
+        assert!(
+            out.content.ends_with(&format!(
+                "[results truncated at {MAX_MATCHES} matches; narrow the pattern or the path]"
+            )),
+            "{}",
+            out.content
+        );
+
+        // Ровно кап — без маркера.
+        let out = run(
+            &dir,
+            json!({"pattern": r"^f(0|1)\d\d\.txt$", "files_only": true}),
+        )
+        .await;
+        assert_eq!(out.content.lines().count(), MAX_MATCHES);
+        assert!(!out.content.contains("truncated"), "{}", out.content);
+
+        // Длинные пути упираются в кап вывода раньше, чем в кап числа.
+        let long = TempDir::new().unwrap();
+        let deep = "d".repeat(200);
+        for i in 0..150 {
+            write(&long, &format!("{deep}/f{i:03}.txt"), "");
+        }
+        let out = run(&long, json!({"pattern": "", "files_only": true})).await;
+        assert!(
+            out.content.ends_with(&format!(
+                "[output truncated at {MAX_OUTPUT_BYTES} bytes; narrow the pattern or the path]"
+            )),
+            "tail: {}",
+            &out.content[out.content.len() - 200..]
+        );
+        assert!(out.content.len() <= MAX_OUTPUT_BYTES + 100);
+        assert!(out.content.len() > MAX_OUTPUT_BYTES - 300);
+    }
+
+    #[tokio::test]
+    async fn files_only_is_confined_to_the_cwd() {
+        let parent = TempDir::new().unwrap();
+        write(&parent, "secret.txt", "x\n");
+        write(&parent, "work/a.txt", "x\n");
+        std::fs::create_dir_all(parent.path().join("work/sub")).unwrap();
+        let ctx = ToolCtx::new(parent.path().join("work"));
+
+        for path in [
+            "..".to_string(),
+            "../secret.txt".to_string(),
+            "sub/../../secret.txt".to_string(),
+            parent.path().join("secret.txt").display().to_string(),
+            "/".to_string(),
+        ] {
+            let out = GrepTool::new()
+                .execute(
+                    json!({"pattern": "", "path": path, "files_only": true}),
+                    &ctx,
+                )
+                .await;
+            assert!(out.is_error, "{path}: {}", out.content);
+            assert!(
+                out.content.contains("outside the working directory"),
+                "{path}: {}",
+                out.content
+            );
+        }
+
+        let out = GrepTool::new()
+            .execute(json!({"pattern": "", "files_only": true}), &ctx)
+            .await;
+        assert_eq!(out.content, "a.txt");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn files_only_does_not_follow_symlinks() {
+        let outside = TempDir::new().unwrap();
+        write(&outside, "secret.txt", "x\n");
+        let dir = TempDir::new().unwrap();
+        write(&dir, "inside.txt", "x\n");
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("link_dir")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("link_file.txt"),
+        )
+        .unwrap();
+
+        let out = run(&dir, json!({"pattern": "", "files_only": true})).await;
+        assert_eq!(out.content, "inside.txt");
+
+        let out = run(
+            &dir,
+            json!({"pattern": "", "path": "link_dir", "files_only": true}),
+        )
+        .await;
+        assert!(out.is_error);
+        assert!(
+            out.content.contains("outside the working directory"),
+            "{}",
+            out.content
+        );
+    }
+
     #[test]
     fn schema_is_minimal() {
         let schema = GrepTool::new().input_schema();
@@ -925,7 +1308,7 @@ mod tests {
         let properties = schema["properties"].as_object().unwrap();
         assert_eq!(
             properties.keys().collect::<Vec<_>>(),
-            ["pattern", "path", "case_insensitive"]
+            ["pattern", "path", "case_insensitive", "files_only"]
         );
         for property in properties.values() {
             assert!(property["description"].is_string(), "{property}");

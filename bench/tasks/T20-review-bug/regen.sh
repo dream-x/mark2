@@ -4,8 +4,8 @@
 #
 #   sh bench/tasks/T20-review-bug/regen.sh
 #
-# prompt.md was generated with prompts/review.md as of commit 1048370
-# (cksum 2487656210 3924) and scripts/review.sh cksum 1909377913 12321. Rerun
+# prompt.md was generated with prompts/review.md as of the grep files_only
+# change (cksum 956005854 4031) and scripts/review.sh cksum 1909377913 12321. Rerun
 # after any change to either file; then update these numbers.
 #
 # How: setup/ is the tree AFTER the change, the working tree `git diff HEAD`

@@ -702,6 +702,24 @@ mod tests {
         assert_eq!(out.content, "a.txt:1: Needle");
     }
 
+    /// `files_only` строкой (`"true"`) тоже приводится: это листинг путей, а
+    /// не поиск по содержимому.
+    #[tokio::test]
+    async fn grep_accepts_files_only_as_a_boolean_string() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("needle.txt"), "nothing\n").unwrap();
+        std::fs::write(dir.path().join("other.txt"), "needle\n").unwrap();
+        let out = registry()
+            .execute(
+                "grep",
+                json!({"pattern": "needle", "files_only": "true"}),
+                &ToolCtx::new(dir.path()),
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, "needle.txt");
+    }
+
     /// Неприводимое остаётся невалидным — с тем же текстом ошибки, что и без
     /// приведения.
     #[tokio::test]
@@ -734,6 +752,7 @@ mod tests {
             ),
             ("write", json!({"path": "a.txt", "content": 60})),
             ("grep", json!({"pattern": "x", "case_insensitive": "yes"})),
+            ("grep", json!({"pattern": "x", "files_only": "yes"})),
         ];
         for (name, input) in cases {
             let expected = raw_validation_message(&registry, name, &input);
