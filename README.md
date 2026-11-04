@@ -95,7 +95,7 @@ Append-only JSONL в `~/.mark2/sessions/YYYY/MM/DD/*.jsonl`: meta, все соо
 
 `scripts/review.sh` — код-ревьювер на самом mark2: локальная модель под `--policy read-only` получает дифф и инструкцию `prompts/review.md`, при нехватке контекста дочитывает файлы репо тулом `read` и заканчивает ответ строкой `VERDICT: approve` или `VERDICT: needs-work` (exit 0 / 2; 1 — ошибка запуска или нет вердикта). Без аргументов ревьюит незакоммиченное (`git diff HEAD`), `--staged` — индекс, `HEAD~3` — последние три коммита, `-` — дифф из stdin (для CI).
 
-Модель по умолчанию — `qwen3.6:35b-a3b-coding` через ollama на `localhost:11434`; переопределяется через `MARK2_REVIEW_MODEL`, `MARK2_REVIEW_BASE_URL`, `MARK2_REVIEW_BIN`, `MARK2_REVIEW_MAX_DIFF_BYTES` (дифф больше 120 КиБ обрезается с пометкой). Офлайн-тесты обёртки — `sh scripts/test-review.sh`, наблюдения с живых прогонов — `docs/notes/review-findings-20261104.md`.
+Модель по умолчанию — `qwen3.6:35b-a3b-coding` через ollama на `localhost:11434`; переопределяется через `MARK2_REVIEW_MODEL`, `MARK2_REVIEW_BASE_URL`, `MARK2_REVIEW_BIN`, `MARK2_REVIEW_MAX_DIFF_BYTES` (дифф больше 120 КиБ обрезается с пометкой), `MARK2_REVIEW_TIMEOUT_SECS` (10 минут на прогон). Рабочий размер — сфокусированный дифф в несколько файлов: на больших и «контекстных» диффах модель уходит в многоминутные рассуждения. Офлайн-тесты обёртки — `sh scripts/test-review.sh`, наблюдения с живых прогонов — `docs/notes/review-findings-20261104.md`.
 
 ## Документация
 
