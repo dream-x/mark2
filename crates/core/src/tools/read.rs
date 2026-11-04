@@ -8,6 +8,13 @@
 //! Строки режутся по `\n` с сохранением разделителей (`split_inclusive`), чтобы
 //! содержимое возвращалось байт-в-байт: `edit` ищет в файле точное вхождение,
 //! и «нормализованный» CRLF ломал бы поиск.
+//!
+//! Читается только внутри cwd: путь проходит общий с `grep` замок (модуль
+//! `tools::confine`) — канонизируется, и абсолютный путь наружу, `..` или
+//! симлинк наружу отбиваются текстом для модели. FIFO и устройства — тоже:
+//! `open` на них повис бы, а отмену хода он не слышит.
+
+use std::path::Path;
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -15,6 +22,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
 
+use super::confine::{CanonicalCwd, ConfineError, Confined};
 use super::{Tool, ToolCtx, ToolOutput, input_schema_for};
 
 /// Сколько байт файла максимум читаем в память.
@@ -25,7 +33,7 @@ pub const MAX_OUTPUT_BYTES: usize = 100_000;
 /// Аргументы тула `read`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ReadInput {
-    /// Path to the file, absolute or relative to the working directory.
+    /// Path to a file inside the working directory, relative to it or absolute.
     pub path: String,
     /// 1-based line number to start from. Defaults to the first line.
     #[serde(default)]
@@ -72,21 +80,26 @@ impl Tool for ReadTool {
             }
         };
 
+        // В текстах — путь, как его видит модель: склеенный с cwd, но не
+        // канонизированный. Открывается — канонический, прошедший замок.
         let path = ctx.resolve(&input.path);
         let display = path.display();
 
-        let metadata = match tokio::fs::metadata(&path).await {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return ToolOutput::err(format!(
-                    "File not found: {display}. Check the path (relative paths resolve against {}) \
-                     or list the directory with `bash`.",
-                    ctx.cwd.display()
-                ));
-            }
-            Err(error) => {
-                return ToolOutput::err(format!("Cannot read {display}: {error}"));
-            }
+        // Канонизация и `metadata` — блокирующие `std::fs`, им место вне
+        // потока рантайма.
+        let confined = {
+            let cwd = ctx.cwd.clone();
+            let requested = input.path.clone();
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || resolve_inside_cwd(&cwd, &requested, &path)).await
+        };
+        let Confined {
+            path: canonical,
+            metadata,
+        } = match confined {
+            Ok(Ok(confined)) => confined,
+            Ok(Err(message)) => return ToolOutput::err(message),
+            Err(error) => return ToolOutput::err(format!("Cannot read {display}: {error}")),
         };
 
         if metadata.is_dir() {
@@ -95,7 +108,7 @@ impl Tool for ReadTool {
             ));
         }
 
-        let mut file = match tokio::fs::File::open(&path).await {
+        let mut file = match tokio::fs::File::open(&canonical).await {
             Ok(file) => file,
             Err(error) => return ToolOutput::err(format!("Cannot read {display}: {error}")),
         };
@@ -190,6 +203,40 @@ impl Tool for ReadTool {
     }
 }
 
+/// Файл для чтения: `path` (уже склеенный с `cwd`), пропущенный через замок
+/// [`CanonicalCwd::confine`]. `Err` — готовый текст ошибки для модели;
+/// `requested` — путь ровно как его прислала модель.
+fn resolve_inside_cwd(cwd: &Path, requested: &str, path: &Path) -> Result<Confined, String> {
+    let display = path.display();
+    let canonical_cwd = CanonicalCwd::new(cwd).map_err(|error| {
+        format!(
+            "Cannot read {display}: the working directory {} is not accessible: {error}",
+            cwd.display()
+        )
+    })?;
+    canonical_cwd.confine(path).map_err(|error| match error {
+        // «Файла нет» — тем же текстом, что и до замка: это не отказ в доступе.
+        ConfineError::NotFound => format!(
+            "File not found: {display}. Check the path (relative paths resolve against {}) \
+             or list the directory with `bash`.",
+            cwd.display()
+        ),
+        ConfineError::Outside => format!(
+            "Path {requested} is outside the working directory {} (after resolving `..` and \
+             symlinks): `read` only reads files inside the working directory, and retrying this \
+             path will fail the same way. Pass a path within the working directory; relative \
+             paths resolve against it.",
+            cwd.display()
+        ),
+        ConfineError::NotRegular => format!(
+            "{display} is not a regular file (a FIFO, socket or device): `read` cannot read it."
+        ),
+        ConfineError::Unresolvable(error) | ConfineError::Metadata(error) => {
+            format!("Cannot read {display}: {error}")
+        }
+    })
+}
+
 /// Обрезать строку по границе символа, чтобы не разрубить UTF-8.
 fn clip_to_char_boundary(text: &str, max: usize) -> &str {
     if text.len() <= max {
@@ -223,20 +270,109 @@ mod tests {
         assert_eq!(out.content, "one\r\ntwo\nthree");
     }
 
+    /// Отказ «снаружи»: ошибка текстом для модели, содержимое не утекает.
+    fn assert_outside(out: &ToolOutput, path: &str) {
+        assert!(out.is_error, "{path}: {}", out.content);
+        assert!(
+            out.content.contains("is outside the working directory"),
+            "{path}: {}",
+            out.content
+        );
+        assert!(
+            out.content
+                .contains("`read` only reads files inside the working directory"),
+            "{path}: {}",
+            out.content
+        );
+        assert!(!out.content.contains("secret"), "{path}: {}", out.content);
+    }
+
     #[tokio::test]
-    async fn resolves_absolute_paths() {
+    async fn absolute_paths_are_read_only_inside_the_cwd() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("a.txt");
-        std::fs::write(&path, "body").unwrap();
+        let inside = dir.path().join("a.txt");
+        std::fs::write(&inside, "body").unwrap();
+        let out = run(&dir, json!({"path": inside.to_str().unwrap()})).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, "body");
+
         let other = TempDir::new().unwrap();
+        let outside = other.path().join("b.txt");
+        std::fs::write(&outside, "secret").unwrap();
+        let path = outside.to_str().unwrap();
+        let out = run(&dir, json!({"path": path})).await;
+        assert_outside(&out, path);
+        assert!(out.content.contains(path), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn parent_traversal_out_of_the_cwd_is_rejected() {
+        let parent = TempDir::new().unwrap();
+        std::fs::write(parent.path().join("x.txt"), "secret").unwrap();
+        let work = parent.path().join("work");
+        std::fs::create_dir_all(work.join("sub")).unwrap();
+        std::fs::write(work.join("a.txt"), "body").unwrap();
+        let ctx = ToolCtx::new(&work);
+
+        for path in ["../x.txt", "sub/../../x.txt", "/etc/hosts"] {
+            let out = ReadTool::new().execute(json!({"path": path}), &ctx).await;
+            assert_outside(&out, path);
+        }
+
+        // `..`, не покидающий cwd, — законно.
         let out = ReadTool::new()
-            .execute(
-                json!({"path": path.to_str().unwrap()}),
-                &ToolCtx::new(other.path()),
-            )
+            .execute(json!({"path": "sub/../a.txt"}), &ctx)
             .await;
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(out.content, "body");
+    }
+
+    /// Суть дыры: симлинк внутри cwd, ведущий наружу, раньше читался.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_leading_outside_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let outside = TempDir::new().unwrap();
+        std::fs::write(outside.path().join("x.txt"), "secret").unwrap();
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "body").unwrap();
+        symlink(outside.path().join("x.txt"), dir.path().join("link.txt")).unwrap();
+        symlink(outside.path(), dir.path().join("link_dir")).unwrap();
+        symlink(dir.path().join("a.txt"), dir.path().join("alias.txt")).unwrap();
+
+        for path in ["link.txt", "link_dir/x.txt"] {
+            let out = run(&dir, json!({"path": path})).await;
+            assert_outside(&out, path);
+        }
+
+        // Симлинк, ведущий внутрь cwd, читается как обычно.
+        let out = run(&dir, json!({"path": "alias.txt"})).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, "body");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fifo_is_rejected_instead_of_hanging() {
+        let dir = TempDir::new().unwrap();
+        let status = std::process::Command::new("mkfifo")
+            .arg(dir.path().join("pipe"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let out = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            run(&dir, json!({"path": "pipe"})),
+        )
+        .await
+        .expect("read повис на FIFO");
+        assert!(out.is_error);
+        assert!(
+            out.content.contains("is not a regular file"),
+            "{}",
+            out.content
+        );
     }
 
     #[tokio::test]
@@ -250,6 +386,8 @@ mod tests {
             out.content
         );
         assert!(out.content.contains("nope.txt"), "{}", out.content);
+        // «Нет файла» — не «доступ запрещён».
+        assert!(!out.content.contains("outside"), "{}", out.content);
     }
 
     #[tokio::test]

@@ -6,9 +6,9 @@
 //! `путь:строка: текст`, — и весь его вес в ограничителях:
 //!
 //! * **Только внутри cwd.** И cwd, и `path` канонизируются (`..` и симлинки
-//!   раскрыты), результат обязан лежать внутри cwd. Обход симлинки не
-//!   разыменовывает вовсе — ни на файлы, ни на директории: так нельзя ни
-//!   выйти наружу, ни зациклиться.
+//!   раскрыты), результат обязан лежать внутри cwd — замок общий с `read`
+//!   (модуль `tools::confine`). Обход симлинки не разыменовывает вовсе — ни
+//!   на файлы, ни на директории: так нельзя ни выйти наружу, ни зациклиться.
 //! * **Шум не ищется.** Скрытые файлы и директории (имя с точки, включая
 //!   `.git`), `node_modules` и директории-кэши с `CACHEDIR.TAG` (так помечен
 //!   `target/` у cargo) пропускаются; бинарные файлы (NUL в первом блоке) —
@@ -35,6 +35,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use super::confine::{CanonicalCwd, ConfineError};
 use super::{Tool, ToolCtx, ToolOutput, input_schema_for};
 
 /// Сколько совпадений максимум отдаём модели.
@@ -147,11 +148,11 @@ impl Tool for GrepTool {
     }
 }
 
-/// Корень поиска: канонизированные cwd и `path`, причём `path` обязан лежать
-/// внутри cwd и быть обычным файлом или директорией. `Err` — готовый текст
-/// ошибки для модели.
+/// Корень поиска: канонизированные cwd и `path`, причём `path` прошёл замок
+/// [`CanonicalCwd::confine`] — внутри cwd, обычный файл или директория.
+/// `Err` — готовый текст ошибки для модели.
 fn resolve_inside_cwd(ctx: &ToolCtx, path: Option<&str>) -> Result<Root, String> {
-    let cwd = ctx.cwd.canonicalize().map_err(|error| {
+    let cwd = CanonicalCwd::new(&ctx.cwd).map_err(|error| {
         format!(
             "Cannot search: the working directory {} is not accessible: {error}",
             ctx.cwd.display()
@@ -160,6 +161,7 @@ fn resolve_inside_cwd(ctx: &ToolCtx, path: Option<&str>) -> Result<Root, String>
 
     let requested = match path.map(str::trim) {
         None | Some("") => {
+            let cwd = cwd.into_path();
             return Ok(Root {
                 path: cwd.clone(),
                 cwd,
@@ -170,41 +172,32 @@ fn resolve_inside_cwd(ctx: &ToolCtx, path: Option<&str>) -> Result<Root, String>
     };
 
     let resolved = ctx.resolve(requested);
-    let path = match resolved.canonicalize() {
-        Ok(path) => path,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(format!(
-                "Path not found: {}. Pass a file or directory inside the working directory {} \
-                 (relative paths resolve against it), or omit `path` to search all of it.",
-                resolved.display(),
-                cwd.display()
-            ));
+    let confined = cwd.confine(&resolved).map_err(|error| match error {
+        ConfineError::NotFound => format!(
+            "Path not found: {}. Pass a file or directory inside the working directory {} \
+             (relative paths resolve against it), or omit `path` to search all of it.",
+            resolved.display(),
+            cwd.path().display()
+        ),
+        ConfineError::Unresolvable(error) => {
+            format!("Cannot search {}: {error}", resolved.display())
         }
-        Err(error) => return Err(format!("Cannot search {}: {error}", resolved.display())),
-    };
-
-    if !path.starts_with(&cwd) {
-        return Err(format!(
+        ConfineError::Outside => format!(
             "Path {requested} is outside the working directory {}: `grep` only searches inside it. \
              Pass a path within the working directory or omit `path`.",
-            cwd.display()
-        ));
-    }
-
-    // FIFO или устройство повесили бы `File::open` навсегда — отмена хода
-    // блокирующий вызов не прервёт.
-    let is_dir = match std::fs::metadata(&path) {
-        Ok(metadata) if metadata.is_dir() => true,
-        Ok(metadata) if metadata.is_file() => false,
-        Ok(_) => {
-            return Err(format!(
-                "{requested} is not a regular file or directory: `grep` cannot search it."
-            ));
+            cwd.path().display()
+        ),
+        ConfineError::NotRegular => {
+            format!("{requested} is not a regular file or directory: `grep` cannot search it.")
         }
-        Err(error) => return Err(format!("Cannot search {requested}: {error}")),
-    };
+        ConfineError::Metadata(error) => format!("Cannot search {requested}: {error}"),
+    })?;
 
-    Ok(Root { cwd, path, is_dir })
+    Ok(Root {
+        is_dir: confined.metadata.is_dir(),
+        cwd: cwd.into_path(),
+        path: confined.path,
+    })
 }
 
 /// Канонизированные cwd и корень поиска внутри него.
