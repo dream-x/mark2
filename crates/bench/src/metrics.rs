@@ -118,13 +118,30 @@ impl SessionMetrics {
 }
 
 /// Посчитать метрики по строкам сессии.
+///
+/// Сессия append-only, поэтому компакция пишет после маркера
+/// [`SessionItem::Compacted`] **копии** уже записанных сообщений с
+/// `agent_visible = false`, а следом — саммари (оно модели видно). Копии не
+/// новые ответы и не новые тул-коллы: серия скрытых сообщений сразу за
+/// маркером пропускается, иначе каждая компакция задваивает счётчики. Своих
+/// id у сообщений нет, а `tool_use.id` у локальных серверов не обязан быть
+/// уникальным, поэтому граница копий берётся из протокола записи, а не из
+/// сравнения содержимого.
 pub fn session_metrics(session: &LoadedSession) -> SessionMetrics {
     let mut metrics = SessionMetrics {
         skipped_lines: session.skipped,
         ..SessionMetrics::default()
     };
 
+    let mut after_compaction = false;
     for SessionLine { item, .. } in &session.lines {
+        let copy = after_compaction
+            && matches!(item, SessionItem::Message { message } if !message.is_agent_visible());
+        after_compaction = copy || matches!(item, SessionItem::Compacted { .. });
+        if copy {
+            continue;
+        }
+
         match item {
             SessionItem::Message { message } => {
                 if message.role == Role::Assistant {
@@ -194,6 +211,7 @@ fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mark2_core::compact;
     use mark2_core::message::{ContentBlock, Message, MessageMetadata, Role};
     use mark2_core::session::{SessionMeta, SessionRecorder};
     use serde_json::json;
@@ -350,6 +368,122 @@ mod tests {
         );
         assert!((metrics.tool_error_rate().unwrap() - 1.0 / 3.0).abs() < 1e-9);
         assert_eq!(SessionMetrics::default().tool_error_rate(), None);
+    }
+
+    /// Записать элементы настоящим `SessionRecorder` и посчитать метрики файла.
+    async fn metrics_of(items: Vec<SessionItem>) -> SessionMetrics {
+        let dir = TempDir::new().unwrap();
+        let recorder = SessionRecorder::create(
+            dir.path(),
+            SessionMeta::new("/work", "qwen3.5:9b", "openai_compat"),
+        )
+        .await
+        .unwrap();
+        let path = recorder.path().to_path_buf();
+        for item in items {
+            recorder.record(item);
+        }
+        recorder.close().await;
+        read_session_metrics(&path).await.unwrap()
+    }
+
+    /// Раунд тулов: ответ с двумя тул-коллами и их результаты, второй — ошибка.
+    fn tool_round(ok: &str, failed: &str) -> Vec<Message> {
+        vec![
+            Message::new(
+                Role::Assistant,
+                vec![
+                    ContentBlock::tool_use(ok, "write", json!({"path": "a.txt", "content": "x"})),
+                    ContentBlock::tool_use(failed, "edit", json!({"path": "a.txt"})),
+                ],
+            ),
+            Message::tool(vec![
+                ContentBlock::tool_result(ok, "ok"),
+                ContentBlock::tool_error(failed, "missing field `old_string`"),
+            ]),
+        ]
+    }
+
+    /// Что дописывает в сессию компакция ядра (`Agent::compact_history`):
+    /// маркер, скрытые копии всех видимых модели сообщений, саммари.
+    fn compaction(visible: &[Message], summary: &Message) -> Vec<SessionItem> {
+        let mut items = vec![SessionItem::Compacted {
+            tokens_before: 12_000,
+            tokens_after: 3_000,
+        }];
+        items.extend(
+            visible
+                .iter()
+                .map(|message| SessionItem::message(message.clone().with_agent_visible(false))),
+        );
+        items.push(SessionItem::message(summary.clone()));
+        items
+    }
+
+    /// Ход из двух раундов тулов и финального ответа; `compacted` — с
+    /// компакцией после каждого раунда (вторая, как в ядре, копирует и прошлое
+    /// саммари).
+    fn two_rounds(compacted: bool) -> Vec<SessionItem> {
+        let task = Message::user("создай файл");
+        let first = tool_round("c1", "c2");
+        let second = tool_round("c3", "c4");
+        let summary_1 = compact::summary_message("Task: создать файл. Next: c3");
+        let summary_2 = compact::summary_message("Task: создать файл. Next: ответить");
+
+        let mut items = vec![
+            SessionItem::turn_started("t1"),
+            SessionItem::message(task.clone()),
+        ];
+        items.extend(first.iter().cloned().map(SessionItem::message));
+        if compacted {
+            let visible: Vec<Message> = std::iter::once(task).chain(first).collect();
+            items.extend(compaction(&visible, &summary_1));
+        }
+        items.extend(second.iter().cloned().map(SessionItem::message));
+        if compacted {
+            let visible: Vec<Message> = std::iter::once(summary_1).chain(second).collect();
+            items.extend(compaction(&visible, &summary_2));
+        }
+        items.push(SessionItem::message(Message::assistant("готово")));
+        items.push(SessionItem::turn_finished("t1", StopReason::Completed));
+        items
+    }
+
+    #[tokio::test]
+    async fn session_without_compaction_counts_every_message() {
+        assert_eq!(
+            metrics_of(two_rounds(false)).await,
+            SessionMetrics {
+                assistant_messages: 3,
+                tool_uses: 4,
+                tool_errors: 2,
+                compactions: 0,
+                stop_reason: Some(StopReason::Completed),
+                skipped_lines: 0,
+            }
+        );
+    }
+
+    /// Копии, которые компакция дописывает в append-only сессию, — те же
+    /// ответы, тул-коллы и ошибки: счётчики не задваиваются, а компакции
+    /// считаются по маркерам.
+    #[tokio::test]
+    async fn compaction_copies_are_not_counted_twice() {
+        let items = two_rounds(true);
+        let hidden = items
+            .iter()
+            .filter(|item| matches!(item, SessionItem::Message { message } if !message.is_agent_visible()))
+            .count();
+        assert_eq!(hidden, 6, "фикстура действительно дублирует сообщения");
+
+        let without = metrics_of(two_rounds(false)).await;
+        assert_eq!(
+            metrics_of(items).await,
+            SessionMetrics {
+                compactions: 2,
+                ..without
+            }
+        );
     }
 
     #[tokio::test]
