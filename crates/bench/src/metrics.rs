@@ -47,7 +47,7 @@ pub fn parse_tokens(stderr: &str) -> Option<Tokens> {
 }
 
 /// Разбор одной строки вида `tokens: in 1200 / out 340 (cached 1000)`.
-fn parse_tokens_line(line: &str) -> Option<Tokens> {
+pub(crate) fn parse_tokens_line(line: &str) -> Option<Tokens> {
     let rest = line.split_once("tokens: in ")?.1;
     let (input, rest) = rest.split_once('/')?;
     let input: u64 = input.trim().parse().ok()?;
@@ -67,13 +67,13 @@ fn parse_tokens_line(line: &str) -> Option<Tokens> {
 }
 
 /// Число в начале строки (дальше может идти что угодно).
-fn leading_number(text: &str) -> Option<u64> {
+pub(crate) fn leading_number(text: &str) -> Option<u64> {
     let digits: String = text.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
 }
 
 /// Убрать ANSI-escape-последовательности.
-fn strip_ansi(text: &str) -> String {
+pub(crate) fn strip_ansi(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {

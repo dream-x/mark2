@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::metrics::{SessionMetrics, Tokens};
 use crate::models::ModelSpec;
 use crate::task::TaskPolicy;
+use crate::telemetry::Telemetry;
 
 /// Версия схемы `results.json`. Растёт при несовместимых изменениях.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -147,6 +148,12 @@ pub struct RunRecord {
     pub tokens: Option<Tokens>,
     /// Метрики из JSONL-сессии, если она была записана.
     pub session: Option<SessionMetrics>,
+    /// Срабатывания контролей харнеса по маркерам stderr (нуджи, приведения
+    /// аргументов, компакции, ошибки тулов). `None` — stderr не читали (ранер
+    /// упал раньше) или старый `results.json` без поля: расширение схемы
+    /// аддитивное, `schema_version` прежний.
+    #[serde(default)]
+    pub harness: Option<Telemetry>,
     /// Результат `verify.sh`.
     pub verify: Option<VerifyOutcome>,
     /// Сколько непробельных символов модель написала в stdout.

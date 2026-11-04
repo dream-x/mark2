@@ -14,7 +14,8 @@
 //!   модели в пайпе;
 //! * [`Event::Nudge`] — тоже stderr, строкой с маркером `[agent] <guard>`
 //!   ([`nudge_line`]): по нему в логах прогона видно, где сработал
-//!   предохранитель agent loop;
+//!   предохранитель agent loop; [`Event::Compacted`] — туда же маркером
+//!   `[agent] compaction` ([`compaction_line`]);
 //! * [`Event::ApprovalRequired`] — вопрос пользователю живёт в интерактивном
 //!   цикле (для него есть чистая заготовка [`approval_prompt`]);
 //! * итог [`Event::Usage`] и счётчик [`Event::ArgumentsCoerced`] — печатаются
@@ -189,6 +190,17 @@ pub fn warning_line(text: &str, opts: RenderOptions) -> String {
 /// логи прогонов.
 pub fn nudge_line(guard: Guard, message: &str, opts: RenderOptions) -> String {
     opts.paint(YELLOW, &format!("[agent] {}: {message}", guard.as_str()))
+}
+
+/// Компакция истории для stderr: `[agent] compaction: контекст сжат ~X → ~Y
+/// токенов` (оценки ядра из [`Event::Compacted`]). Маркер того же ряда, что
+/// у [`nudge_line`], и так же стабилен: по нему бенч считает компакции прогона
+/// (`mark2_bench::telemetry`).
+pub fn compaction_line(tokens_before: u64, tokens_after: u64, opts: RenderOptions) -> String {
+    opts.paint(
+        DIM,
+        &format!("[agent] compaction: контекст сжат ~{tokens_before} → ~{tokens_after} токенов"),
+    )
 }
 
 /// Ответ модели, если она положила его целиком в thinking-канал.
@@ -590,6 +602,19 @@ mod tests {
                 RenderOptions::interactive(false, true)
             ),
             format!("{YELLOW}[agent] loop_detection: x{RESET}")
+        );
+    }
+
+    /// Компакция — тот же ряд маркеров `[agent] <имя>:`, что и нуджи.
+    #[test]
+    fn compaction_line_carries_the_agent_marker() {
+        assert_eq!(
+            compaction_line(12_000, 3_000, RenderOptions::print()),
+            "[agent] compaction: контекст сжат ~12000 → ~3000 токенов"
+        );
+        assert_eq!(
+            compaction_line(12_000, 3_000, RenderOptions::interactive(false, true)),
+            format!("{DIM}[agent] compaction: контекст сжат ~12000 → ~3000 токенов{RESET}")
         );
     }
 

@@ -429,8 +429,14 @@ mod tests {
         assert!(results.config.agent_overrides.is_empty());
         // …и модель без edit_strategy — с дефолтом mark2.
         assert_eq!(results.config.models[0].edit_strategy, None);
+        // Прогон без телеметрии обвязки: поле добавлено аддитивно, схема та же.
+        assert_eq!(results.runs[0].harness, None);
         let report = render_report(&results);
         assert!(report.contains("| qwen9 | 1/1 · 12.3s |"), "{report}");
         assert!(report.contains("1200 / 340"), "{report}");
+        assert!(
+            report.contains("| qwen9 | — | — | — | — | — |"),
+            "обвязка не мерилась — прочерки:\n{report}"
+        );
     }
 }

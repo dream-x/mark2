@@ -55,7 +55,14 @@ esac
 
 printf 'mark2 works\n' > "$cwd/hello.txt"
 printf 'Готово: файл создан.\n'
-printf 'tokens: in 1200 / out 340\n' >&2
+# Сводка тул-коллов и маркеры контролей — в формате настоящего `-p`; ошибка
+# тула та же, что в сессии ниже.
+{
+    printf '→ write {"path":"hello.txt","content":"mark2 works"}\n'
+    printf '✗ edit: missing field `old_string`\n'
+    printf '[agent] write_churn: 3-я запись подряд в hello.txt без запуска между ними — подсказка запустить\n'
+    printf 'tokens: in 1200 / out 340 · coerced 2\n'
+} >&2
 
 sessions="$HOME/.mark2/sessions/2026/08/24"
 mkdir -p "$sessions"
@@ -296,6 +303,17 @@ fn full_run_writes_results_report_and_sessions() {
     assert_eq!(first["session"]["compactions"], 0);
     assert_eq!(first["session"]["stop_reason"], "completed");
     assert_eq!(first["session"]["skipped_lines"], 0);
+    // Телеметрия обвязки — из маркеров stderr.
+    assert_eq!(
+        first["harness"],
+        serde_json::json!({
+            "nudges_write_churn": 1,
+            "nudges_loop_detection": 0,
+            "coerced": 2,
+            "compactions": 0,
+            "tool_errors": 1,
+        })
+    );
     assert!(first["answer_chars"].as_u64().unwrap() > 0);
     assert_eq!(first["verify"]["exit_code"], 0);
     // Таймаут задачи умножается на множитель модели.
@@ -342,6 +360,9 @@ fn full_run_writes_results_report_and_sessions() {
     assert!(report.contains("| fake1 | 2/3 (67%)"), "{report}");
     assert!(report.contains("1200 / 340"), "{report}");
     assert!(report.contains("50% (3/6)"), "tool error rate:\n{report}");
+    // Обвязка: у fake1 три прогона с одинаковым stderr.
+    assert!(report.contains("## Обвязка"), "{report}");
+    assert!(report.contains("| fake1 | 3 | 0 | 6 | 0 | 3 |"), "{report}");
     assert!(report.contains("## Аномалии"), "{report}");
 
     // Прогон mark2: аргументы, изоляция HOME, температура 0, прогрев на модель.
@@ -610,6 +631,9 @@ fn hanging_run_is_killed_and_reported_as_timeout() {
         "сессии не случилось"
     );
     assert_eq!(run["tokens"], serde_json::Value::Null);
+    // stderr прочитан (пустой): счётчики — нули, итоговой строки нет.
+    assert_eq!(run["harness"]["tool_errors"], 0);
+    assert_eq!(run["harness"]["coerced"], serde_json::Value::Null);
     let wall = run["wall_time_seconds"].as_f64().unwrap();
     assert!(
         (1.0..10.0).contains(&wall),

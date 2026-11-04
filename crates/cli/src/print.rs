@@ -4,7 +4,8 @@
 //! в **stdout** уходит только текст ответа модели (никаких `→ tool`, спиннеров
 //! и рассуждений), всё служебное — в **stderr**: по строке на каждый тул-колл
 //! (`→ bash …` / `✗ edit: …`), срабатывания предохранителей agent loop
-//! (`[agent] write_churn: …`), ошибки, предупреждения и итог токенов.
+//! (`[agent] write_churn: …`) и компакции (`[agent] compaction: …`), ошибки,
+//! предупреждения и итог токенов.
 //!
 //! Одно исключение из «рассуждений в stdout нет»: если ход закончился
 //! сообщением, в котором есть только thinking (ни текста, ни тул-коллов), —
@@ -111,6 +112,16 @@ pub async fn run(
             }
             Event::Nudge { guard, message, .. } => {
                 let _ = writeln!(err, "{}", render::nudge_line(*guard, message, opts));
+            }
+            Event::Compacted {
+                tokens_before,
+                tokens_after,
+            } => {
+                let _ = writeln!(
+                    err,
+                    "{}",
+                    render::compaction_line(*tokens_before, *tokens_after, opts)
+                );
             }
             Event::Warning { message } => {
                 let _ = writeln!(err, "{}", render::warning_line(message, opts));
@@ -693,6 +704,61 @@ mod tests {
             tool_result.contains("write #3 to test_chat.py in a row"),
             "{tool_result}"
         );
+    }
+
+    /// Компакция в `-p`: порог срабатывает между итерациями единственного
+    /// хода, в stderr — строка `[agent] compaction` между строкой вызова и
+    /// итогом токенов; текст саммари в stdout не попадает.
+    #[tokio::test]
+    async fn compaction_lands_in_stderr_with_the_agent_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello\n").unwrap();
+        let mut first = answer("", Some(("c1", "read", json!({"path": "a.txt"}))));
+        // Расход выше порога окна в 5000 токенов: компакция до второго запроса.
+        if let Some(StreamChunk::Complete { usage, .. }) = first.last_mut() {
+            *usage = Usage::new(4000, 96);
+        }
+        let provider = MockProvider::new(vec![
+            first,
+            answer("Task: прочитать a.txt. Next: ответить", None),
+            answer("hello", None),
+        ]);
+        let agent = Agent::new(
+            Arc::clone(&provider) as Arc<dyn Provider>,
+            ToolRegistry::with_defaults(EditStrategy::SearchReplace),
+            AgentConfig::new("mock-model")
+                .with_cwd(dir.path())
+                .with_policy(PermissionPolicy::Yolo)
+                .with_compaction(mark2_core::CompactionConfig::new().with_context_limit(5000)),
+        )
+        .with_system_prompt("test");
+
+        let (handle, mut events) = agent.spawn();
+        handle.submit(Op::user_input("прочитай a.txt"));
+        let mut stdout: Vec<u8> = Vec::new();
+        let mut stderr: Vec<u8> = Vec::new();
+        let reason = run(&handle, &mut events, &mut stdout, &mut stderr).await;
+        handle.shutdown().await;
+
+        assert_eq!(reason, StopReason::Completed);
+        assert_eq!(std::str::from_utf8(&stdout).unwrap(), "hello\n");
+        assert_eq!(
+            provider.requests().len(),
+            3,
+            "итерация, суммаризация, итерация"
+        );
+        let stderr = String::from_utf8(stderr).unwrap();
+        let markers = lines_with(&stderr, "[agent]");
+        assert_eq!(markers.len(), 1, "{stderr}");
+        assert!(
+            markers[0].starts_with("[agent] compaction: контекст сжат ~4096 → ~"),
+            "{stderr}"
+        );
+        let lines: Vec<&str> = stderr.lines().collect();
+        assert_eq!(lines.len(), 3, "{stderr}");
+        assert!(lines[0].starts_with("→ read"), "{stderr}");
+        assert_eq!(lines[1], markers[0]);
+        assert!(lines[2].starts_with("tokens: in "), "{stderr}");
     }
 
     #[tokio::test]

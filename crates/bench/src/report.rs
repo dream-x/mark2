@@ -3,6 +3,7 @@
 //! Отчёт читает человек, который решает «какую модель брать» и «стало лучше или
 //! хуже после правки харнеса», поэтому порядок разделов такой: сначала таблица
 //! модель×задача (где именно ломается), потом сводка (чем платим), потом
+//! обвязка (сколько раз модель пришлось ловить контролями харнеса), потом
 //! аномалии (чему в цифрах верить нельзя).
 //!
 //! Функция чистая: `Results` на входе, строка на выходе. Никакого чтения диска
@@ -11,6 +12,7 @@
 use std::collections::BTreeSet;
 
 use crate::results::{Results, RunRecord, median};
+use crate::telemetry::Telemetry;
 
 /// Собрать текст `report.md`.
 pub fn render_report(results: &Results) -> String {
@@ -42,6 +44,8 @@ pub fn render_report(results: &Results) -> String {
     out.push_str(&render_matrix(results));
     out.push('\n');
     out.push_str(&render_summary(results));
+    out.push('\n');
+    out.push_str(&render_harness(results));
     out.push('\n');
     out.push_str(&render_anomalies(results));
 
@@ -197,6 +201,65 @@ fn compactions(runs: &[&RunRecord]) -> usize {
         .sum()
 }
 
+/// Обвязка по моделям: суммы счётчиков [`Telemetry`] по прогонам модели.
+fn render_harness(results: &Results) -> String {
+    let mut out = String::from("## Обвязка\n\n");
+    out.push_str(
+        "Срабатывания контролей mark2 по маркерам stderr, сумма по прогонам модели: \
+         нуджи `[agent] write_churn` и `[agent] loop_detection`, тул-коллы, спасённые \
+         приведением аргументов (`· coerced N`), компакции (`[agent] compaction`), \
+         тул-коллы с ошибкой (`✗ <тул>:`).\n\n",
+    );
+    out.push_str(
+        "| модель | write_churn | loop_detection | coerced | компакции | tool errors |\n\
+         |---|---|---|---|---|---|\n",
+    );
+
+    for model in &results.config.models {
+        let telemetry: Vec<&Telemetry> = results
+            .runs
+            .iter()
+            .filter(|run| run.model == model.alias)
+            .filter_map(|run| run.harness.as_ref())
+            .collect();
+        out.push_str(&format!(
+            "| {} | {} |\n",
+            model.alias,
+            harness_cells(&telemetry).join(" | ")
+        ));
+    }
+
+    out
+}
+
+/// Ячейки строки обвязки. Нет телеметрии ни у одного прогона (старый
+/// `results.json`) — прочерки, а не нули: «не мерили» ≠ «не срабатывало».
+/// `coerced` — так же отдельно: старый бинарь mark2 счётчик не печатал.
+fn harness_cells(telemetry: &[&Telemetry]) -> [String; 5] {
+    if telemetry.is_empty() {
+        return std::array::from_fn(|_| "—".to_string());
+    }
+    let sum = |count: fn(&Telemetry) -> usize| -> String {
+        telemetry
+            .iter()
+            .map(|run| count(run))
+            .sum::<usize>()
+            .to_string()
+    };
+    let coerced: Vec<usize> = telemetry.iter().filter_map(|run| run.coerced).collect();
+    [
+        sum(|run| run.nudges_write_churn),
+        sum(|run| run.nudges_loop_detection),
+        if coerced.is_empty() {
+            "—".to_string()
+        } else {
+            coerced.iter().sum::<usize>().to_string()
+        },
+        sum(|run| run.compactions),
+        sum(|run| run.tool_errors),
+    ]
+}
+
 fn percent(part: usize, whole: usize) -> String {
     if whole == 0 {
         return "—".to_string();
@@ -308,6 +371,12 @@ mod tests {
         run
     }
 
+    /// Прогон с заданной телеметрией обвязки.
+    fn with_harness(mut run: RunRecord, telemetry: Telemetry) -> RunRecord {
+        run.harness = Some(telemetry);
+        run
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn run(
         model: &str,
@@ -343,6 +412,12 @@ mod tests {
                 stop_reason: Some(StopReason::Completed),
                 skipped_lines: 0,
             }),
+            // Завершившийся прогон напечатал итоговую строку с `coerced 0`,
+            // убитый — нет.
+            harness: Some(Telemetry {
+                coerced: (!timed_out).then_some(0),
+                ..Telemetry::default()
+            }),
             verify: Some(VerifyOutcome {
                 exit_code: Some(i32::from(!pass)),
                 timed_out: false,
@@ -358,7 +433,16 @@ mod tests {
     }
 
     fn fixture() -> Results {
-        let mut timed_out = run("qwen9", "T02", 2, false, 120.0, None, None, true);
+        // Убит до записи сессии, но stderr остался: нудж и ошибка тула видны,
+        // итоговой строки (и `coerced`) нет.
+        let mut timed_out = with_harness(
+            run("qwen9", "T02", 2, false, 120.0, None, None, true),
+            Telemetry {
+                nudges_write_churn: 1,
+                tool_errors: 1,
+                ..Telemetry::default()
+            },
+        );
         timed_out.answer_chars = 0;
         timed_out.session_path = None;
 
@@ -397,18 +481,27 @@ mod tests {
                 tasks: vec![task("T01", "create-file"), task("T02", "read-answer")],
             },
             runs: vec![
-                with_compactions(
-                    run(
-                        "qwen9",
-                        "T01",
-                        1,
-                        true,
-                        10.0,
-                        Some((1200, 340)),
-                        Some((2, 3, 1)),
-                        false,
+                with_harness(
+                    with_compactions(
+                        run(
+                            "qwen9",
+                            "T01",
+                            1,
+                            true,
+                            10.0,
+                            Some((1200, 340)),
+                            Some((2, 3, 1)),
+                            false,
+                        ),
+                        2,
                     ),
-                    2,
+                    Telemetry {
+                        nudges_write_churn: 2,
+                        nudges_loop_detection: 0,
+                        coerced: Some(3),
+                        compactions: 2,
+                        tool_errors: 1,
+                    },
                 ),
                 run(
                     "qwen9",
@@ -420,18 +513,27 @@ mod tests {
                     Some((2, 3, 0)),
                     false,
                 ),
-                with_compactions(
-                    run(
-                        "qwen9",
-                        "T02",
+                with_harness(
+                    with_compactions(
+                        run(
+                            "qwen9",
+                            "T02",
+                            1,
+                            false,
+                            30.0,
+                            Some((800, 20)),
+                            Some((1, 2, 2)),
+                            false,
+                        ),
                         1,
-                        false,
-                        30.0,
-                        Some((800, 20)),
-                        Some((1, 2, 2)),
-                        false,
                     ),
-                    1,
+                    Telemetry {
+                        nudges_write_churn: 0,
+                        nudges_loop_detection: 1,
+                        coerced: Some(9),
+                        compactions: 1,
+                        tool_errors: 2,
+                    },
                 ),
                 timed_out,
                 run(
@@ -545,6 +647,75 @@ mod tests {
             assert!(row.ends_with(" | 0 |"), "{row}");
             assert_eq!(row.matches('|').count(), 8, "семь колонок: {row}");
         }
+    }
+
+    /// Строка раздела обвязки модели.
+    fn harness_row(report: &str, alias: &str) -> String {
+        let section = report
+            .split("## Обвязка")
+            .nth(1)
+            .unwrap()
+            .split("## ")
+            .next()
+            .unwrap();
+        section
+            .lines()
+            .find(|line| line.starts_with(&format!("| {alias} |")))
+            .unwrap_or_else(|| panic!("нет строки {alias}:\n{section}"))
+            .to_string()
+    }
+
+    /// Счётчики суммируются по прогонам модели, включая убитый по таймауту
+    /// (его stderr остался); `coerced` — только по прогонам, где он есть.
+    #[test]
+    fn harness_section_sums_counters_per_model() {
+        let report = render_report(&fixture());
+        assert!(
+            report.contains(
+                "| модель | write_churn | loop_detection | coerced | компакции | tool errors |\n\
+                 |---|---|---|---|---|---|\n"
+            ),
+            "{report}"
+        );
+        // Между сводкой и аномалиями.
+        let position = |heading: &str| report.find(heading).unwrap();
+        assert!(position("## Сводка") < position("## Обвязка"));
+        assert!(position("## Обвязка") < position("## Аномалии"));
+        // write_churn 2+1, loop 1, coerced 3+0+9 (у таймаута нет), компакции
+        // 2+1, ошибки 1+2+1 (у таймаута — из stderr, сессии нет).
+        assert_eq!(
+            harness_row(&report, "qwen9"),
+            "| qwen9 | 3 | 1 | 12 | 3 | 4 |"
+        );
+        assert_eq!(
+            harness_row(&report, "oss120"),
+            "| oss120 | 0 | 0 | 0 | 0 | 0 |"
+        );
+    }
+
+    /// Старый `results.json` без телеметрии — прочерки, а не нули; бинарь
+    /// без счётчика приведений — прочерк только в `coerced`.
+    #[test]
+    fn harness_section_tells_missing_data_from_zero() {
+        let mut results = fixture();
+        for run in &mut results.runs {
+            if run.model == "qwen9" {
+                run.harness = None;
+            } else if let Some(harness) = run.harness.as_mut() {
+                harness.coerced = None;
+                harness.tool_errors = 1;
+            }
+        }
+        let report = render_report(&results);
+        assert_eq!(
+            harness_row(&report, "qwen9"),
+            "| qwen9 | — | — | — | — | — |"
+        );
+        assert_eq!(
+            harness_row(&report, "oss120"),
+            "| oss120 | 0 | 0 | — | 0 | 4 |"
+        );
+        assert_eq!(harness_cells(&[]), ["—", "—", "—", "—", "—"]);
     }
 
     #[test]

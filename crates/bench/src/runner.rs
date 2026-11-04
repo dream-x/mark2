@@ -53,6 +53,7 @@ use crate::metrics::{find_session_file, parse_tokens, read_session_metrics};
 use crate::models::ModelSpec;
 use crate::results::{Results, RunRecord, VerifyOutcome};
 use crate::task::{Task, TaskPolicy, UITEST_BOOTSTRAP};
+use crate::telemetry;
 
 /// Промпт прогрева: тривиальный ответ без тулов, только чтобы поднять модель.
 pub const WARMUP_PROMPT: &str = "Reply with exactly: ok";
@@ -194,6 +195,7 @@ impl Runner {
             timeout_seconds: timeout.as_secs_f64(),
             tokens: None,
             session: None,
+            harness: None,
             verify: None,
             answer_chars: 0,
             stdout_path: None,
@@ -279,7 +281,9 @@ impl Runner {
 
         let stdout = read_lossy(&stdout_path);
         record.answer_chars = stdout.trim().chars().count();
-        record.tokens = parse_tokens(&read_lossy(&stderr_path));
+        let stderr = read_lossy(&stderr_path);
+        record.tokens = parse_tokens(&stderr);
+        record.harness = Some(telemetry::parse(&stderr));
 
         if let Some(source) = find_session_file(sandbox.home()) {
             let dir = self
@@ -1623,6 +1627,7 @@ mod tests {
             timeout_seconds: 120.0,
             tokens: None,
             session: None,
+            harness: None,
             verify: Some(VerifyOutcome {
                 exit_code: Some(0),
                 timed_out: false,

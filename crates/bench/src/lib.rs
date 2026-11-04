@@ -14,6 +14,7 @@
 //!
 //! Модули: [`models`] — матрица моделей (`bench/models.toml`), [`task`] —
 //! формат задачи на диске, [`metrics`] — извлечение метрик из stderr и сессии,
+//! [`telemetry`] — срабатывания контролей харнеса по маркерам stderr,
 //! [`runner`] — протокол прогона, [`results`] — сырьё для `results.json`,
 //! [`report`] — сборка `report.md`.
 
@@ -23,6 +24,7 @@ pub mod report;
 pub mod results;
 pub mod runner;
 pub mod task;
+pub mod telemetry;
 
 use std::path::{Path, PathBuf};
 

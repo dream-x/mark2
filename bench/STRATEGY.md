@@ -173,6 +173,7 @@ bench/tasks/T04-fix-bug-test/
 - tokens in/out (стоимость — критично для cloud);
 - сэмплинг-итераций на ход (лишние круги = слабое планирование);
 - tool-коллов всего и **tool error rate** (доля is_error результатов — кривые аргументы, промахи edit; главный индикатор качества tool calling у малых моделей);
+- **телеметрия обвязки** — сколько раз модель ловили контроли mark2, по маркерам stderr (`crates/bench/src/telemetry.rs`): нуджи `[agent] write_churn` / `[agent] loop_detection`, `· coerced N` итоговой строки, `[agent] compaction`, строки `✗ <тул>:`; per-run — `runs[].harness` в `results.json`, суммы по модели — раздел «Обвязка» в `report.md`;
 - обрывы/таймауты отдельной строкой.
 
 ## Выход

@@ -88,6 +88,14 @@ pub async fn run(
                 let mut stderr = std::io::stderr().lock();
                 let _ = writeln!(stderr, "{}", render::nudge_line(*guard, message, opts));
             }
+            Event::Compacted {
+                tokens_before,
+                tokens_after,
+            } => {
+                let mut stderr = std::io::stderr().lock();
+                let line = render::compaction_line(*tokens_before, *tokens_after, opts);
+                let _ = writeln!(stderr, "{line}");
+            }
             Event::Warning { message } => {
                 let mut stderr = std::io::stderr().lock();
                 let _ = writeln!(stderr, "{}", render::warning_line(message, opts));
