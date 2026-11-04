@@ -1,0 +1,462 @@
+{
+  "schema_version": 1,
+  "label": "t17-v2",
+  "run_id": "20261104-024852-t17-v2",
+  "started_at": "2026-11-03T23:48:52.038965Z",
+  "finished_at": "2026-11-04T02:30:35.69766Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/private/tmp/claude-501/-Users-maks-projects-mark2/04d8750f-94be-414a-bc5f-19c44aaec6c6/scratchpad/night-bin/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 1,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "flint40",
+        "model": "flint:40b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0,
+        "edit_strategy": "whole_file"
+      },
+      {
+        "alias": "qwen36c",
+        "model": "qwen3.6:35b-a3b-coding",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "qwen36c-5090",
+        "model": "qwen3.6:35b-a3b-coding",
+        "base_url": "http://white.local:11434/v1",
+        "timeout_multiplier": 1.5
+      },
+      {
+        "alias": "coder64k",
+        "model": "qwen-coder-next-64k:latest",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.5
+      },
+      {
+        "alias": "lightning30",
+        "model": "nemotron-3.5-lightning:30b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "laguna",
+        "model": "laguna-xs-2.1:latest",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "beam",
+        "model": "beam:cloud",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "glm53",
+        "model": "glm-5.3",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "timeout_multiplier": 2.5,
+        "api_key_env": "ZAI_API_KEY"
+      },
+      {
+        "alias": "glm53-flash",
+        "model": "glm-5.3-flash",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "timeout_multiplier": 2.5,
+        "api_key_env": "ZAI_API_KEY"
+      },
+      {
+        "alias": "glm52",
+        "model": "glm-5.2",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "timeout_multiplier": 2.5,
+        "api_key_env": "ZAI_API_KEY"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T17",
+        "slug": "ws-chat",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T17-ws-chat",
+        "timeout_seconds": 1800,
+        "repeats": 1,
+        "tags": [
+          "project",
+          "frontend",
+          "backend",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "prompt": "Build a small multi-user chat in the current working directory: a Python\nbackend on aiohttp, a plain JavaScript frontend, and an automated test for\nit. A checker will start your server, talk to it over WebSocket, and drive\nthe page in a headless browser like a real user (typing and clicking).\nFollow the contract below exactly.\n\n## Files\n\n- `server.py`\n- `static/index.html`\n- `static/app.js`\n- `static/style.css`\n- `test_chat.py`\n\n## Server (`server.py`)\n\n- Python 3 with aiohttp. It is started as `python3 server.py` from the\n  working directory and must keep running until it is killed.\n- Port: the `PORT` environment variable, default `8765`. Listen on `0.0.0.0`\n  or `127.0.0.1`: the checker connects to `127.0.0.1`.\n- `GET /` returns `static/index.html`. Every file in `static/` is also served\n  at `/static/<name>`, and `index.html` loads `/static/style.css` and\n  `/static/app.js` from there.\n- The WebSocket endpoint is `/ws` on the same port.\n\n## Protocol\n\nEvery WebSocket message is a text frame holding one JSON object.\n\nClient to server:\n\n- `{\"type\": \"join\", \"nick\": \"<nick>\"}`\n- `{\"type\": \"message\", \"text\": \"<text>\"}`\n\nServer to client:\n\n- `{\"type\": \"history\", \"messages\": [...]}`: sent only to the client that\n  joined, right after its `join`. `messages` holds the last 50 chat messages,\n  oldest first, each in the `message` form below. System notices are not\n  part of the history.\n- `{\"type\": \"system\", \"text\": \"...\"}`: sent to every joined client when a\n  client joins and when a joined client leaves (its WebSocket closes). The\n  text names the nick, e.g. `alice joined`, `alice left`. Whether the joining\n  client also receives its own join notice is up to you.\n- `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}`: when a\n  joined client sends a message, the server broadcasts it to every joined\n  client, the sender included. `nick` is the sender's nick, `ts` is the\n  server time in Unix milliseconds.\n\nA client that is connected but has not joined gets no broadcasts, and its\n`message` frames are ignored.\n\n## Page\n\n- `static/index.html` has elements with exactly these ids: `nick` (text\n  input), `join-btn` (button), `msg` (text input), `send-btn` (button),\n  `messages` (the chat feed).\n- No auto-join. Loading the page must never send `join` by itself, not even\n  with a default or remembered nick: the user joins only by acting. Until\n  then `#nick` and `#join-btn` are visible and enabled, and `#messages` is\n  empty (no placeholder text).\n- Clicking `#join-btn` joins with the nick typed into `#nick`. Pressing Enter\n  in `#nick` does the same.\n- After joining, `#msg` and `#send-btn` are visible and enabled (before\n  joining they may be hidden or disabled). Pressing Enter in `#msg` or\n  clicking `#send-btn` sends the typed text as a message.\n- On join, `#messages` shows the received history. After that, every\n  incoming `message` and `system` notice is appended to `#messages` with its\n  text visible. A message is shown when its broadcast comes back from the\n  server (the sender receives its own broadcast too).\n- The page may open the WebSocket on load or when the user joins.\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet. The checker's browser can reach only your server.\n\n## Test (`test_chat.py`)\n\nWrite your own automated test and ship it with the code:\n\n- It runs as `python3 test_chat.py` from the working directory, needs\n  nothing already running, and finishes within 60 seconds.\n- It starts `server.py` itself as a subprocess (use `sys.executable`), with\n  `PORT` set to a free port it picks, waits until the server accepts\n  connections, and stops the server at the end, also when a check fails.\n- It checks the protocol with real WebSocket clients: join and history,\n  broadcast between two clients, join and leave notices, history for a\n  newcomer.\n- It exits with status 0 only if every check passed, non-zero otherwise.\n\n## Environment\n\n`python3` on your PATH has aiohttp available. It is the same Python the\nchecker uses to run `server.py` and `test_chat.py`, so there is nothing to\ninstall. Do not install packages globally. You may start the server and run\nyour test while you work, but you don't have to. Stop any server you started\nbefore you finish.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-03T23:48:58.158833Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1394.003994916,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 427989,
+        "output": 39976,
+        "cached": 401454
+      },
+      "session": {
+        "assistant_messages": 34,
+        "tool_uses": 38,
+        "tool_errors": 5,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): FAIL\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": "FAIL [layer B ui]: page 1: typing a nick into #nick and pressing Enter did not join: probedab7f4 expected a `system` notice that anndab7f4 joined within 5 s; received instead: nothing\n"
+      },
+      "answer_chars": 3045,
+      "stdout_path": "logs/flint40/T17/1.stdout.txt",
+      "stderr_path": "logs/flint40/T17/1.stderr.txt",
+      "session_path": "sessions/flint40/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T00:12:24.587448Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3592.007825209,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 100858,
+        "output": 256921,
+        "cached": 89983
+      },
+      "session": {
+        "assistant_messages": 15,
+        "tool_uses": 14,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL [files]: missing contract file(s): server.py static/index.html static/app.js static/style.css\nT17 files: FAIL\n"
+      },
+      "answer_chars": 1051791,
+      "stdout_path": "logs/qwen36c/T17/1.stdout.txt",
+      "stderr_path": "logs/qwen36c/T17/1.stderr.txt",
+      "session_path": "sessions/qwen36c/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c-5090",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T01:12:31.389716Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 141.018035916,
+      "timeout_seconds": 2700.0,
+      "tokens": {
+        "input": 88900,
+        "output": 27900,
+        "cached": 64688
+      },
+      "session": {
+        "assistant_messages": 12,
+        "tool_uses": 11,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): FAIL\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer B ui]: page 1: typing a nick into #nick and pressing Enter did not join: probe74290f expected a `system` notice that ann74290f joined within 5 s; received instead: nothing\n  page errors: pageerror: Failed to execute 'send' on 'WebSocket': Still in CONNECTING state.\nFAIL [layer C own test_chat.py]: `python3 test_chat.py` did not finish within 60 s (does it stop its server?); its output:\n======== Running on http://0.0.0.0:64412 ========\n(Press CTRL+C to quit)\n"
+      },
+      "answer_chars": 70157,
+      "stdout_path": "logs/qwen36c-5090/T17/1.stdout.txt",
+      "stderr_path": "logs/qwen36c-5090/T17/1.stderr.txt",
+      "session_path": "sessions/qwen36c-5090/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "coder64k",
+      "model_id": "qwen-coder-next-64k:latest",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T01:16:20.929197Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 432.80756975,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 1163954,
+        "output": 15293,
+        "cached": 1138323
+      },
+      "session": {
+        "assistant_messages": 69,
+        "tool_uses": 68,
+        "tool_errors": 17,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793755414064}\n"
+      },
+      "answer_chars": 5428,
+      "stdout_path": "logs/coder64k/T17/1.stdout.txt",
+      "stderr_path": "logs/coder64k/T17/1.stderr.txt",
+      "session_path": "sessions/coder64k/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "lightning30",
+      "model_id": "nemotron-3.5-lightning:30b",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T01:23:53.609096Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": false,
+      "wall_time_seconds": 711.050441375,
+      "timeout_seconds": 3600.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 22,
+        "tool_uses": 22,
+        "tool_errors": 4,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): FAIL\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer A protocol]: alice expected a `system` notice mentioning bob's join within 5 s; received instead: nothing\nFAIL [layer B ui]: page 1: GET / must return 200 with static/index.html, got status 500\n  page errors: console.error: Failed to load resource: the server responded with a status of 500 (Internal Server Error)\nFAIL [layer C own test_chat.py]: `python3 test_chat.py` exited with code 1; its output:\n  File \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py\", line 719, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-lY0odk/cwd/test_chat.py\", line 88, in test_chat\n    msg = await asyncio.wait_for(ws2.recv(), timeout=5)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 487, in wait_for\n    async with timeouts.timeout(timeout):\n               ~~~~~~~~~~~~~~~~^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/timeouts.py\", line 115, in __aexit__\n    raise TimeoutError from exc_val\nTimeoutError\n"
+      },
+      "answer_chars": 583,
+      "stdout_path": "logs/lightning30/T17/1.stdout.txt",
+      "stderr_path": "logs/lightning30/T17/1.stderr.txt",
+      "session_path": "sessions/lightning30/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "laguna",
+      "model_id": "laguna-xs-2.1:latest",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T01:36:12.774103Z",
+      "pass": false,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 1406.175550584,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 1493140,
+        "output": 28996,
+        "cached": 1468176
+      },
+      "session": {
+        "assistant_messages": 51,
+        "tool_uses": 51,
+        "tool_errors": 21,
+        "compactions": 0,
+        "stop_reason": "error",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): FAIL\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer B ui]: page 1: typing a nick into #nick and pressing Enter did not join: probef0bc7b expected a `system` notice that annf0bc7b joined within 5 s; received instead: nothing\n  page errors: console.error: WebSocket connection to 'ws://127.0.0.1:8765/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED\nFAIL [layer C own test_chat.py]: `python3 test_chat.py` did not finish within 60 s (does it stop its server?); its output:\n(no output)\n"
+      },
+      "answer_chars": 4432,
+      "stdout_path": "logs/laguna/T17/1.stdout.txt",
+      "stderr_path": "logs/laguna/T17/1.stderr.txt",
+      "session_path": "sessions/laguna/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "beam",
+      "model_id": "beam:cloud",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T02:00:52.188369Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 249.048972042,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 40238,
+        "output": 8318,
+        "cached": 8192
+      },
+      "session": {
+        "assistant_messages": 13,
+        "tool_uses": 12,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer C own test_chat.py]: test_chat.py is missing: the task requires a self-contained test\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/beam/T17/1.stdout.txt",
+      "stderr_path": "logs/beam/T17/1.stderr.txt",
+      "session_path": "sessions/beam/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T02:05:11.29688Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 551.972717542,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 272327,
+        "output": 15522,
+        "cached": 254016
+      },
+      "session": {
+        "assistant_messages": 25,
+        "tool_uses": 30,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793758463550}\n"
+      },
+      "answer_chars": 2689,
+      "stdout_path": "logs/glm53/T17/1.stdout.txt",
+      "stderr_path": "logs/glm53/T17/1.stderr.txt",
+      "session_path": "sessions/glm53/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53-flash",
+      "model_id": "glm-5.3-flash",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T02:14:33.459771Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 291.636379583,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 166533,
+        "output": 10308,
+        "cached": 153280
+      },
+      "session": {
+        "assistant_messages": 21,
+        "tool_uses": 21,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793758765381}\n"
+      },
+      "answer_chars": 2241,
+      "stdout_path": "logs/glm53-flash/T17/1.stdout.txt",
+      "stderr_path": "logs/glm53-flash/T17/1.stderr.txt",
+      "session_path": "sessions/glm53-flash/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T02:19:34.540512Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 655.541252166,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 249057,
+        "output": 19998,
+        "cached": 231616
+      },
+      "session": {
+        "assistant_messages": 23,
+        "tool_uses": 28,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 3061,
+      "stdout_path": "logs/glm52/T17/1.stdout.txt",
+      "stderr_path": "logs/glm52/T17/1.stderr.txt",
+      "session_path": "sessions/glm52/T17/1.jsonl",
+      "error": null
+    }
+  ]
+}

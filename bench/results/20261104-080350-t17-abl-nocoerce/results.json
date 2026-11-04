@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "label": "t17-abl-nocoerce",
+  "run_id": "20261104-080350-t17-abl-nocoerce",
+  "started_at": "2026-11-04T05:03:50.29017Z",
+  "finished_at": "2026-11-04T06:07:28.306547Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/private/tmp/claude-501/-Users-maks-projects-mark2/04d8750f-94be-414a-bc5f-19c44aaec6c6/scratchpad/night-bin/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 1,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [
+      "arg_coercion = false"
+    ],
+    "models": [
+      {
+        "alias": "flint40",
+        "model": "flint:40b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0,
+        "edit_strategy": "whole_file"
+      },
+      {
+        "alias": "qwen36c",
+        "model": "qwen3.6:35b-a3b-coding",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T17",
+        "slug": "ws-chat",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T17-ws-chat",
+        "timeout_seconds": 1800,
+        "repeats": 1,
+        "tags": [
+          "project",
+          "frontend",
+          "backend",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "prompt": "Build a small multi-user chat in the current working directory: a Python\nbackend on aiohttp, a plain JavaScript frontend, and an automated test for\nit. A checker will start your server, talk to it over WebSocket, and drive\nthe page in a headless browser like a real user (typing and clicking).\nFollow the contract below exactly.\n\n## Files\n\n- `server.py`\n- `static/index.html`\n- `static/app.js`\n- `static/style.css`\n- `test_chat.py`\n\n## Server (`server.py`)\n\n- Python 3 with aiohttp. It is started as `python3 server.py` from the\n  working directory and must keep running until it is killed.\n- Port: the `PORT` environment variable, default `8765`. Listen on `0.0.0.0`\n  or `127.0.0.1`: the checker connects to `127.0.0.1`.\n- `GET /` returns `static/index.html`. Every file in `static/` is also served\n  at `/static/<name>`, and `index.html` loads `/static/style.css` and\n  `/static/app.js` from there.\n- The WebSocket endpoint is `/ws` on the same port.\n\n## Protocol\n\nEvery WebSocket message is a text frame holding one JSON object.\n\nClient to server:\n\n- `{\"type\": \"join\", \"nick\": \"<nick>\"}`\n- `{\"type\": \"message\", \"text\": \"<text>\"}`\n\nServer to client:\n\n- `{\"type\": \"history\", \"messages\": [...]}`: sent only to the client that\n  joined, right after its `join`. `messages` holds the last 50 chat messages,\n  oldest first, each in the `message` form below. System notices are not\n  part of the history.\n- `{\"type\": \"system\", \"text\": \"...\"}`: sent to every joined client when a\n  client joins and when a joined client leaves (its WebSocket closes). The\n  text names the nick, e.g. `alice joined`, `alice left`. Whether the joining\n  client also receives its own join notice is up to you.\n- `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}`: when a\n  joined client sends a message, the server broadcasts it to every joined\n  client, the sender included. `nick` is the sender's nick, `ts` is the\n  server time in Unix milliseconds.\n\nA client that is connected but has not joined gets no broadcasts, and its\n`message` frames are ignored.\n\n## Page\n\n- `static/index.html` has elements with exactly these ids: `nick` (text\n  input), `join-btn` (button), `msg` (text input), `send-btn` (button),\n  `messages` (the chat feed).\n- No auto-join. Loading the page must never send `join` by itself, not even\n  with a default or remembered nick: the user joins only by acting. Until\n  then `#nick` and `#join-btn` are visible and enabled, and `#messages` is\n  empty (no placeholder text).\n- Clicking `#join-btn` joins with the nick typed into `#nick`. Pressing Enter\n  in `#nick` does the same.\n- After joining, `#msg` and `#send-btn` are visible and enabled (before\n  joining they may be hidden or disabled). Pressing Enter in `#msg` or\n  clicking `#send-btn` sends the typed text as a message.\n- On join, `#messages` shows the received history. After that, every\n  incoming `message` and `system` notice is appended to `#messages` with its\n  text visible. A message is shown when its broadcast comes back from the\n  server (the sender receives its own broadcast too).\n- The page may open the WebSocket on load or when the user joins.\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet. The checker's browser can reach only your server.\n\n## Test (`test_chat.py`)\n\nWrite your own automated test and ship it with the code:\n\n- It runs as `python3 test_chat.py` from the working directory, needs\n  nothing already running, and finishes within 60 seconds.\n- It starts `server.py` itself as a subprocess (use `sys.executable`), with\n  `PORT` set to a free port it picks, waits until the server accepts\n  connections, and stops the server at the end, also when a check fails.\n- It checks the protocol with real WebSocket clients: join and history,\n  broadcast between two clients, join and leave notices, history for a\n  newcomer.\n- It exits with status 0 only if every check passed, non-zero otherwise.\n\n## Environment\n\n`python3` on your PATH has aiohttp available. It is the same Python the\nchecker uses to run `server.py` and `test_chat.py`, so there is nothing to\ninstall. Do not install packages globally. You may start the server and run\nyour test while you work, but you don't have to. Stop any server you started\nbefore you finish.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T05:03:54.835631Z",
+      "pass": false,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 649.473787375,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 1521279,
+        "output": 50235,
+        "cached": 1490356
+      },
+      "session": {
+        "assistant_messages": 80,
+        "tool_uses": 80,
+        "tool_errors": 30,
+        "compactions": 0,
+        "stop_reason": "max_turns",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): FAIL\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793769284580}\nFAIL [layer B ui]: page 1: GET / did not load: Page.goto: Download is starting\nCall log:\n  - navigating to \"http://127.0.0.1:62453/\", waiting until \"load\"\n\n  page errors: request failed: http://127.0.0.1:62453/ (net::ERR_INVALID_RESPONSE)\nFAIL [layer C own test_chat.py]: `python3 test_chat.py` exited with code 1; its output:\nserver did not start\n"
+      },
+      "answer_chars": 2212,
+      "stdout_path": "logs/flint40/T17/1.stdout.txt",
+      "stderr_path": "logs/flint40/T17/1.stderr.txt",
+      "session_path": "sessions/flint40/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-04T05:15:03.459101Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3144.807410417,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 7963,
+        "output": 260062,
+        "cached": 4656
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL [files]: missing contract file(s): static/index.html static/app.js static/style.css\nT17 files: FAIL\n"
+      },
+      "answer_chars": 1075414,
+      "stdout_path": "logs/qwen36c/T17/1.stdout.txt",
+      "stderr_path": "logs/qwen36c/T17/1.stderr.txt",
+      "session_path": "sessions/qwen36c/T17/1.jsonl",
+      "error": null
+    }
+  ]
+}
