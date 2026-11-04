@@ -11,7 +11,13 @@
 //! * **Вывод копится с капом.** Труба всё равно дренируется до конца (иначе
 //!   процесс заблокируется на записи), но в буфер попадают только первые
 //!   [`MAX_OUTPUT_BYTES`] байт.
+//!
+//! Запуск с этими тремя свойствами — [`run_shell`] — общий с post-edit
+//! сенсором agent loop ([`crate::post_edit`]): тот же `sh -c`, та же группа и
+//! тот же kill, только кап другой — голова и хвост вывода
+//! ([`OutputCap::head_and_tail`]).
 
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -21,6 +27,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 
 use super::{Tool, ToolCtx, ToolOutput, input_schema_for};
 
@@ -99,71 +106,21 @@ impl Tool for BashTool {
                 .clamp(1, MAX_TIMEOUT_SECONDS),
         );
 
-        let mut command = Command::new("/bin/sh");
-        command
-            .arg("-c")
-            // stderr в ту же трубу, что и stdout — порядок строк сохраняется.
-            .arg(format!("exec 2>&1\n{}", input.command))
-            .current_dir(&ctx.cwd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            // Своя process group, чтобы убить всё дерево одним kill.
-            .process_group(0)
-            .kill_on_drop(true);
-
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                return ToolOutput::err(format!(
-                    "Failed to run the command in {}: {error}",
-                    ctx.cwd.display()
-                ));
-            }
+        let ShellRun {
+            outcome,
+            mut output,
+        } = match run_shell(
+            &input.command,
+            &ctx.cwd,
+            timeout,
+            &ctx.cancel,
+            OutputCap::head(MAX_OUTPUT_BYTES),
+        )
+        .await
+        {
+            Ok(run) => run,
+            Err(message) => return ToolOutput::err(message),
         };
-
-        let pid = child.id();
-        let Some(mut stdout) = child.stdout.take() else {
-            return ToolOutput::err("Failed to capture command output.");
-        };
-
-        let mut buffer: Vec<u8> = Vec::new();
-        let mut total_bytes: usize = 0;
-
-        let outcome = {
-            let run = async {
-                drain_capped(&mut stdout, &mut buffer, &mut total_bytes, MAX_OUTPUT_BYTES).await;
-                child.wait().await
-            };
-
-            tokio::select! {
-                biased;
-                () = ctx.cancel.cancelled() => Outcome::Cancelled,
-                result = tokio::time::timeout(timeout, run) => match result {
-                    Ok(Ok(status)) => Outcome::Finished(status.code()),
-                    Ok(Err(error)) => Outcome::Failed(error.to_string()),
-                    Err(_) => Outcome::TimedOut,
-                },
-            }
-        };
-
-        if !matches!(outcome, Outcome::Finished(_)) {
-            kill_process_group(pid).await;
-            let _ = child.kill().await;
-        }
-
-        let mut output = String::from_utf8_lossy(&buffer).trim_end().to_string();
-        let truncated = total_bytes > buffer.len();
-
-        if truncated {
-            push_line(
-                &mut output,
-                &format!(
-                    "{TRUNCATION_MARKER} kept the first {} of {total_bytes} bytes",
-                    buffer.len()
-                ),
-            );
-        }
 
         match outcome {
             Outcome::Finished(Some(0)) => {
@@ -205,7 +162,8 @@ impl Tool for BashTool {
 }
 
 /// Чем закончился запуск.
-enum Outcome {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Outcome {
     /// Процесс завершился сам; внутри — код возврата (`None` при сигнале).
     Finished(Option<i32>),
     /// Истёк таймаут.
@@ -216,28 +174,191 @@ enum Outcome {
     Failed(String),
 }
 
-/// Дренирует поток до конца, копя в буфер не больше `limit` байт.
+/// Итог [`run_shell`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ShellRun {
+    /// Чем закончился процесс.
+    pub(crate) outcome: Outcome,
+    /// stdout и stderr одной строкой, без хвостовых пробелов; если вывод не
+    /// влез в кап — с маркером обрезки (`[output truncated] …`) на месте
+    /// разреза.
+    pub(crate) output: String,
+}
+
+/// Какую часть вывода сохранить.
+///
+/// Труба дренируется до конца в любом случае; кап решает только, какие байты
+/// попадут в результат: первые `head` и последние `tail`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OutputCap {
+    head: usize,
+    tail: usize,
+}
+
+impl OutputCap {
+    /// Только начало вывода — так режет тул `bash`.
+    pub(crate) fn head(bytes: usize) -> Self {
+        Self {
+            head: bytes,
+            tail: 0,
+        }
+    }
+
+    /// Начало и конец: у диагностики важное бывает с обеих сторон (первая
+    /// ошибка компилятора — вверху, итог тест-раннера и последняя строка
+    /// трейсбэка — внизу).
+    pub(crate) fn head_and_tail(head: usize, tail: usize) -> Self {
+        Self { head, tail }
+    }
+}
+
+/// Запустить `command` через `sh -c` в `cwd`: stderr в той же трубе, что
+/// stdout, своя process group, по таймауту и отмене — `kill -9` всей группе.
+///
+/// `Err` — процесс не стартовал (текст для модели); всё остальное, включая
+/// таймаут и отмену, — [`ShellRun`] с тем выводом, что успел накопиться.
+pub(crate) async fn run_shell(
+    command: &str,
+    cwd: &Path,
+    timeout: Duration,
+    cancel: &CancellationToken,
+    cap: OutputCap,
+) -> Result<ShellRun, String> {
+    let mut shell = Command::new("/bin/sh");
+    shell
+        .arg("-c")
+        // stderr в ту же трубу, что и stdout — порядок строк сохраняется.
+        .arg(format!("exec 2>&1\n{command}"))
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        // Своя process group, чтобы убить всё дерево одним kill.
+        .process_group(0)
+        .kill_on_drop(true);
+
+    let mut child = shell
+        .spawn()
+        .map_err(|error| format!("Failed to run the command in {}: {error}", cwd.display()))?;
+
+    let pid = child.id();
+    let Some(mut stdout) = child.stdout.take() else {
+        return Err("Failed to capture command output.".to_string());
+    };
+
+    let mut captured = Captured::default();
+
+    let outcome = {
+        let run = async {
+            drain_capped(&mut stdout, &mut captured, cap).await;
+            child.wait().await
+        };
+
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => Outcome::Cancelled,
+            result = tokio::time::timeout(timeout, run) => match result {
+                Ok(Ok(status)) => Outcome::Finished(status.code()),
+                Ok(Err(error)) => Outcome::Failed(error.to_string()),
+                Err(_) => Outcome::TimedOut,
+            },
+        }
+    };
+
+    if !matches!(outcome, Outcome::Finished(_)) {
+        kill_process_group(pid).await;
+        let _ = child.kill().await;
+    }
+
+    Ok(ShellRun {
+        outcome,
+        output: captured.render(),
+    })
+}
+
+/// Сохранённые куски вывода и сколько его было всего.
+#[derive(Debug, Default)]
+struct Captured {
+    head: Vec<u8>,
+    tail: Vec<u8>,
+    total: usize,
+}
+
+impl Captured {
+    /// Текст результата: целиком, если влез, иначе голова, маркер обрезки и
+    /// хвост. С одной головой маркер — последняя строка, как и раньше у
+    /// `bash`.
+    fn render(&self) -> String {
+        let kept = self.head.len() + self.tail.len();
+        if self.total <= kept {
+            let mut whole = self.head.clone();
+            whole.extend_from_slice(&self.tail);
+            return String::from_utf8_lossy(&whole).trim_end().to_string();
+        }
+
+        let mut output = String::from_utf8_lossy(&self.head).trim_end().to_string();
+        if self.tail.is_empty() {
+            push_line(
+                &mut output,
+                &format!(
+                    "{TRUNCATION_MARKER} kept the first {} of {} bytes",
+                    self.head.len(),
+                    self.total
+                ),
+            );
+        } else {
+            push_line(
+                &mut output,
+                &format!(
+                    "{TRUNCATION_MARKER} kept the first {} and the last {} of {} bytes",
+                    self.head.len(),
+                    self.tail.len(),
+                    self.total
+                ),
+            );
+            push_line(&mut output, String::from_utf8_lossy(&self.tail).trim_end());
+        }
+        output
+    }
+}
+
+/// Дренирует поток до конца, копя первые `cap.head` и последние `cap.tail`
+/// байт.
 ///
 /// Читать нужно всегда: если перестать забирать из трубы, процесс заснёт на
-/// записи и таймаут превратится в «зависание».
+/// записи и таймаут превратится в «зависание». Хвост держится буфером не
+/// больше удвоенного капа: лишнее срезается с начала пачкой, а не на каждом
+/// чанке.
 async fn drain_capped<R: AsyncRead + Unpin>(
     reader: &mut R,
-    buffer: &mut Vec<u8>,
-    total: &mut usize,
-    limit: usize,
+    captured: &mut Captured,
+    cap: OutputCap,
 ) {
     let mut chunk = [0u8; 8192];
     loop {
         match reader.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
             Ok(read) => {
-                *total += read;
-                if buffer.len() < limit {
-                    let take = (limit - buffer.len()).min(read);
-                    buffer.extend_from_slice(&chunk[..take]);
+                captured.total += read;
+                let mut rest = &chunk[..read];
+                if captured.head.len() < cap.head {
+                    let take = (cap.head - captured.head.len()).min(rest.len());
+                    captured.head.extend_from_slice(&rest[..take]);
+                    rest = &rest[take..];
+                }
+                if cap.tail > 0 && !rest.is_empty() {
+                    captured.tail.extend_from_slice(rest);
+                    if captured.tail.len() > 2 * cap.tail {
+                        let excess = captured.tail.len() - cap.tail;
+                        captured.tail.drain(..excess);
+                    }
                 }
             }
         }
+    }
+    if captured.tail.len() > cap.tail {
+        let excess = captured.tail.len() - cap.tail;
+        captured.tail.drain(..excess);
     }
 }
 
@@ -356,6 +477,49 @@ mod tests {
         // Полезная нагрузка + короткий маркер: заметно меньше исходных 90000.
         assert!(out.content.len() < MAX_OUTPUT_BYTES + 200);
         assert!(out.content.len() > MAX_OUTPUT_BYTES - 200);
+    }
+
+    /// Кап общего дренажа: с одной головой — формат `bash` как был (маркер
+    /// последней строкой); с хвостом — маркер на месте разреза; влезло
+    /// целиком — без маркера, сколько бы ни было кусков.
+    #[tokio::test]
+    async fn capture_keeps_the_head_and_optionally_the_tail() {
+        async fn capture(input: &[u8], cap: OutputCap) -> String {
+            let mut reader = input;
+            let mut captured = Captured::default();
+            drain_capped(&mut reader, &mut captured, cap).await;
+            captured.render()
+        }
+
+        assert_eq!(
+            capture(b"0123456789", OutputCap::head(4)).await,
+            "0123\n[output truncated] kept the first 4 of 10 bytes"
+        );
+        assert_eq!(
+            capture(b"0123456789", OutputCap::head_and_tail(3, 2)).await,
+            "012\n[output truncated] kept the first 3 and the last 2 of 10 bytes\n89"
+        );
+        // Ровно влезло в голову и хвост — склеено обратно, без маркера.
+        assert_eq!(
+            capture(b"0123456789\n", OutputCap::head_and_tail(6, 5)).await,
+            "0123456789"
+        );
+        assert_eq!(capture(b"ok\n", OutputCap::head(100)).await, "ok");
+
+        // Хвост длиннее чанка чтения: срезается до капа, последние байты целы.
+        let long: Vec<u8> = (0..50_000u32)
+            .flat_map(|i| format!("{i}\n").into_bytes())
+            .collect();
+        let text = capture(&long, OutputCap::head_and_tail(10, 12)).await;
+        assert!(text.starts_with("0\n1\n2\n3\n4\n"), "{text}");
+        assert!(
+            text.contains(&format!(
+                "kept the first 10 and the last 12 of {} bytes",
+                long.len()
+            )),
+            "{text}"
+        );
+        assert!(text.ends_with("\n49998\n49999"), "{text}");
     }
 
     /// Таймаут обязан именно убивать дерево процессов, а не отпускать его в фон.

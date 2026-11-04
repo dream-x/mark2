@@ -27,11 +27,13 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, de};
 
 use crate::agent::DEFAULT_WRITE_CHURN;
 use crate::permission::PermissionPolicy;
+use crate::post_edit::PostEditCheck;
 use crate::tools::EditStrategy;
 
 /// Базовый URL по умолчанию — llama-server на локальной машине.
@@ -154,6 +156,33 @@ pub struct AgentSettings {
     /// нет, к ближайшему `.mark2.memory.md` поиск не откатывается.
     #[serde(default, deserialize_with = "de_memory_file")]
     pub memory_file: Option<PathBuf>,
+    /// Post-edit сенсор ([`crate::post_edit`]): команда, которую харнес сам
+    /// запускает (`sh -c` в cwd агента) после каждого успешного `write`/`edit`;
+    /// не прошла — её вывод дописывается к результату записи. Пустая строка
+    /// — явное «выключить»: старший слой гасит команду младшего (так её
+    /// снимает абляция бенча). Ключа нет ни в одном слое — сенсора нет.
+    /// Итог слоёв — [`AgentSettings::post_edit_check`].
+    pub post_edit_command: Option<String>,
+    /// Таймаут post-edit команды в секундах (> 0; по умолчанию
+    /// [`crate::post_edit::DEFAULT_TIMEOUT_SECONDS`], больше
+    /// [`crate::post_edit::MAX_TIMEOUT_SECONDS`] — зажимается).
+    #[serde(default, deserialize_with = "de_positive_seconds")]
+    pub post_edit_timeout_seconds: Option<u64>,
+}
+
+impl AgentSettings {
+    /// Post-edit сенсор после слияния слоёв: `None` — выключен (ключа нет или
+    /// команда пустая), иначе команда с таймаутом (дефолт подставлен).
+    pub fn post_edit_check(&self) -> Option<PostEditCheck> {
+        let command = self.post_edit_command.as_deref()?;
+        if command.trim().is_empty() {
+            return None;
+        }
+        let seconds = self
+            .post_edit_timeout_seconds
+            .unwrap_or(crate::post_edit::DEFAULT_TIMEOUT_SECONDS);
+        Some(PostEditCheck::new(command).with_timeout(Duration::from_secs(seconds)))
+    }
 }
 
 /// Настройки одной модели: `[models."qwen3-coder"]`.
@@ -228,6 +257,11 @@ impl Config {
                 write_churn: other.agent.write_churn.or(agent.write_churn),
                 arg_coercion: other.agent.arg_coercion.or(agent.arg_coercion),
                 memory_file: other.agent.memory_file.or(agent.memory_file),
+                post_edit_command: other.agent.post_edit_command.or(agent.post_edit_command),
+                post_edit_timeout_seconds: other
+                    .agent
+                    .post_edit_timeout_seconds
+                    .or(agent.post_edit_timeout_seconds),
             },
             models,
         }
@@ -370,6 +404,16 @@ fn de_memory_file<'de, D: Deserializer<'de>>(de: D) -> Result<Option<PathBuf>, D
     Ok(Some(PathBuf::from(raw)))
 }
 
+/// Число секунд больше нуля: таймаут `0` — скорее опечатка, чем «не ждать».
+fn de_positive_seconds<'de, D: Deserializer<'de>>(de: D) -> Result<Option<u64>, D::Error> {
+    match Option::<u64>::deserialize(de) {
+        Ok(Some(0)) | Err(_) => Err(de::Error::custom(
+            "post_edit_timeout_seconds: ожидается целое число секунд больше нуля",
+        )),
+        Ok(seconds) => Ok(seconds),
+    }
+}
+
 /// Политика доступа из строки: терпит и `ask_writes`, и `ask-writes`.
 fn de_policy<'de, D: Deserializer<'de>>(de: D) -> Result<Option<PermissionPolicy>, D::Error> {
     let Some(raw) = Option::<String>::deserialize(de)? else {
@@ -442,6 +486,8 @@ max_tokens = 4096
 temperature = 0.2
 loop_detection = 4
 write_churn = 5
+post_edit_command = "cargo check -q"
+post_edit_timeout_seconds = 90
 
 [models."qwen3-coder-30b"]
 edit_strategy = "search_replace"
@@ -475,6 +521,10 @@ context_limit = 8192
         assert_eq!(config.agent.temperature, Some(0.2));
         assert_eq!(config.agent.loop_detection, Some(4));
         assert_eq!(config.agent.write_churn, Some(5));
+        assert_eq!(
+            config.agent.post_edit_check(),
+            Some(PostEditCheck::new("cargo check -q").with_timeout(Duration::from_secs(90)))
+        );
 
         assert_eq!(
             config.resolve("qwen3-coder-30b"),
@@ -634,6 +684,85 @@ context_limit = 8192
             user.clone().merge(layer("")).agent.memory_file,
             user.agent.memory_file
         );
+    }
+
+    /// Post-edit сенсор: ключа нет — выключен; команда — включён с таймаутом
+    /// по умолчанию; свой таймаут доезжает как есть.
+    #[test]
+    fn post_edit_command_turns_the_sensor_on_with_a_default_timeout() {
+        let silent = layer("[agent]\n");
+        assert_eq!(silent.agent.post_edit_command, None);
+        assert_eq!(silent.agent.post_edit_timeout_seconds, None);
+        assert_eq!(silent.agent.post_edit_check(), None);
+        assert_eq!(Config::default().agent.post_edit_check(), None);
+
+        let on = layer("[agent]\npost_edit_command = \"python3 -B test.py\"\n");
+        assert_eq!(
+            on.agent.post_edit_command.as_deref(),
+            Some("python3 -B test.py")
+        );
+        assert_eq!(
+            on.agent.post_edit_check(),
+            Some(PostEditCheck::new("python3 -B test.py"))
+        );
+        assert_eq!(
+            on.agent.post_edit_check().unwrap().timeout,
+            Duration::from_secs(crate::post_edit::DEFAULT_TIMEOUT_SECONDS)
+        );
+
+        let slow = layer(
+            "[agent]\npost_edit_command = \"cargo check -q\"\npost_edit_timeout_seconds = 120\n",
+        );
+        assert_eq!(slow.agent.post_edit_timeout_seconds, Some(120));
+        assert_eq!(
+            slow.agent.post_edit_check().unwrap().timeout,
+            Duration::from_secs(120)
+        );
+    }
+
+    /// Пустая (и пробельная) команда — явное «выключить», а не ошибка: так
+    /// старший слой гасит команду младшего. Слияние — как у остальных полей.
+    #[test]
+    fn empty_post_edit_command_switches_a_lower_layer_off() {
+        let user =
+            layer("[agent]\npost_edit_command = \"make check\"\npost_edit_timeout_seconds = 60\n");
+        for empty in ["\"\"", "\"   \""] {
+            let off = layer(&format!("[agent]\npost_edit_command = {empty}\n"));
+            assert!(off.agent.post_edit_command.is_some(), "слой высказался");
+            assert_eq!(off.agent.post_edit_check(), None);
+
+            let merged = user.clone().merge(off.clone());
+            assert_eq!(merged.agent.post_edit_check(), None, "{empty}");
+            // Таймаут младшего слоя пережил слияние, но без команды не нужен.
+            assert_eq!(merged.agent.post_edit_timeout_seconds, Some(60));
+        }
+
+        // Старший слой с командой перекрывает младший, про что молчит — достаётся.
+        let project = layer("[agent]\npost_edit_command = \"python3 -B test.py\"\n");
+        let merged = user.clone().merge(project);
+        assert_eq!(
+            merged.agent.post_edit_check(),
+            Some(PostEditCheck::new("python3 -B test.py").with_timeout(Duration::from_secs(60)))
+        );
+        // Пустой слой ничего не меняет.
+        assert_eq!(user.clone().merge(layer("")), user);
+    }
+
+    /// Таймаут — целое число секунд больше нуля; иначе ошибка с путём файла.
+    #[test]
+    fn bad_post_edit_timeout_is_a_config_error() {
+        for bad in ["0", "-5", "1.5", "\"30\""] {
+            let error = Config::parse(
+                &format!("[agent]\npost_edit_timeout_seconds = {bad}\n"),
+                "/repo/.mark2.toml",
+            )
+            .unwrap_err();
+            let text = error.chain();
+            assert!(text.contains("/repo/.mark2.toml"), "{bad}: {text}");
+            assert!(text.contains("post_edit_timeout_seconds"), "{bad}: {text}");
+        }
+        let error = Config::parse("[agent]\npost_edit_command = 7\n", "cfg.toml").unwrap_err();
+        assert!(error.chain().contains("cfg.toml"), "{}", error.chain());
     }
 
     /// Пустая строка — ошибка конфига с путём файла, а не тихое «искать как

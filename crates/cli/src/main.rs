@@ -193,6 +193,8 @@ impl Args {
                 write_churn: None,
                 arg_coercion: None,
                 memory_file: None,
+                post_edit_command: None,
+                post_edit_timeout_seconds: None,
             },
             models: BTreeMap::new(),
         }
@@ -377,6 +379,9 @@ fn agent_config(config: &Config, model: &str, cwd: &Path, settings: ModelSetting
     agent_config.temperature = config.agent.temperature;
     // Относительный путь уже развёрнут от директории своего конфиг-файла.
     agent_config.memory_file = config.agent.memory_file.clone();
+    // Нет команды ни в одном слое (или старший её погасил пустой строкой) —
+    // сенсора нет вовсе.
+    agent_config.post_edit = config.agent.post_edit_check();
     if let Some(limit) = settings.context_limit {
         agent_config = agent_config
             .with_compaction(mark2_core::CompactionConfig::new().with_context_limit(limit));
@@ -836,6 +841,39 @@ mod tests {
         let memory = agent.memory().expect("память найдена");
         assert_eq!(memory.path, root_path.join("notes").join("mem.md"));
         assert!(agent.system_prompt().ends_with("- из корня"));
+    }
+
+    /// Post-edit сенсор: команда из конфига доходит до агента с таймаутом;
+    /// без ключа (и с пустой строкой) — сенсора нет.
+    #[test]
+    fn post_edit_command_from_the_config_reaches_the_agent() {
+        let cwd = Path::new("/work");
+        let build = |text: &str| {
+            let config = Config::parse(text, "/work/.mark2.toml").unwrap();
+            agent_config(&config, "m", cwd, config.resolve("m")).post_edit
+        };
+
+        assert_eq!(build(""), None);
+        assert_eq!(build("[agent]\npost_edit_command = \"\"\n"), None);
+        assert_eq!(
+            build(
+                "[agent]\npost_edit_command = \"python3 -B test.py\"\npost_edit_timeout_seconds = 5\n"
+            ),
+            Some(
+                mark2_core::PostEditCheck::new("python3 -B test.py")
+                    .with_timeout(std::time::Duration::from_secs(5))
+            )
+        );
+
+        // Флаги CLI сенсор не трогают: слой флагов про него молчит.
+        let files = Config::parse("[agent]\npost_edit_command = \"make check\"\n", "t").unwrap();
+        let merged = files.merge(parse(&["mark2", "--model", "m", "x"]).overrides());
+        assert_eq!(
+            agent_config(&merged, "m", cwd, merged.resolve("m"))
+                .post_edit
+                .map(|check| check.command),
+            Some("make check".to_string())
+        );
     }
 
     #[test]

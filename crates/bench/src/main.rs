@@ -188,6 +188,11 @@ async fn run(args: Args) -> Result<()> {
                 max_turns: task.max_turns,
                 verify_timeout_seconds: task.verify_timeout_seconds,
                 uitest_env: task.uitest_env,
+                post_edit_command: task.post_edit.as_ref().map(|check| check.command.clone()),
+                post_edit_timeout_seconds: task
+                    .post_edit
+                    .as_ref()
+                    .and_then(|check| check.timeout_seconds),
                 prompt: task.prompt.clone(),
             })
             .collect(),
@@ -415,8 +420,8 @@ mod tests {
             ]
         }"#;
         let results: Results = serde_json::from_str(json).unwrap();
-        // Старый файл без policy/context_limit/max_turns/verify_timeout_seconds/uitest_env
-        // читается с дефолтами.
+        // Старый файл без policy/context_limit/max_turns/verify_timeout_seconds/uitest_env/
+        // post_edit_* читается с дефолтами.
         assert_eq!(
             results.config.tasks[0].policy,
             mark2_bench::task::TaskPolicy::Yolo
@@ -425,6 +430,8 @@ mod tests {
         assert_eq!(results.config.tasks[0].max_turns, None);
         assert_eq!(results.config.tasks[0].verify_timeout_seconds, None);
         assert!(!results.config.tasks[0].uitest_env);
+        assert_eq!(results.config.tasks[0].post_edit_command, None);
+        assert_eq!(results.config.tasks[0].post_edit_timeout_seconds, None);
         // …прогон без абляции…
         assert!(results.config.agent_overrides.is_empty());
         // …и модель без edit_strategy — с дефолтом mark2.
@@ -435,7 +442,7 @@ mod tests {
         assert!(report.contains("| qwen9 | 1/1 · 12.3s |"), "{report}");
         assert!(report.contains("1200 / 340"), "{report}");
         assert!(
-            report.contains("| qwen9 | — | — | — | — | — |"),
+            report.contains("| qwen9 | — | — | — | — | — | — |"),
             "обвязка не мерилась — прочерки:\n{report}"
         );
     }

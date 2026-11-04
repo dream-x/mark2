@@ -26,12 +26,12 @@
 
 ## Обвязка
 
-Срабатывания контролей mark2 по маркерам stderr, сумма по прогонам модели: нуджи `[agent] write_churn` и `[agent] loop_detection`, тул-коллы, спасённые приведением аргументов (`· coerced N`), компакции (`[agent] compaction`), тул-коллы с ошибкой (`✗ <тул>:`).
+Срабатывания контролей mark2 по маркерам stderr, сумма по прогонам модели: нуджи `[agent] write_churn` и `[agent] loop_detection`, непрошедшие post-edit проверки (`[agent] post_edit`), тул-коллы, спасённые приведением аргументов (`· coerced N`), компакции (`[agent] compaction`), тул-коллы с ошибкой (`✗ <тул>:`).
 
-| модель | write_churn | loop_detection | coerced | компакции | tool errors |
-|---|---|---|---|---|---|
-| qwen9 | 3 | 1 | 12 | 3 | 4 |
-| oss120 | 0 | 0 | 0 | 0 | 0 |
+| модель | write_churn | loop_detection | post_edit | coerced | компакции | tool errors |
+|---|---|---|---|---|---|---|
+| qwen9 | 3 | 1 | 5 | 12 | 3 | 4 |
+| oss120 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## Аномалии
 

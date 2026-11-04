@@ -206,13 +206,14 @@ fn render_harness(results: &Results) -> String {
     let mut out = String::from("## Обвязка\n\n");
     out.push_str(
         "Срабатывания контролей mark2 по маркерам stderr, сумма по прогонам модели: \
-         нуджи `[agent] write_churn` и `[agent] loop_detection`, тул-коллы, спасённые \
-         приведением аргументов (`· coerced N`), компакции (`[agent] compaction`), \
-         тул-коллы с ошибкой (`✗ <тул>:`).\n\n",
+         нуджи `[agent] write_churn` и `[agent] loop_detection`, непрошедшие post-edit \
+         проверки (`[agent] post_edit`), тул-коллы, спасённые приведением аргументов \
+         (`· coerced N`), компакции (`[agent] compaction`), тул-коллы с ошибкой \
+         (`✗ <тул>:`).\n\n",
     );
     out.push_str(
-        "| модель | write_churn | loop_detection | coerced | компакции | tool errors |\n\
-         |---|---|---|---|---|---|\n",
+        "| модель | write_churn | loop_detection | post_edit | coerced | компакции | tool errors |\n\
+         |---|---|---|---|---|---|---|\n",
     );
 
     for model in &results.config.models {
@@ -235,7 +236,7 @@ fn render_harness(results: &Results) -> String {
 /// Ячейки строки обвязки. Нет телеметрии ни у одного прогона (старый
 /// `results.json`) — прочерки, а не нули: «не мерили» ≠ «не срабатывало».
 /// `coerced` — так же отдельно: старый бинарь mark2 счётчик не печатал.
-fn harness_cells(telemetry: &[&Telemetry]) -> [String; 5] {
+fn harness_cells(telemetry: &[&Telemetry]) -> [String; 6] {
     if telemetry.is_empty() {
         return std::array::from_fn(|_| "—".to_string());
     }
@@ -250,6 +251,7 @@ fn harness_cells(telemetry: &[&Telemetry]) -> [String; 5] {
     [
         sum(|run| run.nudges_write_churn),
         sum(|run| run.nudges_loop_detection),
+        sum(|run| run.post_edit_failures),
         if coerced.is_empty() {
             "—".to_string()
         } else {
@@ -359,6 +361,8 @@ mod tests {
             max_turns: None,
             verify_timeout_seconds: None,
             uitest_env: false,
+            post_edit_command: None,
+            post_edit_timeout_seconds: None,
             prompt: "промпт".into(),
         }
     }
@@ -498,6 +502,7 @@ mod tests {
                     Telemetry {
                         nudges_write_churn: 2,
                         nudges_loop_detection: 0,
+                        post_edit_failures: 4,
                         coerced: Some(3),
                         compactions: 2,
                         tool_errors: 1,
@@ -530,6 +535,7 @@ mod tests {
                     Telemetry {
                         nudges_write_churn: 0,
                         nudges_loop_detection: 1,
+                        post_edit_failures: 1,
                         coerced: Some(9),
                         compactions: 1,
                         tool_errors: 2,
@@ -672,8 +678,8 @@ mod tests {
         let report = render_report(&fixture());
         assert!(
             report.contains(
-                "| модель | write_churn | loop_detection | coerced | компакции | tool errors |\n\
-                 |---|---|---|---|---|---|\n"
+                "| модель | write_churn | loop_detection | post_edit | coerced | компакции | \
+                 tool errors |\n|---|---|---|---|---|---|---|\n"
             ),
             "{report}"
         );
@@ -681,15 +687,15 @@ mod tests {
         let position = |heading: &str| report.find(heading).unwrap();
         assert!(position("## Сводка") < position("## Обвязка"));
         assert!(position("## Обвязка") < position("## Аномалии"));
-        // write_churn 2+1, loop 1, coerced 3+0+9 (у таймаута нет), компакции
-        // 2+1, ошибки 1+2+1 (у таймаута — из stderr, сессии нет).
+        // write_churn 2+1, loop 1, post_edit 4+1, coerced 3+0+9 (у таймаута
+        // нет), компакции 2+1, ошибки 1+2+1 (у таймаута — из stderr, сессии нет).
         assert_eq!(
             harness_row(&report, "qwen9"),
-            "| qwen9 | 3 | 1 | 12 | 3 | 4 |"
+            "| qwen9 | 3 | 1 | 5 | 12 | 3 | 4 |"
         );
         assert_eq!(
             harness_row(&report, "oss120"),
-            "| oss120 | 0 | 0 | 0 | 0 | 0 |"
+            "| oss120 | 0 | 0 | 0 | 0 | 0 | 0 |"
         );
     }
 
@@ -709,13 +715,13 @@ mod tests {
         let report = render_report(&results);
         assert_eq!(
             harness_row(&report, "qwen9"),
-            "| qwen9 | — | — | — | — | — |"
+            "| qwen9 | — | — | — | — | — | — |"
         );
         assert_eq!(
             harness_row(&report, "oss120"),
-            "| oss120 | 0 | 0 | — | 0 | 4 |"
+            "| oss120 | 0 | 0 | 0 | — | 0 | 4 |"
         );
-        assert_eq!(harness_cells(&[]), ["—", "—", "—", "—", "—"]);
+        assert_eq!(harness_cells(&[]), ["—", "—", "—", "—", "—", "—"]);
     }
 
     #[test]

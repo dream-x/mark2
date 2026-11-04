@@ -68,10 +68,11 @@ pub enum Event {
         is_error: bool,
     },
     /// Предохранитель agent loop заметил непродуктивный паттерн и подсказал
-    /// модели сменить тактику. Текст для модели уже лежит в tool result вызова
-    /// `id` (парный [`Event::ToolCallFinished`] пришёл раньше); здесь — сигнал
-    /// для человека и логов. Сам по себе ход не останавливает: жёсткий предел
-    /// `loop_detection` завершает ход отдельным [`Event::Error`].
+    /// модели сменить тактику — или сенсор вернул ей сигнал об ошибке
+    /// (post-edit проверка не прошла). Текст для модели уже лежит в tool
+    /// result вызова `id` (парный [`Event::ToolCallFinished`] пришёл раньше);
+    /// здесь — сигнал для человека и логов. Сам по себе ход не останавливает:
+    /// жёсткий предел `loop_detection` завершает ход отдельным [`Event::Error`].
     Nudge {
         /// Тул-колл, к результату которого относится подсказка.
         id: String,
@@ -149,14 +150,20 @@ pub enum Guard {
     /// Сенсор write-churn: N-я подряд запись в один файл без единого `bash`
     /// между записями. Запись исполнена, к результату приложена подсказка.
     WriteChurn,
+    /// Post-edit сенсор ([`crate::post_edit`]): команда проверки после
+    /// успешной записи не прошла (ненулевой exit, сигнал, таймаут). Запись
+    /// исполнена, к результату приложен вывод проверки; `message` — `exit N`.
+    PostEdit,
 }
 
 impl Guard {
-    /// Wire-имя — то же, что ключ настройки в `[agent]`.
+    /// Wire-имя — то же, что ключ настройки в `[agent]` (у post-edit сенсора
+    /// — общий префикс его ключей `post_edit_*`).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::LoopDetection => "loop_detection",
             Self::WriteChurn => "write_churn",
+            Self::PostEdit => "post_edit",
         }
     }
 }
@@ -398,6 +405,7 @@ mod tests {
         for (guard, expected) in [
             (Guard::LoopDetection, "loop_detection"),
             (Guard::WriteChurn, "write_churn"),
+            (Guard::PostEdit, "post_edit"),
         ] {
             assert_eq!(serde_json::to_value(guard).unwrap(), json!(expected));
             assert_eq!(guard.as_str(), expected);

@@ -14,7 +14,8 @@
 //!   модели в пайпе;
 //! * [`Event::Nudge`] — тоже stderr, строкой с маркером `[agent] <guard>`
 //!   ([`nudge_line`]): по нему в логах прогона видно, где сработал
-//!   предохранитель agent loop; [`Event::Compacted`] — туда же маркером
+//!   предохранитель agent loop или где не прошла post-edit проверка
+//!   (`[agent] post_edit: exit N`); [`Event::Compacted`] — туда же маркером
 //!   `[agent] compaction` ([`compaction_line`]);
 //! * [`Event::ApprovalRequired`] — вопрос пользователю живёт в интерактивном
 //!   цикле (для него есть чистая заготовка [`approval_prompt`]);
@@ -594,6 +595,11 @@ mod tests {
         assert_eq!(
             nudge_line(Guard::LoopDetection, "x", RenderOptions::print()),
             "[agent] loop_detection: x"
+        );
+        // Post-edit сенсор — тот же ряд; по `[agent] post_edit:` его считает бенч.
+        assert_eq!(
+            nudge_line(Guard::PostEdit, "exit 1", RenderOptions::print()),
+            "[agent] post_edit: exit 1"
         );
         assert_eq!(
             nudge_line(

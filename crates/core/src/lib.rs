@@ -15,6 +15,7 @@ pub mod event;
 pub mod memory;
 pub mod message;
 pub mod permission;
+pub mod post_edit;
 pub mod prompt;
 pub mod provider;
 pub mod session;
@@ -27,6 +28,7 @@ pub use event::{ApprovalDecision, Event, Guard, Op, StopReason};
 pub use memory::Memory;
 pub use message::{ContentBlock, Message, MessageMetadata, Role, Usage};
 pub use permission::{PermissionCheck, PermissionPolicy};
+pub use post_edit::PostEditCheck;
 
 /// Версия ядра.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

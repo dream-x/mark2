@@ -61,6 +61,7 @@ printf 'Готово: файл создан.\n'
     printf '→ write {"path":"hello.txt","content":"mark2 works"}\n'
     printf '✗ edit: missing field `old_string`\n'
     printf '[agent] write_churn: 3-я запись подряд в hello.txt без запуска между ними — подсказка запустить\n'
+    printf '[agent] post_edit: exit 1\n'
     printf 'tokens: in 1200 / out 340 · coerced 2\n'
 } >&2
 
@@ -309,6 +310,7 @@ fn full_run_writes_results_report_and_sessions() {
         serde_json::json!({
             "nudges_write_churn": 1,
             "nudges_loop_detection": 0,
+            "post_edit_failures": 1,
             "coerced": 2,
             "compactions": 0,
             "tool_errors": 1,
@@ -362,7 +364,10 @@ fn full_run_writes_results_report_and_sessions() {
     assert!(report.contains("50% (3/6)"), "tool error rate:\n{report}");
     // Обвязка: у fake1 три прогона с одинаковым stderr.
     assert!(report.contains("## Обвязка"), "{report}");
-    assert!(report.contains("| fake1 | 3 | 0 | 6 | 0 | 3 |"), "{report}");
+    assert!(
+        report.contains("| fake1 | 3 | 0 | 3 | 6 | 0 | 3 |"),
+        "{report}"
+    );
     assert!(report.contains("## Аномалии"), "{report}");
 
     // Прогон mark2: аргументы, изоляция HOME, температура 0, прогрев на модель.
@@ -599,6 +604,83 @@ fn task_policy_and_context_limit_reach_mark2() {
     // Колонка компакций есть в сводке, даже когда их не было.
     let report = fixture.report();
     assert!(report.contains("| компакции |"), "{report}");
+}
+
+/// Post-edit сенсор задачи доезжает до `[agent]` песочницы, а
+/// `--agent-override 'post_edit_command = ""'` его перекрывает (абляция «без
+/// сенсора»), не сталкиваясь с ключом задачи; задача без сенсора его не
+/// получает. Обе настройки — в `results.json`.
+#[test]
+fn task_post_edit_check_reaches_mark2_and_the_override_switches_it_off() {
+    let fixture = Fixture::new();
+    fixture.task(
+        "T01-plain",
+        "Создай hello.txt\n",
+        "[task]\ntimeout_seconds = 60\nrepeats = 1\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+    fixture.task(
+        "T04-sensed",
+        "Почини stats.py\n",
+        "[task]\ntimeout_seconds = 60\nrepeats = 1\npost_edit_command = \"python3 -B test.py\"\n\
+         post_edit_timeout_seconds = 20\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+
+    let output = fixture.bench(&["--models", "fake1", "--no-warmup"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = fixture.log();
+    let runs: Vec<&str> = log.split("--- run").skip(1).collect();
+    assert_eq!(runs.len(), 2, "{log}");
+    assert_eq!(logged(runs[0], "config"), "[agent] temperature = 0.0 ");
+    assert_eq!(
+        logged(runs[1], "config"),
+        "[agent] temperature = 0.0 post_edit_command = \"python3 -B test.py\" \
+         post_edit_timeout_seconds = 20 "
+    );
+    let results = fixture.results();
+    let tasks = results["config"]["tasks"].as_array().unwrap();
+    assert_eq!(tasks[0]["post_edit_command"], serde_json::Value::Null);
+    assert_eq!(tasks[1]["post_edit_command"], "python3 -B test.py");
+    assert_eq!(tasks[1]["post_edit_timeout_seconds"], 20);
+
+    // Абляция: та же матрица с выключенным сенсором.
+    std::fs::remove_dir_all(&fixture.out).unwrap();
+    std::fs::remove_file(&fixture.log).unwrap();
+    let output = fixture.bench(&[
+        "--models",
+        "fake1",
+        "--no-warmup",
+        "--agent-override",
+        "post_edit_command = \"\"",
+    ]);
+    assert!(
+        output.status.success(),
+        "override сенсора — не конфликт с задачей: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = fixture.log();
+    let runs: Vec<&str> = log.split("--- run").skip(1).collect();
+    assert_eq!(runs.len(), 2, "{log}");
+    assert_eq!(
+        logged(runs[1], "config"),
+        "[agent] temperature = 0.0 post_edit_timeout_seconds = 20 post_edit_command = \"\" "
+    );
+    assert!(!runs[1].contains("test.py"), "{}", runs[1]);
+    let results = fixture.results();
+    assert_eq!(
+        results["config"]["agent_overrides"],
+        serde_json::json!(["post_edit_command = \"\""])
+    );
+    assert!(
+        fixture.report().contains("`post_edit_command = \"\"`"),
+        "{}",
+        fixture.report()
+    );
 }
 
 /// Зависший прогон убивается по таймауту и помечается в результатах.

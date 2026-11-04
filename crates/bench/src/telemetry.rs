@@ -7,12 +7,18 @@
 //! |---|---|---|
 //! | `nudges_write_churn` | `[agent] write_churn: …` | `render::nudge_line` |
 //! | `nudges_loop_detection` | `[agent] loop_detection: …` | `render::nudge_line` |
+//! | `post_edit_failures` | `[agent] post_edit: …` | `render::nudge_line` |
 //! | `compactions` | `[agent] compaction: …` | `render::compaction_line` |
 //! | `tool_errors` | `✗ <тул>: …` | `render::tool_summary_line` |
 //! | `coerced` | хвост `· coerced N` строки `tokens: in …` | `render::usage_summary` |
 //!
 //! `✗` — ровно одна строка на тул-колл с `is_error`: кривые аргументы,
 //! отказ политики, заблокированный повтор, ненулевой exit `bash`.
+//!
+//! `[agent] post_edit:` печатается только когда post-edit проверка после
+//! записи **не прошла** (`exit N`, таймаут, сигнал): прошедшая молчит, так что
+//! счётчик — число раз, когда сенсор вернул модели ошибку. Сама запись при
+//! этом успешна и в `tool_errors` не попадает.
 //!
 //! Маркер засчитывается **только с начала строки** (ANSI снимается): тот же
 //! текст внутри строки вызова (`→ bash {"command":"echo '[agent] …'"}`) — это
@@ -51,6 +57,11 @@ pub struct Telemetry {
     pub nudges_write_churn: usize,
     /// Заблокированные повторы детектора зацикливания (`[agent] loop_detection`).
     pub nudges_loop_detection: usize,
+    /// Непрошедшие post-edit проверки (`[agent] post_edit`): сколько раз
+    /// сенсор вернул модели ошибку после её записи. Ноль и у прогона без
+    /// сенсора — он выключен по умолчанию (включён ли — `post_edit_command`
+    /// задачи и `agent_overrides` в `results.json`).
+    pub post_edit_failures: usize,
     /// Тул-коллы, спасённые приведением типов аргументов (`· coerced N`).
     /// `None` — итоговой строки нет (убит по таймауту, упал) или бинарь mark2
     /// старше счётчика.
@@ -81,6 +92,7 @@ pub fn parse(stderr: &str) -> Telemetry {
             match rest.split_once(':').map(|(name, _)| name) {
                 Some("write_churn") => telemetry.nudges_write_churn += 1,
                 Some("loop_detection") => telemetry.nudges_loop_detection += 1,
+                Some("post_edit") => telemetry.post_edit_failures += 1,
                 Some("compaction") => telemetry.compactions += 1,
                 _ => {}
             }
@@ -143,12 +155,56 @@ mod tests {
             Telemetry {
                 nudges_write_churn: 2,
                 nudges_loop_detection: 1,
+                post_edit_failures: 0,
                 coerced: Some(3),
                 compactions: 1,
                 tool_errors: 2,
             }
         );
         assert_eq!(parse(stderr).nudges(), 3);
+    }
+
+    /// Post-edit сенсор: строка — ровно та, что печатает `-p` (см.
+    /// `crates/cli/src/print.rs`): за успешной записью (`→`, а не `✗`) —
+    /// маркер непрошедшей проверки. Любой исход — exit, таймаут, сигнал —
+    /// одно срабатывание; в нуджи и ошибки тулов оно не засчитывается.
+    #[test]
+    fn counts_failed_post_edit_checks() {
+        let stderr = concat!(
+            "→ write {\"path\":\"stats.py\",\"content\":\"…\"}\n",
+            "[agent] post_edit: exit 1\n",
+            "→ edit {\"path\":\"stats.py\",\"old_string\":\"a\",\"new_string\":\"b\"}\n",
+            "\u{1b}[33m[agent] post_edit: exit 2\u{1b}[0m\n",
+            "→ edit {\"path\":\"stats.py\",\"old_string\":\"b\",\"new_string\":\"c\"}\n",
+            "[agent] post_edit: таймаут 30s\n",
+            "→ edit {\"path\":\"stats.py\",\"old_string\":\"c\",\"new_string\":\"d\"}\n",
+            "tokens: in 900 / out 80 · coerced 0\n",
+        );
+        let telemetry = parse(stderr);
+        assert_eq!(
+            telemetry,
+            Telemetry {
+                post_edit_failures: 3,
+                coerced: Some(0),
+                ..Telemetry::default()
+            }
+        );
+        assert_eq!(telemetry.nudges(), 0);
+
+        // Похожее — не маркер: в аргументах вызова, чужое имя, без двоеточия.
+        let lookalikes = concat!(
+            "→ bash {\"command\":\"echo '[agent] post_edit: exit 1'\"}\n",
+            "[agent] post_edit_command: не маркер\n",
+            "[agent] post_edit exit 1\n",
+            "✗ bash: [agent] post_edit: exit 1\n",
+        );
+        assert_eq!(
+            parse(lookalikes),
+            Telemetry {
+                tool_errors: 1,
+                ..Telemetry::default()
+            }
+        );
     }
 
     /// Фрагмент реального stderr (flint:40b на T17, `20261104-000902-t17-v1`):
@@ -265,11 +321,13 @@ mod tests {
             serde_json::json!({
                 "nudges_write_churn": 1,
                 "nudges_loop_detection": 0,
+                "post_edit_failures": 0,
                 "coerced": 2,
                 "compactions": 0,
                 "tool_errors": 3,
             })
         );
+        // Объект до post-edit сенсора — без поля, и это ноль, а не ошибка.
         let partial: Telemetry = serde_json::from_str(r#"{"tool_errors": 4}"#).unwrap();
         assert_eq!(
             partial,

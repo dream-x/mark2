@@ -214,6 +214,7 @@ bench/tasks/T04-fix-bug-test/
 - **Тир ревью** (T20+T21) гоняется и читается парой: recall без precision — это ревьювер, который на всё говорит needs-work. Перед прогоном — `prompt.md` должен быть сгенерен от текущих `prompts/review.md`/`scripts/review.sh` (см. regen.sh).
 - **Таймауты** по классу: 9b — 120с, 20–27b — 300с, cloud — 300с (из task.toml × множитель модели).
 - **Сессии** пишутся и складываются в артефакты прогона — это источник глубоких метрик.
+- **Абляция post-edit сенсора** (план): `--tasks T04,T11 --agent-override 'post_edit_command = "python3 -B test.py"'` против прогона без оверрайда, repeats ≥ 3 — обе задачи несут самопроверку `test.py` в песочнице, так что сенсор возвращает модели настоящий `AssertionError` после каждой правки.
 - **Абляция** настроек mark2 — `--agent-override 'key = value'` (повторяемый): строка дописывается в `[agent]` `.mark2.toml` каждого прогона, например `--agent-override 'arg_coercion = false' --agent-override 'write_churn = false' --label ablation`. Ключ и значение проверяются парсером mark2 до первого прогона (опечатка или конфликт с `max_turns` задачи — сразу ошибка), overrides пишутся в `results.json` (`config.agent_overrides`) и в шапку `report.md`. Сколько вызовов спасло приведение типов аргументов — `· coerced N` в итоговой строке stderr каждого прогона.
 
 ## Метрики

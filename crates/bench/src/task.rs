@@ -9,7 +9,8 @@
 //! ├── setup/      копируется в свежую tmp-cwd прогона (может отсутствовать)
 //! ├── verify.sh   `sh verify.sh` с cwd = cwd прогона; exit 0 = pass
 //! └── task.toml   [task] timeout_seconds, опц. repeats, tags, policy,
-//!                 context_limit, max_turns, verify_timeout_seconds, uitest_env
+//!                 context_limit, max_turns, verify_timeout_seconds, uitest_env,
+//!                 post_edit_command, post_edit_timeout_seconds
 //! ```
 //!
 //! Поля `[task]`:
@@ -36,7 +37,13 @@
 //!   директорией, где лежит один `python3` (обёртка над интерпретатором
 //!   venv), первой в `PATH` — `python3` модели тот же, которым verify потом
 //!   гоняет её сервер (с aiohttp), сеть до PyPI модели не нужна, а `pip`
-//!   venv ей не виден.
+//!   venv ей не виден;
+//! * `post_edit_command` — команда post-edit сенсора mark2 (непустая): ранер
+//!   дописывает `post_edit_command = "…"` в секцию `[agent]` `.mark2.toml`, и
+//!   mark2 запускает её из корня песочницы после каждой успешной записи
+//!   модели; `post_edit_timeout_seconds` (> 0, только вместе с командой) — её
+//!   таймаут. `--agent-override` с тем же ключом перекрывает задачу (пустая
+//!   команда — выключить сенсор): так меряется абляция «с сенсором / без».
 //!
 //! Всё, что можно проверить до запуска модели, проверяется до запуска модели:
 //! отсутствующий `verify.sh`, пустой `prompt.md`, опечатка в ключе или
@@ -95,6 +102,18 @@ pub struct Task {
     pub verify_timeout_seconds: Option<u64>,
     /// Нужно ли задаче окружение uitest (см. [`Task::uitest_dir`]).
     pub uitest_env: bool,
+    /// Post-edit сенсор mark2 для этой задачи, если она его задаёт.
+    pub post_edit: Option<PostEdit>,
+}
+
+/// Post-edit сенсор задачи — что ранер пишет в `[agent]` песочницы.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PostEdit {
+    /// `post_edit_command`: команда проверки, из корня песочницы.
+    pub command: String,
+    /// `post_edit_timeout_seconds`, если задача задала свой (иначе — дефолт
+    /// mark2).
+    pub timeout_seconds: Option<u64>,
 }
 
 /// Политика доступа к тулам в `task.toml`.
@@ -173,6 +192,21 @@ struct TaskSection {
     verify_timeout_seconds: Option<u64>,
     #[serde(default)]
     uitest_env: bool,
+    #[serde(default)]
+    post_edit_command: Option<String>,
+    #[serde(default)]
+    post_edit_timeout_seconds: Option<u64>,
+}
+
+impl TaskSection {
+    /// Post-edit сенсор задачи из пары полей (уже проверенных
+    /// [`parse_task_file`]).
+    fn post_edit(&self) -> Option<PostEdit> {
+        self.post_edit_command.as_ref().map(|command| PostEdit {
+            command: command.clone(),
+            timeout_seconds: self.post_edit_timeout_seconds,
+        })
+    }
 }
 
 /// `uitest/` для директории задачи: два уровня вверх (`bench/tasks/T17-…` →
@@ -205,6 +239,21 @@ fn parse_task_file(raw: &str, origin: &str) -> Result<TaskSection> {
     }
     if section.verify_timeout_seconds == Some(0) {
         bail!("{origin}: verify_timeout_seconds должен быть больше нуля");
+    }
+    // Пустая команда в mark2 значит «выключить» — в задаче это бессмыслица:
+    // сенсор без команды задают отсутствием ключа.
+    if section
+        .post_edit_command
+        .as_deref()
+        .is_some_and(|command| command.trim().is_empty())
+    {
+        bail!("{origin}: post_edit_command пуст; убери ключ, чтобы гонять задачу без сенсора");
+    }
+    if section.post_edit_timeout_seconds == Some(0) {
+        bail!("{origin}: post_edit_timeout_seconds должен быть больше нуля");
+    }
+    if section.post_edit_timeout_seconds.is_some() && section.post_edit_command.is_none() {
+        bail!("{origin}: post_edit_timeout_seconds без post_edit_command — таймаут не для чего");
     }
     Ok(section)
 }
@@ -265,6 +314,7 @@ pub fn load_task(dir: &Path) -> Result<Task> {
         prompt,
         timeout_seconds: section.timeout_seconds,
         repeats: section.repeats.unwrap_or(DEFAULT_REPEATS),
+        post_edit: section.post_edit(),
         tags: section.tags,
         policy: section.policy,
         context_limit: section.context_limit,
@@ -386,6 +436,7 @@ pub(crate) mod tests {
         assert_eq!(task.verify_timeout_seconds, None);
         assert!(!task.uitest_env);
         assert_eq!(task.uitest_dir(), None);
+        assert_eq!(task.post_edit, None);
     }
 
     #[test]
@@ -507,6 +558,79 @@ pub(crate) mod tests {
         .unwrap();
         let text = format!("{:#}", load_task(&dir).unwrap_err());
         assert!(text.contains("max_turn"), "{text}");
+    }
+
+    #[test]
+    fn post_edit_command_and_timeout_are_loaded() {
+        let root = TempDir::new().unwrap();
+        let dir = write_task(
+            root.path(),
+            "T04-x",
+            "[task]\ntimeout_seconds = 240\npost_edit_command = \"python3 -B test.py\"\n",
+        );
+        let task = load_task(&dir).unwrap();
+        assert_eq!(
+            task.post_edit,
+            Some(PostEdit {
+                command: "python3 -B test.py".into(),
+                timeout_seconds: None,
+            })
+        );
+
+        std::fs::write(
+            dir.join(TASK_FILE),
+            "[task]\ntimeout_seconds = 240\npost_edit_command = \"make check\"\n\
+             post_edit_timeout_seconds = 90\n",
+        )
+        .unwrap();
+        let task = load_task(&dir).unwrap();
+        assert_eq!(
+            task.post_edit,
+            Some(PostEdit {
+                command: "make check".into(),
+                timeout_seconds: Some(90),
+            })
+        );
+        // Соседние поля не задеты.
+        assert_eq!(task.max_turns, None);
+        assert_eq!(task.policy, TaskPolicy::Yolo);
+
+        // Нет ключа — нет сенсора.
+        std::fs::write(dir.join(TASK_FILE), "[task]\ntimeout_seconds = 240\n").unwrap();
+        assert_eq!(load_task(&dir).unwrap().post_edit, None);
+    }
+
+    /// Пустая команда, нулевой таймаут, таймаут без команды и кривой тип —
+    /// ошибка загрузки с путём и именем поля, а не прогон с выключенным или
+    /// сломанным сенсором.
+    #[test]
+    fn bad_post_edit_settings_are_load_errors() {
+        let root = TempDir::new().unwrap();
+        let dir = write_task(root.path(), "T04-x", "[task]\ntimeout_seconds = 60\n");
+        for (lines, expected) in [
+            ("post_edit_command = \"\"", "post_edit_command пуст"),
+            ("post_edit_command = \"   \"", "post_edit_command пуст"),
+            (
+                "post_edit_command = \"x\"\npost_edit_timeout_seconds = 0",
+                "больше нуля",
+            ),
+            ("post_edit_timeout_seconds = 30", "без post_edit_command"),
+            ("post_edit_command = 1", "task.toml"),
+            (
+                "post_edit_command = \"x\"\npost_edit_timeout_seconds = \"30\"",
+                "task.toml",
+            ),
+            ("post_edit = \"x\"", "post_edit"),
+        ] {
+            std::fs::write(
+                dir.join(TASK_FILE),
+                format!("[task]\ntimeout_seconds = 60\n{lines}\n"),
+            )
+            .unwrap();
+            let text = format!("{:#}", load_task(&dir).unwrap_err());
+            assert!(text.contains(expected), "{lines}: {text}");
+            assert!(text.contains(&dir.display().to_string()), "{lines}: {text}");
+        }
     }
 
     /// Раскладка как в репозитории: `<root>/tasks/<задача>` и `<root>/uitest/`.

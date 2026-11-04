@@ -14,14 +14,18 @@
 //!   сэмплинг;
 //! * **настройки задачи** — тоже снаружи, без особых режимов в mark2:
 //!   `policy = "read-only"` превращается в `--policy read-only` вместо
-//!   `--yolo`, `max_turns` — в строку секции `[agent]`, `context_limit` — в
-//!   секцию `[models."<id>"]` того же `.mark2.toml` (см. [`project_config`]);
-//!   туда же — `edit_strategy` модели из матрицы (свойство модели, а не
-//!   задачи);
+//!   `--yolo`, `max_turns` и post-edit сенсор (`post_edit_command`,
+//!   `post_edit_timeout_seconds`) — в строки секции `[agent]`,
+//!   `context_limit` — в секцию `[models."<id>"]` того же `.mark2.toml` (см.
+//!   [`project_config`]); туда же — `edit_strategy` модели из матрицы (свойство
+//!   модели, а не задачи);
 //! * **абляция** — строки `--agent-override 'key = value'` ([`Runner::agent_overrides`])
-//!   дописываются в `[agent]` каждого `.mark2.toml` после базы и `max_turns`;
-//!   каждая строка и каждый итоговый конфиг проверяются парсером ядра до
-//!   первого прогона ([`parse_agent_override`], [`check_project_configs`]);
+//!   дописываются в `[agent]` каждого `.mark2.toml` после базы и настроек
+//!   задачи; ключ post-edit сенсора задачи override **перекрывает** (строка
+//!   задачи не пишется — `post_edit_command = ""` выключает сенсор), прочие
+//!   совпадения с тем, что пишет ранер, — ошибка; каждая строка и каждый
+//!   итоговый конфиг проверяются парсером ядра до первого прогона
+//!   ([`parse_agent_override`], [`check_project_configs`]);
 //! * **окружение uitest** — задаче с `uitest_env = true` ранер до первой
 //!   модели собирает `uitest/.venv` (`sh uitest/bootstrap.sh`, см.
 //!   [`prepare_envs`]) и запускает mark2 с директорией песочницы, где лежит
@@ -52,7 +56,7 @@ use mark2_core::tools::EditStrategy;
 use crate::metrics::{find_session_file, parse_tokens, read_session_metrics};
 use crate::models::ModelSpec;
 use crate::results::{Results, RunRecord, VerifyOutcome};
-use crate::task::{Task, TaskPolicy, UITEST_BOOTSTRAP};
+use crate::task::{PostEdit, Task, TaskPolicy, UITEST_BOOTSTRAP};
 use crate::telemetry;
 
 /// Промпт прогрева: тривиальный ответ без тулов, только чтобы поднять модель.
@@ -239,6 +243,7 @@ impl Runner {
                 &model.model,
                 task.context_limit,
                 task.max_turns,
+                task.post_edit.as_ref(),
                 model.edit_strategy,
                 &self.agent_overrides,
             ),
@@ -648,23 +653,45 @@ pub fn mark2_args(
 /// Содержимое `<cwd>/.mark2.toml` для прогона модели `model_id`.
 ///
 /// Без настроек задачи, модели и overrides — ровно [`PROJECT_CONFIG`], байт в
-/// байт как раньше. `max_turns` и затем строки `agent_overrides` (как есть, по
-/// одной на строку) дописываются сразу за базой: база — это секция `[agent]`
-/// целиком, так что они попадают в неё же. `context_limit` задачи и
-/// `edit_strategy` модели — в одну секцию `[models."<model_id>"]` (TOML не
-/// терпит повторного заголовка): ключ — точный id модели, а точное совпадение
-/// в `mark2_core::config` важнее любого приблизительного, так что настройки
+/// байт как раньше. `max_turns`, post-edit сенсор задачи и затем строки
+/// `agent_overrides` (как есть, по одной на строку) дописываются сразу за
+/// базой: база — это секция `[agent]` целиком, так что они попадают в неё же.
+/// Ключ post-edit сенсора, который назван и в override, от задачи не пишется:
+/// абляция сенсора — его выключение там, где задача его включила, а дубликат
+/// ключа TOML не простил бы. `context_limit` задачи и `edit_strategy` модели —
+/// в одну секцию `[models."<model_id>"]` (TOML не терпит повторного
+/// заголовка): ключ — точный id модели, а точное совпадение в
+/// `mark2_core::config` важнее любого приблизительного, так что настройки
 /// гарантированно достаются этой модели.
 pub fn project_config(
     model_id: &str,
     context_limit: Option<u64>,
     max_turns: Option<usize>,
+    post_edit: Option<&PostEdit>,
     edit_strategy: Option<EditStrategy>,
     agent_overrides: &[String],
 ) -> String {
     let mut text = PROJECT_CONFIG.to_string();
     if let Some(turns) = max_turns {
         text.push_str(&format!("max_turns = {turns}\n"));
+    }
+    if let Some(post_edit) = post_edit {
+        let overridden: Vec<String> = agent_overrides
+            .iter()
+            .filter_map(|line| override_key(line))
+            .collect();
+        let free = |key: &str| !overridden.iter().any(|named| named == key);
+        if free("post_edit_command") {
+            text.push_str(&format!(
+                "post_edit_command = {}\n",
+                toml_basic_string(&post_edit.command)
+            ));
+        }
+        if let Some(seconds) = post_edit.timeout_seconds
+            && free("post_edit_timeout_seconds")
+        {
+            text.push_str(&format!("post_edit_timeout_seconds = {seconds}\n"));
+        }
     }
     for line in agent_overrides {
         text.push_str(line);
@@ -728,6 +755,16 @@ pub fn parse_agent_override(raw: &str) -> Result<String> {
     Ok(line.to_string())
 }
 
+/// Ключ строки override (`post_edit_command = ""` → `post_edit_command`).
+/// Строки уже проверены [`parse_agent_override`]; неразборчивая — `None`.
+fn override_key(line: &str) -> Option<String> {
+    toml::from_str::<toml::Table>(line)
+        .ok()?
+        .keys()
+        .next()
+        .cloned()
+}
+
 /// Проверить до первого прогона, что `.mark2.toml` каждой пары модель × задача
 /// разбирается парсером ядра. Отдельные строки override уже валидны, но могут
 /// столкнуться с тем, что пишет сам ранер: `temperature` базы или `max_turns`
@@ -744,6 +781,7 @@ pub fn check_project_configs(
                 &model.model,
                 task.context_limit,
                 task.max_turns,
+                task.post_edit.as_ref(),
                 model.edit_strategy,
                 agent_overrides,
             );
@@ -1049,11 +1087,11 @@ mod tests {
     #[test]
     fn project_config_without_task_settings_is_unchanged() {
         assert_eq!(
-            project_config("qwen3.5:9b", None, None, None, &[]),
+            project_config("qwen3.5:9b", None, None, None, None, &[]),
             PROJECT_CONFIG
         );
         assert_eq!(
-            project_config("qwen3.5:9b", None, None, None, &[]),
+            project_config("qwen3.5:9b", None, None, None, None, &[]),
             "[agent]\ntemperature = 0.0\n"
         );
     }
@@ -1063,14 +1101,14 @@ mod tests {
     /// сломать соседние настройки.
     #[test]
     fn project_config_with_max_turns_reaches_the_agent_settings_of_mark2() {
-        let text = project_config("flint:40b", None, Some(80), None, &[]);
+        let text = project_config("flint:40b", None, Some(80), None, None, &[]);
         assert_eq!(text, "[agent]\ntemperature = 0.0\nmax_turns = 80\n");
         let config = mark2_core::config::Config::parse(&text, ".mark2.toml").unwrap();
         assert_eq!(config.agent.max_turns, Some(80));
         assert_eq!(config.agent.temperature, Some(0.0));
 
         // Вместе с context_limit: строка остаётся в [agent], лимит — у модели.
-        let text = project_config("flint:40b", Some(8192), Some(80), None, &[]);
+        let text = project_config("flint:40b", Some(8192), Some(80), None, None, &[]);
         assert_eq!(
             text,
             "[agent]\ntemperature = 0.0\nmax_turns = 80\n\n[models.\"flint:40b\"]\ncontext_limit = 8192\n"
@@ -1084,7 +1122,14 @@ mod tests {
     #[test]
     fn project_config_with_an_edit_strategy_reaches_the_model_settings_of_mark2() {
         // Только стратегия модели: секция модели появляется ради неё одной.
-        let text = project_config("flint:40b", None, None, Some(EditStrategy::WholeFile), &[]);
+        let text = project_config(
+            "flint:40b",
+            None,
+            None,
+            None,
+            Some(EditStrategy::WholeFile),
+            &[],
+        );
         assert_eq!(
             text,
             "[agent]\ntemperature = 0.0\n\n[models.\"flint:40b\"]\nedit_strategy = \"whole_file\"\n"
@@ -1106,6 +1151,7 @@ mod tests {
             "flint:40b",
             Some(8192),
             Some(80),
+            None,
             Some(EditStrategy::WholeFile),
             &[],
         );
@@ -1121,7 +1167,14 @@ mod tests {
         assert_eq!(settings.context_limit, Some(8192));
 
         // Явный дефолт тоже доезжает как есть.
-        let text = project_config("m", None, None, Some(EditStrategy::SearchReplace), &[]);
+        let text = project_config(
+            "m",
+            None,
+            None,
+            None,
+            Some(EditStrategy::SearchReplace),
+            &[],
+        );
         let config = mark2_core::config::Config::parse(&text, ".mark2.toml").unwrap();
         assert_eq!(
             config.model_config("m").unwrap().edit_strategy,
@@ -1141,6 +1194,7 @@ mod tests {
             "flint:40b",
             Some(8192),
             Some(80),
+            None,
             Some(EditStrategy::WholeFile),
             &overrides,
         );
@@ -1159,9 +1213,147 @@ mod tests {
 
         // Без настроек задачи и модели — сразу за базой.
         assert_eq!(
-            project_config("m", None, None, None, &overrides[..1]),
+            project_config("m", None, None, None, None, &overrides[..1]),
             "[agent]\ntemperature = 0.0\narg_coercion = false\n"
         );
+    }
+
+    fn post_edit(command: &str, timeout_seconds: Option<u64>) -> PostEdit {
+        PostEdit {
+            command: command.into(),
+            timeout_seconds,
+        }
+    }
+
+    /// Сенсор mark2 из настроек сгенерированного конфига — тем же путём, что
+    /// в CLI (`AgentSettings::post_edit_check`).
+    fn sandbox_check(text: &str) -> Option<mark2_core::PostEditCheck> {
+        Config::parse(text, ".mark2.toml")
+            .unwrap_or_else(|error| panic!("{}\n{text}", error.chain()))
+            .agent
+            .post_edit_check()
+    }
+
+    /// Post-edit сенсор задачи доезжает до `[agent]` песочницы так, как его
+    /// читает mark2: команда (с экранированием кавычек) и свой таймаут.
+    #[test]
+    fn project_config_with_a_post_edit_check_reaches_the_agent_settings_of_mark2() {
+        let check = post_edit("python3 -B test.py", None);
+        let text = project_config("m", None, Some(80), Some(&check), None, &[]);
+        assert_eq!(
+            text,
+            "[agent]\ntemperature = 0.0\nmax_turns = 80\npost_edit_command = \"python3 -B test.py\"\n"
+        );
+        assert_eq!(
+            sandbox_check(&text),
+            Some(mark2_core::PostEditCheck::new("python3 -B test.py"))
+        );
+
+        // Свой таймаут, кавычки и обратный слеш в команде, секция модели рядом.
+        let tricky = r#"python3 test.py 2>&1 | grep -v "^ok" ; test "${PIPESTATUS:-0}" \= 0"#;
+        let check = post_edit(tricky, Some(90));
+        let text = project_config("m", Some(4096), None, Some(&check), None, &[]);
+        assert!(
+            text.starts_with("[agent]\ntemperature = 0.0\npost_edit_command = \""),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "post_edit_timeout_seconds = 90\n\n[models.\"m\"]\ncontext_limit = 4096\n"
+            ),
+            "{text}"
+        );
+        let resolved = sandbox_check(&text).unwrap();
+        assert_eq!(resolved.command, tricky);
+        assert_eq!(resolved.timeout, Duration::from_secs(90));
+    }
+
+    /// Абляция сенсора: override с ключом сенсора **перекрывает** задачу, а не
+    /// сталкивается с ней — пустая команда выключает, другая заменяет, таймаут
+    /// заменяется отдельно. Задача без сенсора включает его override'ом.
+    #[test]
+    fn agent_override_switches_the_task_post_edit_check_off_or_replaces_it() {
+        let check = post_edit("python3 -B test.py", Some(90));
+        let with = |overrides: &[&str]| {
+            let overrides: Vec<String> = overrides
+                .iter()
+                .map(|raw| parse_agent_override(raw).unwrap())
+                .collect();
+            project_config("m", None, None, Some(&check), None, &overrides)
+        };
+
+        let off = with(&["post_edit_command = \"\""]);
+        assert_eq!(
+            off,
+            "[agent]\ntemperature = 0.0\npost_edit_timeout_seconds = 90\npost_edit_command = \"\"\n"
+        );
+        assert!(!off.contains("test.py"), "{off}");
+        assert_eq!(sandbox_check(&off), None);
+
+        let replaced = sandbox_check(&with(&["post_edit_command = \"make check\""])).unwrap();
+        assert_eq!(replaced.command, "make check");
+        assert_eq!(replaced.timeout, Duration::from_secs(90), "таймаут задачи");
+
+        let faster = sandbox_check(&with(&["post_edit_timeout_seconds = 5"])).unwrap();
+        assert_eq!(faster.command, "python3 -B test.py");
+        assert_eq!(faster.timeout, Duration::from_secs(5));
+
+        // Чужие override сенсор задачи не трогают.
+        let untouched = with(&["write_churn = false"]);
+        assert!(untouched.contains("post_edit_command = \"python3 -B test.py\"\n"));
+        assert_eq!(
+            sandbox_check(&untouched).map(|check| check.command),
+            Some("python3 -B test.py".to_string())
+        );
+
+        // Обратная абляция: сенсор всем задачам, у которых его нет.
+        let overrides =
+            [parse_agent_override("post_edit_command = \"python3 -B test.py\"").unwrap()];
+        let text = project_config("m", None, None, None, None, &overrides);
+        assert_eq!(
+            sandbox_check(&text).map(|check| check.command),
+            Some("python3 -B test.py".to_string())
+        );
+    }
+
+    /// Проверка конфигов до прогона: override сенсора с задачей, которая его
+    /// задаёт, — не дубликат; `max_turns` задачи по-прежнему конфликтует.
+    #[test]
+    fn post_edit_override_passes_the_project_config_check() {
+        let root = TempDir::new().unwrap();
+        let sensed = load_task(&write_task(
+            root.path(),
+            "T04-x",
+            "[task]\ntimeout_seconds = 60\nmax_turns = 40\npost_edit_command = \"python3 -B test.py\"\n\
+             post_edit_timeout_seconds = 20\n",
+        ))
+        .unwrap();
+        let plain = load_task(&write_task(
+            root.path(),
+            "T01-x",
+            "[task]\ntimeout_seconds = 60\n",
+        ))
+        .unwrap();
+        let models = [model(1.0)];
+        let tasks = [plain, sensed];
+
+        check_project_configs(&models, &tasks, &[]).unwrap();
+        for raw in [
+            "post_edit_command = \"\"",
+            "post_edit_command = \"true\"",
+            "post_edit_timeout_seconds = 5",
+        ] {
+            let line = parse_agent_override(raw).unwrap();
+            check_project_configs(&models, &tasks, &[line]).unwrap_or_else(|error| {
+                panic!("{raw}: {error:#}");
+            });
+        }
+        let text = format!(
+            "{:#}",
+            check_project_configs(&models, &tasks, &["max_turns = 10".into()]).unwrap_err()
+        );
+        assert!(text.contains("qwen9 × T04"), "{text}");
+        assert!(text.contains("duplicate key"), "{text}");
     }
 
     #[test]
@@ -1169,6 +1361,15 @@ mod tests {
         assert_eq!(
             parse_agent_override("  arg_coercion = false ").unwrap(),
             "arg_coercion = false"
+        );
+        // Пустая команда сенсора — высказывание «выключить», а не пустой ключ.
+        assert_eq!(
+            parse_agent_override("post_edit_command = \"\"").unwrap(),
+            "post_edit_command = \"\""
+        );
+        assert_eq!(
+            parse_agent_override("post_edit_command=\"python3 -B test.py\"").unwrap(),
+            "post_edit_command=\"python3 -B test.py\""
         );
         assert_eq!(
             parse_agent_override("write_churn = 5").unwrap(),
@@ -1195,6 +1396,8 @@ mod tests {
             ),
             ("arg_coercion = \"no\"", "boolean"),
             ("write_churn = -1", "true, false или порог"),
+            ("post_edit_timeout_seconds = 0", "больше нуля"),
+            ("post_edit_command = 1", "--agent-override"),
         ] {
             let text = format!("{:#}", parse_agent_override(raw).unwrap_err());
             assert!(text.contains(expected), "{raw:?}: {text}");
@@ -1278,7 +1481,7 @@ mod tests {
     /// mark2: разбираем сгенерированный файл парсером ядра, а не глазами.
     #[test]
     fn project_config_with_a_limit_reaches_the_model_settings_of_mark2() {
-        let text = project_config("qwen3.5:9b", Some(8192), None, None, &[]);
+        let text = project_config("qwen3.5:9b", Some(8192), None, None, None, &[]);
         assert_eq!(
             text,
             "[agent]\ntemperature = 0.0\n\n[models.\"qwen3.5:9b\"]\ncontext_limit = 8192\n"
@@ -1294,7 +1497,7 @@ mod tests {
         // Экзотический id: кавычки, слеши, обратный слеш — ключ экранирован.
         let odd = r#"hf.co/org/"model"\q4:latest"#;
         let config = mark2_core::config::Config::parse(
-            &project_config(odd, Some(4096), None, None, &[]),
+            &project_config(odd, Some(4096), None, None, None, &[]),
             "x.toml",
         )
         .unwrap();

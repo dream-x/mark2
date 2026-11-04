@@ -55,15 +55,18 @@ pub struct RunConfig {
     /// Промпт прогрева (не таймируется, в результаты не попадает).
     pub warmup_prompt: String,
     /// Что писалось в `<cwd>/.mark2.toml` каждого прогона. Задача с
-    /// `max_turns` (см. [`TaskRecord::max_turns`]) дописывает строку в
-    /// `[agent]`, с `context_limit` (см. [`TaskRecord::context_limit`]) — секцию
+    /// `max_turns` (см. [`TaskRecord::max_turns`]) или post-edit сенсором (см.
+    /// [`TaskRecord::post_edit_command`]) дописывает строки в `[agent]`, с
+    /// `context_limit` (см. [`TaskRecord::context_limit`]) — секцию
     /// `[models."<id модели>"]`; в ту же секцию уходит `edit_strategy` модели
     /// (см. [`ModelSpec::edit_strategy`]).
     pub project_config: String,
     /// Строки `--agent-override`, дописанные в `[agent]` `.mark2.toml` каждого
-    /// прогона после базы и `max_turns`: абляция настроек mark2
-    /// (`arg_coercion = false`, `write_churn = false`). Пусто — mark2 с
-    /// дефолтами; в старых `results.json` поля нет.
+    /// прогона после базы и настроек задачи: абляция настроек mark2
+    /// (`arg_coercion = false`, `write_churn = false`, `post_edit_command =
+    /// ""`). Ключ post-edit сенсора задачи override перекрывает, остальные
+    /// совпадения с ранером — ошибка до прогона. Пусто — mark2 с дефолтами; в
+    /// старых `results.json` поля нет.
     #[serde(default)]
     pub agent_overrides: Vec<String>,
     /// Матрица моделей после фильтра `--models`.
@@ -106,6 +109,15 @@ pub struct TaskRecord {
     /// `PATH`. В старых `results.json` поля нет — тогда PATH не трогали никому.
     #[serde(default)]
     pub uitest_env: bool,
+    /// Команда post-edit сенсора mark2, если задача её задавала (`[agent]
+    /// post_edit_command` песочницы; `--agent-override` с тем же ключом её
+    /// перекрывает — см. [`RunConfig::agent_overrides`]). В старых
+    /// `results.json` поля нет — тогда сенсора не было.
+    #[serde(default)]
+    pub post_edit_command: Option<String>,
+    /// Таймаут post-edit команды, секунды, если задача задавала свой.
+    #[serde(default)]
+    pub post_edit_timeout_seconds: Option<u64>,
     /// Промпт целиком — прогон должен быть воспроизводим по одному файлу.
     pub prompt: String,
 }
@@ -265,6 +277,8 @@ mod tests {
             max_turns: None,
             verify_timeout_seconds: None,
             uitest_env: false,
+            post_edit_command: None,
+            post_edit_timeout_seconds: None,
             prompt: "…".into(),
         };
         assert_eq!(record.name(), "T01-create-file");

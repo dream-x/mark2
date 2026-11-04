@@ -3,9 +3,9 @@
 //! Режим существует для пайпов и скриптов, поэтому дисциплина потоков жёсткая:
 //! в **stdout** уходит только текст ответа модели (никаких `→ tool`, спиннеров
 //! и рассуждений), всё служебное — в **stderr**: по строке на каждый тул-колл
-//! (`→ bash …` / `✗ edit: …`), срабатывания предохранителей agent loop
-//! (`[agent] write_churn: …`) и компакции (`[agent] compaction: …`), ошибки,
-//! предупреждения и итог токенов.
+//! (`→ bash …` / `✗ edit: …`), срабатывания предохранителей и сенсоров agent
+//! loop (`[agent] write_churn: …`, `[agent] post_edit: exit N`) и компакции
+//! (`[agent] compaction: …`), ошибки, предупреждения и итог токенов.
 //!
 //! Текст каждого assistant-сообщения хода начинается с новой строки: модель
 //! часто пишет фразу перед тул-коллом без завершающего `\n`, и без разделителя
@@ -333,6 +333,21 @@ mod tests {
         policy: PermissionPolicy,
         prompt: &str,
     ) -> Harness {
+        run_configured(
+            script,
+            AgentConfig::new("mock-model").with_policy(policy),
+            prompt,
+        )
+        .await
+    }
+
+    /// То же с произвольным конфигом агента; `cwd` — всегда временная
+    /// директория.
+    async fn run_configured(
+        script: Vec<Vec<StreamChunk>>,
+        config: AgentConfig,
+        prompt: &str,
+    ) -> Harness {
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().to_path_buf();
         let provider = MockProvider::new(script);
@@ -340,9 +355,7 @@ mod tests {
         let agent = Agent::new(
             Arc::clone(&provider) as Arc<dyn Provider>,
             ToolRegistry::with_defaults(EditStrategy::SearchReplace),
-            AgentConfig::new("mock-model")
-                .with_cwd(&cwd)
-                .with_policy(policy),
+            config.with_cwd(&cwd),
         )
         // Системный промпт фиксируем: иначе тест зависел бы от AGENTS.md,
         // который лежит выше по дереву от временной директории.
@@ -800,6 +813,61 @@ mod tests {
         assert!(
             tool_result.contains("write #3 to test_chat.py in a row"),
             "{tool_result}"
+        );
+    }
+
+    /// Post-edit сенсор в `-p`: проверка упала — в stderr строка
+    /// `[agent] post_edit: exit N` сразу за строкой записи (запись успешна —
+    /// `→`, не `✗`), вывод проверки — модели в tool result, stdout не тронут.
+    /// Прошла — ни строки.
+    #[tokio::test]
+    async fn failing_post_edit_check_lands_in_stderr_with_the_agent_marker() {
+        let script = || {
+            vec![
+                answer(
+                    "",
+                    Some(("c1", "write", json!({"path": "stats.py", "content": "x"}))),
+                ),
+                answer("Готово.", None),
+            ]
+        };
+        let config = |command: &str| {
+            AgentConfig::new("mock-model")
+                .with_policy(PermissionPolicy::Yolo)
+                .with_post_edit(mark2_core::PostEditCheck::new(command))
+        };
+
+        let harness = run_configured(
+            script(),
+            config("echo 'AssertionError: boom' >&2; exit 3"),
+            "почини",
+        )
+        .await;
+        assert_eq!(harness.reason, StopReason::Completed);
+        assert_eq!(harness.stdout(), "Готово.\n");
+        let stderr = harness.stderr();
+        assert!(lines_with(stderr, "✗").is_empty(), "{stderr}");
+        assert_eq!(
+            lines_with(stderr, "[agent]"),
+            ["[agent] post_edit: exit 3"],
+            "{stderr}"
+        );
+        let lines: Vec<&str> = stderr.lines().collect();
+        assert!(lines[0].starts_with("→ write"), "{stderr}");
+        assert_eq!(lines[1], "[agent] post_edit: exit 3", "{stderr}");
+        let requests = harness.provider.requests();
+        let tool_result = tool_results(&requests[1].messages[2]);
+        assert!(
+            tool_result.ends_with("\n\npost-edit check failed (exit 3): `echo 'AssertionError: boom' >&2; exit 3`\nAssertionError: boom"),
+            "{tool_result}"
+        );
+
+        let passing = run_configured(script(), config("echo ok"), "почини").await;
+        assert_eq!(passing.reason, StopReason::Completed);
+        assert!(
+            lines_with(passing.stderr(), "[agent]").is_empty(),
+            "{}",
+            passing.stderr()
         );
     }
 

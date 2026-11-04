@@ -52,6 +52,16 @@
 //! маркером `[agent] <guard>`) сразу после `ToolCallFinished` того вызова, к
 //! которому относится подсказка.
 //!
+//! **Post-edit сенсор** ([`crate::post_edit`], `post_edit`; по умолчанию
+//! выключен) — не предохранитель, а контур верификации: после каждого
+//! успешного `write`/`edit` цикл сам запускает настроенную команду проверки
+//! (под тем же токеном хода — `Op::Interrupt` её убивает). Прошла — тишина;
+//! не прошла — её вывод дописывается к результату той же записи (тот остаётся
+//! успешным), а наружу уходит `Nudge` с [`Guard::PostEdit`] (`[agent]
+//! post_edit: exit N`). Проваленная проверка — это запуск, вывод которого
+//! модель увидела, поэтому серия write-churn на ней обрывается, а подсказка
+//! write-churn к этой записи не прикладывается.
+//!
 //! # Инварианты
 //!
 //! * **История append-only.** Сообщения только дописываются, никогда не
@@ -120,6 +130,7 @@ use crate::event::{ApprovalDecision, Event, Guard, Op, StopReason};
 use crate::memory::{self, Memory};
 use crate::message::{ContentBlock, Message, Usage};
 use crate::permission::{self, PermissionCheck, PermissionPolicy};
+use crate::post_edit::{self, PostEditCheck};
 use crate::prompt;
 use crate::provider::{Provider, ProviderError, ProviderRequest, StreamChunk, ToolDef};
 use crate::session::{SessionItem, SessionRecorder};
@@ -169,6 +180,9 @@ pub struct AgentConfig {
     /// Файл памяти вместо ближайшего `.mark2.memory.md` от `cwd`
     /// ([`crate::memory`]); относительный — от `cwd`. Файла нет — памяти нет.
     pub memory_file: Option<PathBuf>,
+    /// Post-edit сенсор ([`crate::post_edit`]): проверка после каждого
+    /// успешного `write`/`edit`. `None` (по умолчанию) — сенсора нет вовсе.
+    pub post_edit: Option<PostEditCheck>,
 }
 
 impl Default for AgentConfig {
@@ -184,6 +198,7 @@ impl Default for AgentConfig {
             loop_detection: DEFAULT_LOOP_DETECTION,
             write_churn: DEFAULT_WRITE_CHURN,
             memory_file: None,
+            post_edit: None,
         }
     }
 }
@@ -257,6 +272,13 @@ impl AgentConfig {
     #[must_use]
     pub fn with_memory_file(mut self, path: impl Into<PathBuf>) -> Self {
         self.memory_file = Some(path.into());
+        self
+    }
+
+    /// Включить post-edit сенсор.
+    #[must_use]
+    pub fn with_post_edit(mut self, check: PostEditCheck) -> Self {
+        self.post_edit = Some(check);
         self
     }
 }
@@ -768,8 +790,7 @@ impl WriteChurnDetector {
         // Имена — из реестра по умолчанию (`tools/`), как и в `permission`.
         match name {
             "bash" => {
-                self.path = None;
-                self.writes = 0;
+                self.observe_run();
                 ChurnVerdict::Quiet
             }
             "write" | "edit" if !is_error => {
@@ -794,6 +815,14 @@ impl WriteChurnDetector {
             }
             _ => ChurnVerdict::Quiet,
         }
+    }
+
+    /// Модель увидела настоящий вывод запуска — серия записей окончена: так
+    /// действует исполненный `bash` и проваленная post-edit проверка, чей
+    /// вывод пришит к результату записи.
+    fn observe_run(&mut self) {
+        self.path = None;
+        self.writes = 0;
     }
 }
 
@@ -1223,7 +1252,9 @@ impl AgentLoop {
     ///
     /// Детектор зацикливания смотрит на вызов **до** исполнения (и может его
     /// не пустить), сенсор write-churn — **после** (и только дописывает
-    /// подсказку к результату). Счётчики у них независимы.
+    /// подсказку к результату). Счётчики у них независимы. Post-edit сенсор —
+    /// тоже после: запускается за успешной записью и дописывает свой вывод,
+    /// если проверка не прошла.
     async fn run_tool_calls(
         &mut self,
         calls: Vec<PendingCall>,
@@ -1301,23 +1332,56 @@ impl AgentLoop {
 
             let ctx = ToolCtx::with_cancel(self.config.cwd.clone(), turn_cancel.child_token());
             let execution = self.registry.execute(&call.name, call.input.clone(), &ctx);
-            let (output, cancelled) =
+            let (output, mut cancelled) =
                 race_ops_awaiting(execution, &mut self.ops, turn_cancel).await;
 
             // Запись исполнена в любом случае; подсказка лишь дописывается к
             // её результату, и тот остаётся успешным — иначе модель решила бы,
             // что запись не удалась, и переписала бы файл ещё раз.
             let verdict = churn.observe(&call.name, &call.input, output.is_error, &self.config.cwd);
-            let nudge = churn_nudge(verdict, &call.input, &self.config.cwd);
+            let mut nudge = churn_nudge(verdict, &call.input, &self.config.cwd);
+
+            // Post-edit сенсор — только после успешной записи и только если
+            // настроен: без конфига ни процесса, ни байта в результате.
+            // Отмена хода (`Op::Interrupt`) гасит и его: команда убивается, а
+            // результат записи остаётся без секции.
+            let mut check = None;
+            if let Some(post_edit) = &self.config.post_edit
+                && post_edit::applies_to(&call.name)
+                && !output.is_error
+                && !cancelled
+            {
+                let check_cancel = turn_cancel.child_token();
+                let run = post_edit::run(post_edit, &self.config.cwd, &check_cancel);
+                let (report, interrupted) =
+                    race_ops_awaiting(run, &mut self.ops, turn_cancel).await;
+                cancelled = interrupted;
+                if let Some(report) = report {
+                    // Модель только что увидела настоящую ошибку — ровно то,
+                    // к чему зовёт подсказка write-churn: серия окончена,
+                    // подсказка про «запусти» уже лишняя.
+                    churn.observe_run();
+                    nudge = None;
+                    check = Some(report);
+                }
+            }
+
             let mut content = output.content;
             if let Some(nudge) = &nudge {
                 content.push_str("\n\n");
                 content.push_str(&nudge.note);
             }
+            if let Some(report) = &check {
+                content.push_str("\n\n");
+                content.push_str(&report.note);
+            }
 
             self.finish_tool_call(&mut results, call, content, output.is_error);
             if let Some(nudge) = nudge {
                 self.nudge(call, Guard::WriteChurn, nudge.message);
+            }
+            if let Some(report) = check {
+                self.nudge(call, Guard::PostEdit, report.marker);
             }
             if cancelled {
                 round = ToolRound::Interrupted;
@@ -3137,6 +3201,393 @@ mod tests {
                     assert!(!content.contains("in a row"), "{content}");
                 }
             }
+            harness.finish().await;
+        }
+    }
+
+    // ───────────────────────── post-edit сенсор ─────────────────────────
+
+    /// Агент с post-edit проверкой `command`.
+    async fn with_post_edit(scripts: Vec<Script>, check: PostEditCheck) -> Harness {
+        let config = AgentConfig::new("mock-model")
+            .with_policy(PermissionPolicy::Yolo)
+            .with_post_edit(check);
+        Harness::with_config(scripts, config).await
+    }
+
+    /// Все `Nudge` post-edit сенсора как `(id, message)`.
+    fn post_edit_nudges(events: &[Event]) -> Vec<(String, String)> {
+        nudges(events)
+            .into_iter()
+            .filter(|(_, guard, _)| *guard == Guard::PostEdit)
+            .map(|(id, _, message)| (id, message))
+            .collect()
+    }
+
+    /// Сколько раз проверка запускалась: каждая команда в тестах дописывает
+    /// строку в `checks.log` cwd.
+    fn check_runs(harness: &Harness) -> usize {
+        std::fs::read_to_string(harness.path("checks.log"))
+            .map(|log| log.lines().count())
+            .unwrap_or(0)
+    }
+
+    /// Главный сценарий: запись прошла, проверка упала — её вывод пришит к
+    /// результату той же записи (успешному), и модель видит его в
+    /// **следующем** запросе; человеку — `Nudge` `exit N` сразу за результатом.
+    #[tokio::test]
+    async fn failing_check_output_reaches_the_model_in_the_next_request() {
+        let command = "echo ran >> checks.log; echo 'Traceback (most recent call last):'; \
+                       echo 'AssertionError: median/even: got 3, expected 2.5' >&2; exit 1";
+        let mut harness = with_post_edit(
+            vec![
+                write_script("call_1", "stats.py", "x = 1\n"),
+                text_script("починю"),
+            ],
+            PostEditCheck::new(command),
+        )
+        .await;
+
+        let events = harness.turn("почини").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(check_runs(&harness), 1);
+
+        let expected = format!(
+            "Wrote {} (6 bytes)\n\npost-edit check failed (exit 1): `{command}`\n\
+             Traceback (most recent call last):\n\
+             AssertionError: median/even: got 3, expected 2.5",
+            harness.path("stats.py").display()
+        );
+        assert_eq!(
+            tool_results(&events),
+            [("call_1".to_string(), expected.clone(), false)],
+            "запись удалась — результат успешный, вывод проверки пришит"
+        );
+        assert_eq!(
+            post_edit_nudges(&events),
+            [("call_1".to_string(), "exit 1".to_string())]
+        );
+        assert_nudge_follows_its_result(&events);
+
+        let requests = harness.provider.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(
+            !format!("{:?}", requests[0]).contains("post-edit"),
+            "до записи проверки не было"
+        );
+        let last = requests[1].messages.last().unwrap();
+        assert_eq!(last.role, Role::Tool);
+        assert_eq!(
+            last.content,
+            [ContentBlock::ToolResult {
+                tool_use_id: "call_1".into(),
+                content: expected,
+                is_error: false,
+            }]
+        );
+        harness.finish().await;
+    }
+
+    /// exit 0 — тишина, даже когда команда что-то печатает: результат записи
+    /// байт-в-байт тот же, событий сенсора нет. Что проверка запускалась —
+    /// видно по её логу.
+    #[tokio::test]
+    async fn passing_check_leaves_the_result_untouched() {
+        let mut harness = with_post_edit(
+            vec![write_script("call_1", "a.py", "v1"), text_script("готово")],
+            PostEditCheck::new("echo ran >> checks.log; echo 'all tests passed'"),
+        )
+        .await;
+
+        let events = harness.turn("напиши").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(check_runs(&harness), 1);
+        assert_eq!(
+            tool_results(&events),
+            [(
+                "call_1".to_string(),
+                format!("Wrote {} (2 bytes)", harness.path("a.py").display()),
+                false
+            )]
+        );
+        assert_eq!(nudges(&events), []);
+        harness.finish().await;
+    }
+
+    /// Проверка идёт только за **успешными** `write`/`edit`: не за `read`,
+    /// `bash`, упавшей правкой и не за записью, которую не пустила политика.
+    #[tokio::test]
+    async fn check_runs_only_after_successful_writes_and_edits() {
+        let mut harness = with_post_edit(
+            vec![
+                write_script("call_1", "a.py", "x = 1\n"),
+                tools_script("", &[("call_2", "read", json!({"path": "a.py"}))]),
+                bash_script("call_3", "true"),
+                edit_script("call_4", "a.py", "нет такого", "y"),
+                edit_script("call_5", "a.py", "x = 1", "x = 2"),
+                text_script("готово"),
+            ],
+            PostEditCheck::new("echo ran >> checks.log; exit 1"),
+        )
+        .await;
+
+        let events = harness.turn("правь").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(check_runs(&harness), 2, "write и удачный edit");
+        let results = tool_results(&events);
+        assert!(results[3].2, "упавший edit — ошибка, без проверки");
+        assert!(!results[3].1.contains("post-edit"), "{}", results[3].1);
+        for index in [1, 2] {
+            assert!(!results[index].1.contains("post-edit"), "{results:?}");
+        }
+        assert_eq!(
+            post_edit_nudges(&events),
+            [
+                ("call_1".to_string(), "exit 1".to_string()),
+                ("call_5".to_string(), "exit 1".to_string()),
+            ]
+        );
+        assert!(
+            results[4].1.starts_with("Replaced 1 occurrence in "),
+            "{}",
+            results[4].1
+        );
+        harness.finish().await;
+
+        // read-only: запись не исполнялась — и проверять нечего.
+        let config = AgentConfig::new("mock-model")
+            .with_policy(PermissionPolicy::ReadOnly)
+            .with_post_edit(PostEditCheck::new("echo ran >> checks.log; exit 1"));
+        let mut harness = Harness::with_config(
+            vec![write_script("call_1", "a.py", "v1"), text_script("не могу")],
+            config,
+        )
+        .await;
+        let events = harness.turn("напиши").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(check_runs(&harness), 0);
+        assert_eq!(nudges(&events), []);
+        harness.finish().await;
+    }
+
+    /// Нет конфига — поведение байт-в-байт прежнее: те же события и те же
+    /// запросы к модели, что у агента, где проверка есть, но молча проходит;
+    /// и ни одного запуска. Падающая проверка — уже другой запрос (контроль,
+    /// что сравнение вообще что-то ловит).
+    #[tokio::test]
+    async fn without_config_requests_and_events_are_byte_for_byte_unchanged() {
+        let scenario = || {
+            vec![
+                write_script("call_1", "a.py", "x = 1\n"),
+                edit_script("call_2", "a.py", "x = 1", "x = 2"),
+                text_script("готово"),
+            ]
+        };
+        async fn run(scripts: Vec<Script>, check: Option<PostEditCheck>) -> (Vec<String>, String) {
+            let mut config = AgentConfig::new("mock-model").with_policy(PermissionPolicy::Yolo);
+            config.post_edit = check;
+            let mut harness = Harness::with_config(scripts, config).await;
+            let events = harness.turn("правь").await;
+            assert_eq!(stop_reason(&events), StopReason::Completed);
+            assert_eq!(harness.provider.calls(), 3, "сценарий дошёл до конца");
+            let cwd = harness.dir.path().display().to_string();
+            let requests = serde_json::to_string(&harness.provider.requests())
+                .unwrap()
+                .replace(&cwd, "<cwd>");
+            let ran = harness.path("checks.log").exists();
+            harness.finish().await;
+            let mut tags = tags(&events);
+            if ran {
+                tags.push("ran".into());
+            }
+            (tags, requests)
+        }
+
+        let (plain_tags, plain) = run(scenario(), None).await;
+        assert_eq!(
+            plain_tags,
+            [
+                "turn_started",
+                "message_complete",
+                "usage",
+                "tool_call_started",
+                "tool_call_finished",
+                "message_complete",
+                "usage",
+                "tool_call_started",
+                "tool_call_finished",
+                "text_delta",
+                "message_complete",
+                "usage",
+                "turn_finished",
+            ],
+            "ни одного события сенсора и ни одного запуска"
+        );
+        assert!(!plain.contains("post-edit"), "{plain}");
+
+        let (silent_tags, silent) = run(
+            scenario(),
+            Some(PostEditCheck::new("echo ran >> checks.log; echo ok")),
+        )
+        .await;
+        assert_eq!(silent_tags.last().map(String::as_str), Some("ran"));
+        assert_eq!(silent_tags[..silent_tags.len() - 1], plain_tags[..]);
+        assert_eq!(silent, plain, "запросы к модели байт-в-байт");
+
+        let (_, failing) = run(scenario(), Some(PostEditCheck::new("exit 1"))).await;
+        assert_ne!(failing, plain);
+    }
+
+    /// Зависшая проверка убивается по своему таймауту; модель узнаёт, сколько
+    /// ждали, ход продолжается.
+    #[tokio::test]
+    async fn hanging_check_is_killed_by_its_timeout_and_the_turn_goes_on() {
+        let started = std::time::Instant::now();
+        let mut harness = with_post_edit(
+            vec![
+                write_script("call_1", "a.py", "while True: pass\n"),
+                text_script("похоже, зависает"),
+            ],
+            PostEditCheck::new("echo started; sleep 300").with_timeout(Duration::from_secs(1)),
+        )
+        .await;
+
+        let events = harness.turn("напиши").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert!(started.elapsed() < Duration::from_secs(20));
+        let results = tool_results(&events);
+        assert!(!results[0].2);
+        assert!(
+            results[0].1.ends_with(
+                "\n\npost-edit check timed out after 1s and was killed: \
+                 `echo started; sleep 300`\nstarted"
+            ),
+            "{}",
+            results[0].1
+        );
+        assert_eq!(
+            post_edit_nudges(&events),
+            [("call_1".to_string(), "таймаут 1s".to_string())]
+        );
+        harness.finish().await;
+    }
+
+    /// `Op::Interrupt` посреди проверки гасит и её: процесс убит, ход
+    /// `Cancelled`, у записи — парный результат без секции проверки, к модели
+    /// больше не ходили; следующий ход идёт как обычно.
+    #[tokio::test]
+    async fn interrupt_during_the_check_kills_it_and_cancels_the_turn() {
+        let mut harness = with_post_edit(
+            vec![
+                write_script("call_1", "a.py", "v1"),
+                text_script("следующий ход"),
+            ],
+            PostEditCheck::new("echo $$ > check.pid; sleep 300; exit 1"),
+        )
+        .await;
+
+        harness.submit(Op::user_input("напиши"));
+        let pid_file = harness.path("check.pid");
+        let deadline = std::time::Instant::now() + EVENT_TIMEOUT;
+        while !pid_file.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "проверка не запустилась"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        harness.submit(Op::Interrupt);
+        let events = harness.drain_turn().await;
+        assert_eq!(stop_reason(&events), StopReason::Cancelled);
+        assert_eq!(nudges(&events), []);
+        let results = tool_results(&events);
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].1.contains("post-edit"), "{}", results[0].1);
+        assert_eq!(harness.provider.calls(), 1);
+
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let alive = || {
+            std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("kill -0 {} 2>/dev/null", pid.trim()))
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        let mut dead = false;
+        for _ in 0..40 {
+            if !alive() {
+                dead = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(dead, "проверка {pid} пережила отмену хода");
+
+        let next = harness.turn("продолжай").await;
+        assert_eq!(stop_reason(&next), StopReason::Completed);
+        let items = harness.finish().await;
+        let history = messages(&items);
+        assert_tool_calls_paired(&history);
+    }
+
+    /// Проваленная проверка — запуск, вывод которого модель увидела: серия
+    /// write-churn на ней обрывается. Проверка, прошедшая молча, модели ничего
+    /// не показала — серия идёт как без сенсора.
+    #[tokio::test]
+    async fn a_failing_check_ends_the_write_churn_series() {
+        let mut scripts = churning_writes(3);
+        scripts.push(text_script("готово"));
+        let mut harness = with_post_edit(scripts.clone(), PostEditCheck::new("exit 2")).await;
+        let events = harness.turn("напиши").await;
+        assert_eq!(stop_reason(&events), StopReason::Completed);
+        assert_eq!(churn_ids(&events), Vec::<String>::new());
+        assert_eq!(
+            post_edit_nudges(&events)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            ["call_1", "call_2", "call_3"]
+        );
+        let results = tool_results(&events);
+        assert!(!results[2].1.contains("in a row"), "{}", results[2].1);
+        harness.finish().await;
+
+        let mut harness = with_post_edit(scripts, PostEditCheck::new("true")).await;
+        let events = harness.turn("напиши").await;
+        assert_eq!(churn_ids(&events), ["call_3"]);
+        assert_eq!(post_edit_nudges(&events), []);
+        harness.finish().await;
+    }
+
+    /// Путь CLI: TOML `[agent]` → `AgentSettings::post_edit_check` →
+    /// `AgentConfig::post_edit`. Пустая команда — сенсора нет.
+    #[tokio::test]
+    async fn post_edit_command_in_the_config_turns_the_sensor_on() {
+        for (agent_section, expected_runs) in [
+            ("post_edit_command = \"echo ran >> checks.log; exit 1\"", 1),
+            ("post_edit_command = \"\"", 0),
+            ("", 0),
+        ] {
+            let settings =
+                crate::config::Config::parse(&format!("[agent]\n{agent_section}\n"), "t")
+                    .unwrap()
+                    .agent;
+            let mut config = AgentConfig::new("mock-model").with_policy(PermissionPolicy::Yolo);
+            config.post_edit = settings.post_edit_check();
+
+            let mut harness = Harness::with_config(
+                vec![write_script("call_1", "a.py", "v1"), text_script("готово")],
+                config,
+            )
+            .await;
+            let events = harness.turn("напиши").await;
+            assert_eq!(stop_reason(&events), StopReason::Completed);
+            assert_eq!(check_runs(&harness), expected_runs, "{agent_section:?}");
+            assert_eq!(
+                post_edit_nudges(&events).len(),
+                expected_runs,
+                "{agent_section:?}"
+            );
             harness.finish().await;
         }
     }
