@@ -1,0 +1,1379 @@
+{
+  "schema_version": 1,
+  "label": "memory-v1",
+  "run_id": "20261104-091007-memory-v1",
+  "started_at": "2026-11-04T06:10:07.434815Z",
+  "finished_at": "2026-11-04T06:14:05.008483Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 3,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "qwen9",
+        "model": "qwen3.5:9b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 1.0
+      },
+      {
+        "alias": "bolt4",
+        "model": "nemotron-3.5-bolt:e4b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 1.0
+      },
+      {
+        "alias": "flint40",
+        "model": "flint:40b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0,
+        "edit_strategy": "whole_file"
+      },
+      {
+        "alias": "qwen36c",
+        "model": "qwen3.6:35b-a3b-coding",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "glm52",
+        "model": "glm-5.2",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "timeout_multiplier": 2.5,
+        "api_key_env": "ZAI_API_KEY"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T18",
+        "slug": "memory-recall",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T18-memory-recall",
+        "timeout_seconds": 120,
+        "repeats": 3,
+        "tags": [
+          "memory",
+          "read"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "prompt": "What is the staging deploy port for this project?\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `staging_port = <number>`\n- Use the `staging_port = ...` form only for that final answer line. Do not\n  write it with any other value anywhere in your reply.\n- Read-only task: do not modify, create or delete any file.\n"
+      },
+      {
+        "id": "T19",
+        "slug": "memory-store",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T19-memory-store",
+        "timeout_seconds": 120,
+        "repeats": 3,
+        "tags": [
+          "memory",
+          "write"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "prompt": "Remember for future sessions: the review alias is \"garnet-7\"; update your\nmemory file accordingly.\n\nRules:\n\n- Print this as the final line of your reply, exactly:\n  `remembered = garnet-7`\n- Do not change any other file in the project.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T18",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:10:12.662066Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 10.146626542,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 8929,
+        "output": 508,
+        "cached": 6683
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 19,
+      "stdout_path": "logs/qwen9/T18/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T18/1.stderr.txt",
+      "session_path": "sessions/qwen9/T18/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T18",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:10:22.854285Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 10.942689958,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 8948,
+        "output": 513,
+        "cached": 6696
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 19,
+      "stdout_path": "logs/qwen9/T18/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T18/2.stderr.txt",
+      "session_path": "sessions/qwen9/T18/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T18",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:10:33.846348Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 11.794098584,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 8948,
+        "output": 513,
+        "cached": 6696
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 19,
+      "stdout_path": "logs/qwen9/T18/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T18/3.stderr.txt",
+      "session_path": "sessions/qwen9/T18/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T19",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:10:45.682612Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.836793375,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 4074,
+        "output": 253,
+        "cached": 2575
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: .mark2.memory.md does not record garnet-7 (answering without writing it down does not count)\n"
+      },
+      "answer_chars": 87,
+      "stdout_path": "logs/qwen9/T19/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T19/1.stderr.txt",
+      "session_path": "sessions/qwen9/T19/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T19",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:10:52.537521Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.851093667,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 4065,
+        "output": 233,
+        "cached": 2571
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: .mark2.memory.md does not record garnet-7 (answering without writing it down does not count)\n"
+      },
+      "answer_chars": 28,
+      "stdout_path": "logs/qwen9/T19/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T19/2.stderr.txt",
+      "session_path": "sessions/qwen9/T19/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T19",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:10:59.405215Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.438689375,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 4074,
+        "output": 259,
+        "cached": 2575
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: .mark2.memory.md does not record garnet-7 (answering without writing it down does not count)\n"
+      },
+      "answer_chars": 87,
+      "stdout_path": "logs/qwen9/T19/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T19/3.stderr.txt",
+      "session_path": "sessions/qwen9/T19/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T18",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:11:11.218709Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1.479349209,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 1118,
+        "output": 106
+      },
+      "session": {
+        "assistant_messages": 1,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 56,
+      "stdout_path": "logs/bolt4/T18/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T18/1.stderr.txt",
+      "session_path": "sessions/bolt4/T18/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T18",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:11:12.726631Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1.73253575,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 1117,
+        "output": 159,
+        "cached": 72
+      },
+      "session": {
+        "assistant_messages": 1,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 19,
+      "stdout_path": "logs/bolt4/T18/2.stdout.txt",
+      "stderr_path": "logs/bolt4/T18/2.stderr.txt",
+      "session_path": "sessions/bolt4/T18/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T18",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:11:14.529985Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1.523830791,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 1117,
+        "output": 166,
+        "cached": 72
+      },
+      "session": {
+        "assistant_messages": 1,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 56,
+      "stdout_path": "logs/bolt4/T18/3.stdout.txt",
+      "stderr_path": "logs/bolt4/T18/3.stderr.txt",
+      "session_path": "sessions/bolt4/T18/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T19",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:11:16.102436Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3.02161425,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 3261,
+        "output": 330,
+        "cached": 2153
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 21,
+      "stdout_path": "logs/bolt4/T19/1.stdout.txt",
+      "stderr_path": "logs/bolt4/T19/1.stderr.txt",
+      "session_path": "sessions/bolt4/T19/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T19",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:11:19.160516Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3.020557042,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 3261,
+        "output": 329,
+        "cached": 2153
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 21,
+      "stdout_path": "logs/bolt4/T19/2.stdout.txt",
+      "stderr_path": "logs/bolt4/T19/2.stderr.txt",
+      "session_path": "sessions/bolt4/T19/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "bolt4",
+      "model_id": "nemotron-3.5-bolt:e4b",
+      "task": "T19",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:11:22.221839Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 2.929191417,
+      "timeout_seconds": 120.0,
+      "tokens": {
+        "input": 3261,
+        "output": 308,
+        "cached": 2153
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 21,
+      "stdout_path": "logs/bolt4/T19/3.stdout.txt",
+      "stderr_path": "logs/bolt4/T19/3.stderr.txt",
+      "session_path": "sessions/bolt4/T19/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T18",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:11:29.777513Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.501408541,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 7809,
+        "output": 636,
+        "cached": 5757
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 6,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 70,
+      "stdout_path": "logs/flint40/T18/1.stdout.txt",
+      "stderr_path": "logs/flint40/T18/1.stderr.txt",
+      "session_path": "sessions/flint40/T18/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T18",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:11:36.3079Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 7.636002583,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 10166,
+        "output": 747,
+        "cached": 7844
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 7,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 70,
+      "stdout_path": "logs/flint40/T18/2.stdout.txt",
+      "stderr_path": "logs/flint40/T18/2.stderr.txt",
+      "session_path": "sessions/flint40/T18/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T18",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:11:43.988534Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.679917792,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 9564,
+        "output": 890,
+        "cached": 7095
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 151,
+      "stdout_path": "logs/flint40/T18/3.stdout.txt",
+      "stderr_path": "logs/flint40/T18/3.stderr.txt",
+      "session_path": "sessions/flint40/T18/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T19",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:11:52.709158Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.756154125,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 5451,
+        "output": 714,
+        "cached": 3792
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 73,
+      "stdout_path": "logs/flint40/T19/1.stdout.txt",
+      "stderr_path": "logs/flint40/T19/1.stderr.txt",
+      "session_path": "sessions/flint40/T19/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T19",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:11:59.502049Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.79680175,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 5450,
+        "output": 675,
+        "cached": 3792
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 80,
+      "stdout_path": "logs/flint40/T19/2.stdout.txt",
+      "stderr_path": "logs/flint40/T19/2.stderr.txt",
+      "session_path": "sessions/flint40/T19/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T19",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:12:06.329941Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.626554333,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 5470,
+        "output": 663,
+        "cached": 3803
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 73,
+      "stdout_path": "logs/flint40/T19/3.stdout.txt",
+      "stderr_path": "logs/flint40/T19/3.stderr.txt",
+      "session_path": "sessions/flint40/T19/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T18",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:12:13.456511Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 4.613207958,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 4914,
+        "output": 342,
+        "cached": 3979
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 213,
+      "stdout_path": "logs/qwen36c/T18/1.stdout.txt",
+      "stderr_path": "logs/qwen36c/T18/1.stderr.txt",
+      "session_path": "sessions/qwen36c/T18/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T18",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:12:18.110656Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.054683542,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 7480,
+        "output": 603,
+        "cached": 5934
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 6,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 301,
+      "stdout_path": "logs/qwen36c/T18/2.stdout.txt",
+      "stderr_path": "logs/qwen36c/T18/2.stderr.txt",
+      "session_path": "sessions/qwen36c/T18/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T18",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:12:26.20757Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 9.756163166,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 9782,
+        "output": 616,
+        "cached": 8236
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 6,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 371,
+      "stdout_path": "logs/qwen36c/T18/3.stdout.txt",
+      "stderr_path": "logs/qwen36c/T18/3.stderr.txt",
+      "session_path": "sessions/qwen36c/T18/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T19",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:12:36.026123Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3.614349208,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 3998,
+        "output": 213,
+        "cached": 3520
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 21,
+      "stdout_path": "logs/qwen36c/T19/1.stdout.txt",
+      "stderr_path": "logs/qwen36c/T19/1.stderr.txt",
+      "session_path": "sessions/qwen36c/T19/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T19",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:12:39.673874Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3.709589375,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 4011,
+        "output": 227,
+        "cached": 3520
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 65,
+      "stdout_path": "logs/qwen36c/T19/2.stdout.txt",
+      "stderr_path": "logs/qwen36c/T19/2.stderr.txt",
+      "session_path": "sessions/qwen36c/T19/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T19",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:12:43.425404Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 3.863191625,
+      "timeout_seconds": 240.0,
+      "tokens": {
+        "input": 4007,
+        "output": 269,
+        "cached": 3518
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 100,
+      "stdout_path": "logs/qwen36c/T19/3.stdout.txt",
+      "stderr_path": "logs/qwen36c/T19/3.stderr.txt",
+      "session_path": "sessions/qwen36c/T19/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T18",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:12:53.009438Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 10.018705291,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 1209,
+        "output": 64,
+        "cached": 832
+      },
+      "session": {
+        "assistant_messages": 1,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 93,
+      "stdout_path": "logs/glm52/T18/1.stdout.txt",
+      "stderr_path": "logs/glm52/T18/1.stderr.txt",
+      "session_path": "sessions/glm52/T18/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T18",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:13:03.076746Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 6.151338083,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 1209,
+        "output": 50,
+        "cached": 832
+      },
+      "session": {
+        "assistant_messages": 1,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 76,
+      "stdout_path": "logs/glm52/T18/2.stdout.txt",
+      "stderr_path": "logs/glm52/T18/2.stderr.txt",
+      "session_path": "sessions/glm52/T18/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T18",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:13:09.265616Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 5.370616541,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 1209,
+        "output": 44,
+        "cached": 832
+      },
+      "session": {
+        "assistant_messages": 1,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 76,
+      "stdout_path": "logs/glm52/T18/3.stdout.txt",
+      "stderr_path": "logs/glm52/T18/3.stderr.txt",
+      "session_path": "sessions/glm52/T18/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T19",
+      "repeat": 1,
+      "started_at": "2026-11-04T06:13:14.679186Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 13.69981375,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 3509,
+        "output": 158,
+        "cached": 3008
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 112,
+      "stdout_path": "logs/glm52/T19/1.stdout.txt",
+      "stderr_path": "logs/glm52/T19/1.stderr.txt",
+      "session_path": "sessions/glm52/T19/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T19",
+      "repeat": 2,
+      "started_at": "2026-11-04T06:13:28.41919Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 21.697366959,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 3510,
+        "output": 160,
+        "cached": 3008
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 89,
+      "stdout_path": "logs/glm52/T19/2.stdout.txt",
+      "stderr_path": "logs/glm52/T19/2.stderr.txt",
+      "session_path": "sessions/glm52/T19/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T19",
+      "repeat": 3,
+      "started_at": "2026-11-04T06:13:50.163822Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 14.795741667,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 3514,
+        "output": 124,
+        "cached": 3008
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 113,
+      "stdout_path": "logs/glm52/T19/3.stdout.txt",
+      "stderr_path": "logs/glm52/T19/3.stderr.txt",
+      "session_path": "sessions/glm52/T19/3.jsonl",
+      "error": null
+    }
+  ]
+}
