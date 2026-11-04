@@ -1,0 +1,4 @@
+[task]
+timeout_seconds = 600
+tags = ["review", "read"]
+policy = "read-only"
