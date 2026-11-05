@@ -1,0 +1,17 @@
+[task]
+# Chat pair T26-chat-freeform / T27-chat-planned: T17's ws-chat contract, two
+# prompt styles. This file and verify.sh are byte-identical in both task
+# directories (crates/bench task.rs tests assert it): only prompt.md differs.
+# The settings are T17's, so T17, T26 and T27 are three prompts of one task.
+timeout_seconds = 1800
+tags = ["project"]
+policy = "yolo"
+# A whole project: flint:40b ran into the default 50 on T17.
+max_turns = 80
+# verify.sh runs T17's verify (protocol; headless browser; the model's own
+# test, up to 60 s) with T17's budget. bench/uitest/.venv is already built by
+# the runner (uitest_env below), so the bootstrap it calls is instant.
+verify_timeout_seconds = 300
+# The model's python3 is the bench/uitest/.venv interpreter (aiohttp), the
+# same one verify runs server.py and test_chat.py with; see T17's task.toml.
+uitest_env = true

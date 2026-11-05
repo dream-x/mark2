@@ -894,6 +894,174 @@ pub(crate) mod tests {
         }
     }
 
+    /// Пара T26/T27 — тот же эксперимент «вклад структуры промпта», но на
+    /// чате T17, который валит почти вся матрица. T17 заморожен как
+    /// исторический бейзлайн, поэтому пара не копирует его проверки, а
+    /// вызывает его `verify.sh` как есть: `task.toml` и обёртка `verify.sh`
+    /// у пары байт-в-байт, настройки — как у T17, а каждый идентификатор
+    /// контракта есть в T17 и в обоих промптах (меряем подачу, не угадывание).
+    #[test]
+    fn chat_pair_differs_only_in_the_prompt_and_runs_t17_verify() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(DEFAULT_TASKS_DIR);
+        let baseline = &load_task(&dir.join("T17-ws-chat")).unwrap();
+        let freeform = &load_task(&dir.join("T26-chat-freeform")).unwrap();
+        let planned = &load_task(&dir.join("T27-chat-planned")).unwrap();
+        assert_eq!(freeform.id, "T26");
+        assert_eq!(planned.id, "T27");
+        assert_eq!(freeform.slug, "chat-freeform");
+        assert_eq!(planned.slug, "chat-planned");
+
+        for name in [VERIFY_SCRIPT, TASK_FILE] {
+            let a = std::fs::read(freeform.dir.join(name)).unwrap();
+            let b = std::fs::read(planned.dir.join(name)).unwrap();
+            assert!(a == b, "{name} у T26 и T27 обязан совпадать байт-в-байт");
+        }
+        assert_ne!(freeform.prompt, planned.prompt);
+
+        // Настройки прогона — ровно T17: три промпта одной задачи.
+        for task in [freeform, planned] {
+            let name = task.name();
+            assert_eq!(task.policy, baseline.policy, "{name}");
+            assert_eq!(task.timeout_seconds, baseline.timeout_seconds, "{name}");
+            assert_eq!(task.max_turns, baseline.max_turns, "{name}");
+            assert_eq!(
+                task.verify_timeout_seconds, baseline.verify_timeout_seconds,
+                "{name}"
+            );
+            assert_eq!(task.uitest_env, baseline.uitest_env, "{name}");
+            assert_eq!(task.uitest_dir(), baseline.uitest_dir(), "{name}");
+            assert_eq!(task.tags, ["project"], "{name}");
+            assert!(task.setup_dir().is_none(), "{name} стартует с пустой cwd");
+        }
+
+        // Обёртка исполняет verify.sh самого T17, и путь до него резолвится
+        // из любой cwd: в пустой песочнице это FAIL на файлах контракта —
+        // проверка T17, которая идёт до bootstrap и не требует сети и venv.
+        let wrapper = std::fs::read_to_string(freeform.verify_script()).unwrap();
+        assert!(wrapper.contains("T17-ws-chat/verify.sh"), "{wrapper}");
+        let empty = TempDir::new().unwrap();
+        let output = std::process::Command::new("sh")
+            .arg(freeform.verify_script())
+            .current_dir(empty.path())
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{stderr}");
+        assert!(
+            stderr.contains(
+                "FAIL [files]: missing contract file(s): \
+                 server.py static/index.html static/app.js static/style.css"
+            ),
+            "{stderr}"
+        );
+
+        // Один контракт: каждый идентификатор и факт, на который смотрит
+        // verify, есть в T17 и в обоих промптах. Пробелы схлопываются —
+        // перенос строки внутри фразы не в счёт.
+        let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let prompts = [
+            (baseline.name(), flat(&baseline.prompt)),
+            (freeform.name(), flat(&freeform.prompt)),
+            (planned.name(), flat(&planned.prompt)),
+        ];
+        for needle in [
+            "aiohttp",
+            "`server.py`",
+            "`static/index.html`",
+            "`static/app.js`",
+            "`static/style.css`",
+            "`test_chat.py`",
+            "`python3 server.py`",
+            "keep running until it is killed",
+            "`PORT`",
+            "`8765`",
+            "`0.0.0.0`",
+            "`127.0.0.1`",
+            "`GET /`",
+            "`/static/<name>`",
+            "`/static/style.css`",
+            "`/static/app.js`",
+            "`/ws`",
+            "text frame holding one JSON object",
+            r#"`{"type": "join", "nick": "<nick>"}`"#,
+            r#"`{"type": "message", "text": "<text>"}`"#,
+            r#"`{"type": "history", "messages": [...]}`"#,
+            r#"`{"type": "system", "text": "..."}`"#,
+            r#"`{"type": "message", "nick": "...", "text": "...", "ts": <number>}`"#,
+            "the last 50 chat messages",
+            "oldest first",
+            "System notices are not part of the history",
+            "`alice joined`",
+            "`alice left`",
+            "the sender included",
+            "Unix milliseconds",
+            "has not joined gets no broadcasts",
+            "`nick` (text input)",
+            "`join-btn` (button)",
+            "`msg` (text input)",
+            "`send-btn` (button)",
+            "`messages` (the chat feed)",
+            "auto-join",
+            "remembered nick",
+            "`#nick`",
+            "`#join-btn`",
+            "`#msg`",
+            "`#send-btn`",
+            "`#messages`",
+            "no placeholder text",
+            "Enter",
+            "the sender receives its own broadcast too",
+            "no frameworks, no build step",
+            "nothing loaded from the internet",
+            "headless browser",
+            "`python3 test_chat.py`",
+            "finishes within 60 seconds",
+            "`sys.executable`",
+            "a free port it picks",
+            "stops the server at the end, also when a check fails",
+            "real WebSocket clients",
+            "history for a newcomer",
+            "status 0",
+            "aiohttp available",
+            "install packages globally",
+            "any server you started",
+        ] {
+            for (name, prompt) in &prompts {
+                let found = prompt.to_lowercase().contains(&needle.to_lowercase());
+                assert!(found, "{name}: нет {needle:?}");
+            }
+        }
+
+        // T26 — сплошной текст: ни заголовков, ни списков, один абзац.
+        assert!(
+            !freeform.prompt.lines().any(|line| {
+                let line = line.trim_start();
+                line.starts_with('#')
+                    || line.starts_with("- ")
+                    || line.starts_with("* ")
+                    || line.starts_with("1.")
+            }),
+            "T26 должен быть плейн-текстом"
+        );
+        assert!(!freeform.prompt.contains("- [ ]"), "T26 без чеклиста");
+        assert!(!freeform.prompt.contains("**"), "T26 без выделений");
+        assert_eq!(freeform.prompt.trim().lines().count(), 1);
+        // T27 — ТЗ, план, чеклист и DoD.
+        for section in [
+            "## Brief",
+            "## Requirements",
+            "## Plan",
+            "## TODO",
+            "- [ ]",
+            "## Definition of Done",
+        ] {
+            assert!(planned.prompt.contains(section), "T27: нет {section:?}");
+        }
+    }
+
     /// Пути задачи используются из tmp-cwd прогона (`sh verify.sh`, копия
     /// `setup/`), поэтому загрузка обязана вернуть абсолютные и нормализованные.
     #[test]
