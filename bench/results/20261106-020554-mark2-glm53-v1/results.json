@@ -1,0 +1,1747 @@
+{
+  "schema_version": 1,
+  "label": "mark2-glm53-v1",
+  "run_id": "20261106-020554-mark2-glm53-v1",
+  "started_at": "2026-11-05T23:05:54.059283Z",
+  "finished_at": "2026-11-05T23:36:16.847639Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 1,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "glm53",
+        "model": "glm-5.3",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "timeout_multiplier": 2.5,
+        "api_key_env": "ZAI_API_KEY"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T01",
+        "slug": "create-file",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T01-create-file",
+        "timeout_seconds": 120,
+        "repeats": 1,
+        "tags": [
+          "write",
+          "basic"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Create a file named `hello.txt` in the current working directory.\n\nThe file must contain exactly these three lines, in this order:\n\n```\nmark2 benchmark\nline two\nport=4821\n```\n\nRules:\n\n- Write the three lines exactly as shown, with no leading or trailing spaces.\n- End the file with a single newline character after the last line.\n- Do not add anything else: no comments, no blank lines, no code fences, no extra files.\n- Do not modify any other file.\n"
+      },
+      {
+        "id": "T02",
+        "slug": "read-answer",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T02-read-answer",
+        "timeout_seconds": 120,
+        "repeats": 1,
+        "tags": [
+          "read",
+          "restraint"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory contains a file `config.ini`.\n\nRead it and answer one question: what is the value of the `port` setting in the\n`[server]` section?\n\nNote that several sections define a `port` key. Report only the one that belongs\nto the `[server]` section.\n\nRules:\n\n- Print the answer as your final message, in the form: `port = <value>`\n- This is a read-only task. Do not create, modify, delete or move any file.\n"
+      },
+      {
+        "id": "T03",
+        "slug": "edit-exact",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T03-edit-exact",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "edit",
+          "precision",
+          "restraint"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The file `bands.py` in the current working directory has one bug.\n\nThe docstring of `classify()` is the specification and it is correct. The code of\n`classify()` disagrees with it for exactly one band boundary, so some\ntemperatures are reported as \"hot\" when the specification says \"mild\".\n\nFix the code so that it matches the docstring.\n\nRules:\n\n- Change only the single wrong value in `classify()`. It is a one-token edit.\n- Do not touch the docstring, the other functions, the constants, the imports,\n  the blank lines or the formatting.\n- Do not rewrite or reformat the file, and do not create new files.\n"
+      },
+      {
+        "id": "T04",
+        "slug": "fix-bug-test",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T04-fix-bug-test",
+        "timeout_seconds": 240,
+        "repeats": 1,
+        "tags": [
+          "edit",
+          "bash",
+          "verify-loop"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory contains `stats.py` and `test.py`.\n\nRunning `python3 test.py` currently fails. Make it pass.\n\nRules:\n\n- Fix the bug in `stats.py`. The docstrings in `stats.py` describe the intended\n  behaviour and are correct.\n- Do not modify `test.py` in any way, and do not delete or rename it.\n- Run `python3 test.py` yourself at the end and make sure it prints\n  `all tests passed` and exits successfully.\n"
+      },
+      {
+        "id": "T05",
+        "slug": "multi-file-rename",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T05-multi-file-rename",
+        "timeout_seconds": 240,
+        "repeats": 1,
+        "tags": [
+          "edit",
+          "multi-file",
+          "refactor"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory contains two Python files: `lib.py` and `app.py`.\n\nRename the function `calc_total` to `compute_total`.\n\nRules:\n\n- Update every occurrence in both files: the definition, every call site, the\n  `from lib import ...` line, and the mention inside the docstring of\n  `report()` in `app.py`.\n- After the rename, the text `calc_total` must not appear anywhere in either\n  file.\n- Do not rename anything else and do not change any behaviour. Running\n  `python3 app.py` must still print exactly the same output as before.\n- Do not create backup copies of the files.\n"
+      },
+      {
+        "id": "T06",
+        "slug": "search-code",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T06-search-code",
+        "timeout_seconds": 240,
+        "repeats": 1,
+        "tags": [
+          "search",
+          "navigation",
+          "reasoning"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The directory `src/` in the current working directory contains a small Python\ncodebase (6 files). Explore it and answer one question.\n\nQuestion: which function returns the final amount that a customer is actually\ncharged for an order, and what value does it return for 3 units of SKU `A-11`\nfor a customer in the `gold` tier?\n\nThere is more than one \"total\" function in this codebase; only one of them\nreturns the amount actually charged.\n\nRules:\n\n- Print your answer as the final line of your reply, in exactly this form:\n  `<function_name> = <value>`\n  for example: `some_function = 12.34`\n- Use the plain function name without a module prefix.\n- Give the numeric value the function returns, not a rounded-off guess.\n- Do not modify any file in `src/`.\n"
+      },
+      {
+        "id": "T07",
+        "slug": "bash-pipeline",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T07-bash-pipeline",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "bash",
+          "composition"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Count how many lines under the `src/` directory contain the text `TODO`, then\nwrite that count to a file named `report.txt` in the current working directory.\n\nDetails:\n\n- Search `src/` recursively, including subdirectories and non-Python files.\n- Count lines, matching the plain uppercase text `TODO`. Every occurrence in\n  this tree sits on its own line, so the number of matching lines is the number\n  you want.\n- `report.txt` must contain ONLY the number, for example `42`, followed by a\n  newline. No labels, no explanation, no quotes, no other lines.\n- Do not modify anything inside `src/`.\n"
+      },
+      {
+        "id": "T08",
+        "slug": "write-run-script",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T08-write-run-script",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "write",
+          "bash",
+          "verify-loop"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Write a Python script named `fizzbuzz.py` in the current working directory, then\nrun it and confirm its output.\n\nThe script must print the numbers 1 through 15, one value per line, with these\nsubstitutions:\n\n- print `Fizz` instead of the number when it is divisible by 3\n- print `Buzz` instead of the number when it is divisible by 5\n- print `FizzBuzz` instead of the number when it is divisible by both 3 and 5\n\nSo the expected output is exactly these 15 lines:\n\n```\n1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n```\n\nRules:\n\n- The script must be runnable as `python3 fizzbuzz.py` and print nothing else:\n  no header, no trailing summary.\n- It must use only the Python standard library.\n- Run `python3 fizzbuzz.py` yourself and check that the output matches the 15\n  lines above before you finish.\n"
+      },
+      {
+        "id": "T09",
+        "slug": "needle-edit",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T09-needle-edit",
+        "timeout_seconds": 240,
+        "repeats": 1,
+        "tags": [
+          "edit",
+          "precision",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The file `handlers.py` in the current working directory is a large module of\nwarehouse event validators. One of them, `validate_shipment()`, has a bug.\n\nThe docstring of `validate_shipment()` is the specification and it is correct.\nThe code of `validate_shipment()` disagrees with it for exactly one boundary.\n\nFix the code of `validate_shipment()` so that it matches its docstring.\n\nRules:\n\n- Change only the single wrong token inside `validate_shipment()`. It is a\n  one-token edit.\n- Every other function in the file is correct and must stay exactly as it is.\n- Do not touch any docstring, the helpers, the constants, the blank lines or\n  the formatting.\n- Do not rewrite or reformat the file, and do not create new files.\n"
+      },
+      {
+        "id": "T10",
+        "slug": "yaml-surgical",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T10-yaml-surgical",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "edit",
+          "restraint",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The file `deploy.yaml` in the current working directory is a deployment\nmanifest with several environments and services.\n\nSet `replicas` of the `api` service in the `prod` environment to 6.\n\nRules:\n\n- The file is compared byte-for-byte with the original afterwards: exactly one\n  line may differ.\n- Do not reformat the file: keep the quoting, the indentation, the key order\n  and the blank lines as they are.\n- Do not touch any comments.\n- Do not change the `staging` environment or any other service.\n- Do not create backups or any other new files.\n"
+      },
+      {
+        "id": "T11",
+        "slug": "cascade-bugs",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T11-cascade-bugs",
+        "timeout_seconds": 300,
+        "repeats": 1,
+        "tags": [
+          "edit",
+          "verify-loop",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory contains `textkit.py` and `test.py`.\n\nRunning `python3 test.py` currently fails. Make it pass.\n\nRules:\n\n- Fix the code in `textkit.py`. The docstrings in `textkit.py` describe the\n  intended behaviour and are correct.\n- Do not modify `test.py` in any way, and do not delete or rename it.\n- Run `python3 test.py` yourself at the end and make sure it prints\n  `all tests passed` and exits successfully.\n"
+      },
+      {
+        "id": "T12",
+        "slug": "decoy-answer",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T12-decoy-answer",
+        "timeout_seconds": 240,
+        "repeats": 1,
+        "tags": [
+          "search",
+          "reasoning",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory contains `README.md` and a small Python library\nin `src/`: retry policies for an HTTP client.\n\nThe docs in this repo may be stale; trust the code. What is the effective retry\nlimit that `build_policy(\"edge\")` actually produces?\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `retry_limit = <value>`\n- Use the `retry_limit = ...` form only for that final answer line. Do not\n  write it with any other value anywhere in your reply.\n- This is a read-only task: do not modify, create or delete any file. That\n  includes helper scripts: if you need to execute code, run it inline with\n  `python3 -c \"...\"` instead of writing a file.\n"
+      },
+      {
+        "id": "T13",
+        "slug": "moved-config",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T13-moved-config",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "search",
+          "recovery",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The service in the current working directory reads its settings from\n`app/config/settings.ini` — at least it did before the 2.0 reorganization.\n\nFind the configuration file the 2.0 layout actually uses and report the\n`cache_ttl` value.\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `cache_ttl = <value>`\n- Use the `cache_ttl = ...` form only for that final answer line. Do not write\n  it with any other value anywhere in your reply.\n- Read-only task: do not modify, create or delete any file.\n"
+      },
+      {
+        "id": "T14",
+        "slug": "csv-report",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T14-csv-report",
+        "timeout_seconds": 240,
+        "repeats": 1,
+        "tags": [
+          "bash",
+          "composition",
+          "precision",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Read `sales.csv` in the current working directory. Its header is\n`date,region,sku,units,unit_price`.\n\nFor each region compute the total revenue: the sum of `units * unit_price` over\nall rows of that region, rounded to 2 decimal places ONCE at the end (do not\nround per row).\n\nWrite `summary.csv` in the current working directory:\n\n- header `region,total`\n- one row per region\n- rows sorted by total, descending\n- totals formatted with exactly 2 decimal places\n- the file must end with a single trailing newline\n\nDo not modify `sales.csv`.\n"
+      },
+      {
+        "id": "T15",
+        "slug": "long-context",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T15-long-context",
+        "timeout_seconds": 360,
+        "repeats": 1,
+        "tags": [
+          "read",
+          "compaction",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": 8192,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The `minutes/` directory contains the minutes of six budget meetings, in\nchronological order (`shard-01.md` ... `shard-06.md`).\n\nFigures are often revised in later discussion: a later decision supersedes an\nearlier one, and a department's final figure may be settled in a later meeting\nthan the one that introduced it. Read all six files. Determine the approved\nannual budget of EVERY department, then report the grand total.\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `total_budget = <value>` (an integer, no commas, no currency sign).\n- Use the `total_budget = ...` form only for that final answer line. Do not\n  write it with any other value anywhere in your reply.\n- This is a read-only task: do not modify, create or delete any file. That\n  includes scratch notes and helper scripts: if you need to calculate, do it\n  inline, for example with `python3 -c \"...\"` or `echo $((...))`.\n"
+      },
+      {
+        "id": "T16",
+        "slug": "permission-deny",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T16-permission-deny",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "read",
+          "permission",
+          "recovery",
+          "hard"
+        ],
+        "policy": "read-only",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory contains a small app: `app.py`,\n`config/default.ini`, `config/override.ini`, `README.md` and\n`config/README.md`.\n\nWhich `release_channel` does the app actually use when it starts?\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `release_channel = <value>`\n- Use the `release_channel = ...` form only for that final answer line. Do not\n  write it with any other value anywhere in your reply.\n- Read-only task: do not modify, create or delete any file.\n"
+      },
+      {
+        "id": "T17",
+        "slug": "ws-chat",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T17-ws-chat",
+        "timeout_seconds": 1800,
+        "repeats": 1,
+        "tags": [
+          "project",
+          "frontend",
+          "backend",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Build a small multi-user chat in the current working directory: a Python\nbackend on aiohttp, a plain JavaScript frontend, and an automated test for\nit. A checker will start your server, talk to it over WebSocket, and drive\nthe page in a headless browser like a real user (typing and clicking).\nFollow the contract below exactly.\n\n## Files\n\n- `server.py`\n- `static/index.html`\n- `static/app.js`\n- `static/style.css`\n- `test_chat.py`\n\n## Server (`server.py`)\n\n- Python 3 with aiohttp. It is started as `python3 server.py` from the\n  working directory and must keep running until it is killed.\n- Port: the `PORT` environment variable, default `8765`. Listen on `0.0.0.0`\n  or `127.0.0.1`: the checker connects to `127.0.0.1`.\n- `GET /` returns `static/index.html`. Every file in `static/` is also served\n  at `/static/<name>`, and `index.html` loads `/static/style.css` and\n  `/static/app.js` from there.\n- The WebSocket endpoint is `/ws` on the same port.\n\n## Protocol\n\nEvery WebSocket message is a text frame holding one JSON object.\n\nClient to server:\n\n- `{\"type\": \"join\", \"nick\": \"<nick>\"}`\n- `{\"type\": \"message\", \"text\": \"<text>\"}`\n\nServer to client:\n\n- `{\"type\": \"history\", \"messages\": [...]}`: sent only to the client that\n  joined, right after its `join`. `messages` holds the last 50 chat messages,\n  oldest first, each in the `message` form below. System notices are not\n  part of the history.\n- `{\"type\": \"system\", \"text\": \"...\"}`: sent to every joined client when a\n  client joins and when a joined client leaves (its WebSocket closes). The\n  text names the nick, e.g. `alice joined`, `alice left`. Whether the joining\n  client also receives its own join notice is up to you.\n- `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}`: when a\n  joined client sends a message, the server broadcasts it to every joined\n  client, the sender included. `nick` is the sender's nick, `ts` is the\n  server time in Unix milliseconds.\n\nA client that is connected but has not joined gets no broadcasts, and its\n`message` frames are ignored.\n\n## Page\n\n- `static/index.html` has elements with exactly these ids: `nick` (text\n  input), `join-btn` (button), `msg` (text input), `send-btn` (button),\n  `messages` (the chat feed).\n- No auto-join. Loading the page must never send `join` by itself, not even\n  with a default or remembered nick: the user joins only by acting. Until\n  then `#nick` and `#join-btn` are visible and enabled, and `#messages` is\n  empty (no placeholder text).\n- Clicking `#join-btn` joins with the nick typed into `#nick`. Pressing Enter\n  in `#nick` does the same.\n- After joining, `#msg` and `#send-btn` are visible and enabled (before\n  joining they may be hidden or disabled). Pressing Enter in `#msg` or\n  clicking `#send-btn` sends the typed text as a message.\n- On join, `#messages` shows the received history. After that, every\n  incoming `message` and `system` notice is appended to `#messages` with its\n  text visible. A message is shown when its broadcast comes back from the\n  server (the sender receives its own broadcast too).\n- The page may open the WebSocket on load or when the user joins.\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet. The checker's browser can reach only your server.\n\n## Test (`test_chat.py`)\n\nWrite your own automated test and ship it with the code:\n\n- It runs as `python3 test_chat.py` from the working directory, needs\n  nothing already running, and finishes within 60 seconds.\n- It starts `server.py` itself as a subprocess (use `sys.executable`), with\n  `PORT` set to a free port it picks, waits until the server accepts\n  connections, and stops the server at the end, also when a check fails.\n- It checks the protocol with real WebSocket clients: join and history,\n  broadcast between two clients, join and leave notices, history for a\n  newcomer.\n- It exits with status 0 only if every check passed, non-zero otherwise.\n\n## Environment\n\n`python3` on your PATH has aiohttp available. It is the same Python the\nchecker uses to run `server.py` and `test_chat.py`, so there is nothing to\ninstall. Do not install packages globally. You may start the server and run\nyour test while you work, but you don't have to. Stop any server you started\nbefore you finish.\n"
+      },
+      {
+        "id": "T18",
+        "slug": "memory-recall",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T18-memory-recall",
+        "timeout_seconds": 120,
+        "repeats": 1,
+        "tags": [
+          "memory",
+          "read"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "What is the staging deploy port for this project?\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `staging_port = <number>`\n- Use the `staging_port = ...` form only for that final answer line. Do not\n  write it with any other value anywhere in your reply.\n- Read-only task: do not modify, create or delete any file.\n"
+      },
+      {
+        "id": "T19",
+        "slug": "memory-store",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T19-memory-store",
+        "timeout_seconds": 120,
+        "repeats": 1,
+        "tags": [
+          "memory",
+          "write"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Remember for future sessions: the review alias is \"garnet-7\"; update your\nmemory file accordingly.\n\nRules:\n\n- Print this as the final line of your reply, exactly:\n  `remembered = garnet-7`\n- Do not change any other file in the project.\n"
+      },
+      {
+        "id": "T20",
+        "slug": "review-bug",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T20-review-bug",
+        "timeout_seconds": 600,
+        "repeats": 1,
+        "tags": [
+          "review",
+          "read"
+        ],
+        "policy": "read-only",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "You are a strict code reviewer for mark2, a Rust agent harness (core library + headless CLI). Below is a diff. Your job is to find REAL defects in the changed code and give a verdict.\n\n## What counts as a finding\n\nReport only problems that can actually break something:\n\n- bugs: wrong logic, off-by-one, wrong comparison or operator, wrong value returned;\n- broken contracts: code does not do what its doc comment, comment, name or caller expects;\n- panics on reachable paths: `unwrap`/`expect` on fallible input, out-of-bounds indexing, integer overflow, division by zero;\n- concurrency problems: races, deadlocks, locks held across `.await`, lost cancellation;\n- leaked resources: files, child processes, tasks or channels that are never closed, killed or awaited;\n- errors silently swallowed where the caller needs them;\n- test gaps: new or changed behavior with no test covering it (this project requires tests with every change).\n\nDo NOT report: style, formatting, naming, wording of comments or docs, \"could be more idiomatic\", refactoring ideas, performance guesses without evidence, or problems in code the diff did not touch. A diff that only edits comments or docs has no findings unless the new text contradicts the code.\n\n## How to work\n\n- The diff is the primary input. Paths in it are relative to the repository root; drop the `a/` and `b/` prefixes. The `read` and `grep` tools resolve paths against the repository root.\n- If the diff does not show enough context (the rest of a function, its doc comment, its callers, its tests), use `read` on the file before you judge. Check the `#[cfg(test)]` module of the file before you claim a test is missing.\n- Read only what you need to confirm or reject a concrete suspicion, usually just the changed files. Do not explore the repository. To find callers, definitions or tests, search with `grep` (a regex, optionally narrowed by `path`) instead of reading files at random. To list files or find one by name, call `grep` with `files_only: true`: the regex then matches file paths. If a search and one or two reads do not settle a suspicion, drop it and move on.\n- Only `read` and `grep` work in this session. `bash`, `edit` and `write` are blocked: do not call them, you cannot run builds or tests.\n- Call tools silently: write no text before or between tool calls. Everything you write is shown to the user as the review.\n- Report each defect once: a wrong line of code and the comment next to it are one finding, not two.\n- Every finding must be backed by code you have actually seen. If you cannot confirm a suspicion, drop it. An empty list of findings is a good, valid result: never invent a problem to justify a verdict.\n\n## Severity\n\n- `blocker`: breaks the build or existing tests, panics or corrupts data on a normal path, or opens a security hole.\n- `major`: a real bug on a plausible path, a broken contract, or new behavior without a test.\n- `minor`: a real but low-impact defect.\n\n## Output format\n\nYour whole answer is the findings list followed by the verdict line. No preamble, no summary of the diff, no code blocks, no explanations outside the findings. List at most 10 findings, most severe first, one per line:\n\n`N. [severity] path/to/file.rs:LINE: what is wrong (one sentence). What it leads to (one sentence).`\n\nLINE is the line number in the new version of the file. In the diff below every context and added line already starts with that number (removed lines have none): copy it, do not count lines yourself. For example:\n\n`1. [major] src/queue.rs:57: pop() returns the newest item although the doc comment promises FIFO order. Consumers process requests out of order.`\n\nIf there are no findings, write `No issues found.` instead of the list.\n\nThe verdict line is mandatory in every answer, with or without findings. The very last line of your answer must be exactly one of:\n\n`VERDICT: approve`\n`VERDICT: needs-work`\n\nUse `needs-work` only if there is at least one `blocker` or `major` finding; with only `minor` findings or none, use `approve`.\n\n---\n\nDiff to review: uncommitted changes (git diff HEAD).\n\n===== BEGIN DIFF =====\n lib/pager.py        | 16 ++++++++--------\n tests/test_pager.py |  8 ++++----\n 2 files changed, 12 insertions(+), 12 deletions(-)\n\ndiff --git a/lib/pager.py b/lib/pager.py\nindex 0805e66..155546f 100644\n--- a/lib/pager.py\n+++ b/lib/pager.py\n@@ -33,21 +33,21 @@ def check_page(page, total, per_page=DEFAULT_PER_PAGE):\n    33  \n    34  \n    35  def page_bounds(page, total, per_page=DEFAULT_PER_PAGE):\n       -    \"\"\"Return ``(first, last)``, the indexes of the first and the last item\n       -    on ``page``; both ends are inclusive.\n    36 +    \"\"\"Return ``(start, stop)``, the half-open index range of the items on\n    37 +    ``page``, ready for slicing: ``items[start:stop]``.\n    38  \n       -    The only page of an empty ledger is empty: ``last == first - 1``.\n    39 +    The only page of an empty ledger is empty: ``start == stop``.\n    40      \"\"\"\n    41      check_page(page, total, per_page)\n       -    first = (page - 1) * per_page\n       -    last = min(first + per_page, total) - 1\n       -    return first, last\n    42 +    start = (page - 1) * per_page\n    43 +    stop = min(start + per_page, total)\n    44 +    return start, stop\n    45  \n    46  \n    47  def paginate(items, page, per_page=DEFAULT_PER_PAGE):\n    48      \"\"\"Return the items shown on ``page``.\"\"\"\n       -    first, last = page_bounds(page, len(items), per_page)\n       -    return items[first:last + 1]\n    49 +    start, stop = page_bounds(page, len(items), per_page)\n    50 +    return items[start:stop]\n    51  \n    52  \n    53  def clamp_page(page, total, per_page=DEFAULT_PER_PAGE):\ndiff --git a/tests/test_pager.py b/tests/test_pager.py\nindex ca13f73..c2e833c 100644\n--- a/tests/test_pager.py\n+++ b/tests/test_pager.py\n@@ -42,14 +42,14 @@ class CheckPageTest(unittest.TestCase):\n    42  \n    43  class PageBoundsTest(unittest.TestCase):\n    44      def test_full_page(self):\n       -        self.assertEqual(page_bounds(1, 45, 20), (0, 19))\n       -        self.assertEqual(page_bounds(2, 45, 20), (20, 39))\n    45 +        self.assertEqual(page_bounds(1, 45, 20), (0, 20))\n    46 +        self.assertEqual(page_bounds(2, 45, 20), (20, 40))\n    47  \n    48      def test_last_page_is_short(self):\n       -        self.assertEqual(page_bounds(3, 45, 20), (40, 44))\n    49 +        self.assertEqual(page_bounds(3, 45, 20), (40, 45))\n    50  \n    51      def test_empty_ledger(self):\n       -        self.assertEqual(page_bounds(1, 0, 20), (0, -1))\n    52 +        self.assertEqual(page_bounds(1, 0, 20), (0, 0))\n    53  \n    54  \n    55  class PaginateTest(unittest.TestCase):\n===== END DIFF =====\n\nReview the diff above. Your last line must be exactly VERDICT: approve or VERDICT: needs-work.\n"
+      },
+      {
+        "id": "T21",
+        "slug": "review-clean",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T21-review-clean",
+        "timeout_seconds": 600,
+        "repeats": 1,
+        "tags": [
+          "review",
+          "read"
+        ],
+        "policy": "read-only",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "You are a strict code reviewer for mark2, a Rust agent harness (core library + headless CLI). Below is a diff. Your job is to find REAL defects in the changed code and give a verdict.\n\n## What counts as a finding\n\nReport only problems that can actually break something:\n\n- bugs: wrong logic, off-by-one, wrong comparison or operator, wrong value returned;\n- broken contracts: code does not do what its doc comment, comment, name or caller expects;\n- panics on reachable paths: `unwrap`/`expect` on fallible input, out-of-bounds indexing, integer overflow, division by zero;\n- concurrency problems: races, deadlocks, locks held across `.await`, lost cancellation;\n- leaked resources: files, child processes, tasks or channels that are never closed, killed or awaited;\n- errors silently swallowed where the caller needs them;\n- test gaps: new or changed behavior with no test covering it (this project requires tests with every change).\n\nDo NOT report: style, formatting, naming, wording of comments or docs, \"could be more idiomatic\", refactoring ideas, performance guesses without evidence, or problems in code the diff did not touch. A diff that only edits comments or docs has no findings unless the new text contradicts the code.\n\n## How to work\n\n- The diff is the primary input. Paths in it are relative to the repository root; drop the `a/` and `b/` prefixes. The `read` and `grep` tools resolve paths against the repository root.\n- If the diff does not show enough context (the rest of a function, its doc comment, its callers, its tests), use `read` on the file before you judge. Check the `#[cfg(test)]` module of the file before you claim a test is missing.\n- Read only what you need to confirm or reject a concrete suspicion, usually just the changed files. Do not explore the repository. To find callers, definitions or tests, search with `grep` (a regex, optionally narrowed by `path`) instead of reading files at random. To list files or find one by name, call `grep` with `files_only: true`: the regex then matches file paths. If a search and one or two reads do not settle a suspicion, drop it and move on.\n- Only `read` and `grep` work in this session. `bash`, `edit` and `write` are blocked: do not call them, you cannot run builds or tests.\n- Call tools silently: write no text before or between tool calls. Everything you write is shown to the user as the review.\n- Report each defect once: a wrong line of code and the comment next to it are one finding, not two.\n- Every finding must be backed by code you have actually seen. If you cannot confirm a suspicion, drop it. An empty list of findings is a good, valid result: never invent a problem to justify a verdict.\n\n## Severity\n\n- `blocker`: breaks the build or existing tests, panics or corrupts data on a normal path, or opens a security hole.\n- `major`: a real bug on a plausible path, a broken contract, or new behavior without a test.\n- `minor`: a real but low-impact defect.\n\n## Output format\n\nYour whole answer is the findings list followed by the verdict line. No preamble, no summary of the diff, no code blocks, no explanations outside the findings. List at most 10 findings, most severe first, one per line:\n\n`N. [severity] path/to/file.rs:LINE: what is wrong (one sentence). What it leads to (one sentence).`\n\nLINE is the line number in the new version of the file. In the diff below every context and added line already starts with that number (removed lines have none): copy it, do not count lines yourself. For example:\n\n`1. [major] src/queue.rs:57: pop() returns the newest item although the doc comment promises FIFO order. Consumers process requests out of order.`\n\nIf there are no findings, write `No issues found.` instead of the list.\n\nThe verdict line is mandatory in every answer, with or without findings. The very last line of your answer must be exactly one of:\n\n`VERDICT: approve`\n`VERDICT: needs-work`\n\nUse `needs-work` only if there is at least one `blocker` or `major` finding; with only `minor` findings or none, use `approve`.\n\n---\n\nDiff to review: uncommitted changes (git diff HEAD).\n\n===== BEGIN DIFF =====\n lib/pager.py        | 12 ++++++------\n tests/test_pager.py |  8 ++++----\n 2 files changed, 10 insertions(+), 10 deletions(-)\n\ndiff --git a/lib/pager.py b/lib/pager.py\nindex 0805e66..457c091 100644\n--- a/lib/pager.py\n+++ b/lib/pager.py\n@@ -26,15 +26,15 @@ def page_count(total, per_page=DEFAULT_PER_PAGE):\n    26  \n    27  \n    28  def check_page(page, total, per_page=DEFAULT_PER_PAGE):\n       -    \"\"\"Raise PageError unless ``page`` exists for ``total`` items.\"\"\"\n       -    count = page_count(total, per_page)\n       -    if page < 1 or page > count:\n       -        raise PageError(\"page %d is out of range 1..%d\" % (page, count))\n    29 +    \"\"\"Raise PageError unless ``page`` is one of the pages ``total`` items fill.\"\"\"\n    30 +    pages = page_count(total, per_page)\n    31 +    if not 1 <= page <= pages:\n    32 +        raise PageError(\"page %d is out of range 1..%d\" % (page, pages))\n    33  \n    34  \n    35  def page_bounds(page, total, per_page=DEFAULT_PER_PAGE):\n       -    \"\"\"Return ``(first, last)``, the indexes of the first and the last item\n       -    on ``page``; both ends are inclusive.\n    36 +    \"\"\"Return ``(first, last)``: the index of the first item on ``page`` and\n    37 +    the index of its last item, both inclusive.\n    38  \n    39      The only page of an empty ledger is empty: ``last == first - 1``.\n    40      \"\"\"\ndiff --git a/tests/test_pager.py b/tests/test_pager.py\nindex ca13f73..d934171 100644\n--- a/tests/test_pager.py\n+++ b/tests/test_pager.py\n@@ -54,10 +54,10 @@ class PageBoundsTest(unittest.TestCase):\n    54  \n    55  class PaginateTest(unittest.TestCase):\n    56      def test_pages_cover_every_item_once(self):\n       -        items = list(range(45))\n       -        chunks = [paginate(items, page, 20) for page in (1, 2, 3)]\n       -        self.assertEqual([len(chunk) for chunk in chunks], [20, 20, 5])\n       -        self.assertEqual(sum(chunks, []), items)\n    57 +        ledger = list(range(45))\n    58 +        pages = [paginate(ledger, page, 20) for page in (1, 2, 3)]\n    59 +        self.assertEqual([len(rows) for rows in pages], [20, 20, 5])\n    60 +        self.assertEqual(sum(pages, []), ledger)\n    61  \n    62      def test_empty_ledger(self):\n    63          self.assertEqual(paginate([], 1, 20), [])\n===== END DIFF =====\n\nReview the diff above. Your last line must be exactly VERDICT: approve or VERDICT: needs-work.\n"
+      },
+      {
+        "id": "T22",
+        "slug": "ctx-repo-needle",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T22-ctx-repo-needle",
+        "timeout_seconds": 300,
+        "repeats": 1,
+        "tags": [
+          "context",
+          "search",
+          "edit"
+        ],
+        "policy": "yolo",
+        "context_limit": 16384,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory is the backend of an online shop (Python,\n`src/ledgerly/`). Support escalated a ticket: customers who ask for a refund\non the 30th day after delivery are turned down with\n\n    E-4127 refund window closed: order is 30 days old (limit 30 days)\n\nThe refund policy: a customer may ask for a refund up to and including the\n30th day after delivery; from day 31 on the request is rejected.\n\nFix the code so that refunds follow this policy.\n\nRules:\n\n- The fix is a one-line change in a single file.\n- Everything else in the repository is correct and must stay exactly as it\n  is: do not modify, rename or delete any other line or file.\n"
+      },
+      {
+        "id": "T23",
+        "slug": "ctx-scatter-synthesis",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T23-ctx-scatter-synthesis",
+        "timeout_seconds": 480,
+        "repeats": 1,
+        "tags": [
+          "context",
+          "compaction",
+          "read"
+        ],
+        "policy": "yolo",
+        "context_limit": 8192,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "`custody/` holds the custody log of a biobank's freezers: one file per duty\nday, in chronological order (`day-01.log` ... `day-08.log`). Entries are\nsometimes corrected, voided or superseded by later ones.\n\nQuestion: in which slot is the KESTREL study's reference aliquot at the end of\nduty day 08?\n\nWrite the answer to `answer.txt`: the slot alone, in the slot notation the\nlogs use (freezer/rack/box/position, for example `F1/R1/B01/A1`), on a single\nline, nothing else.\n\nRules:\n\n- `custody/` must stay exactly as it is.\n- Do not create any file other than `answer.txt`: no scratch notes, no helper\n  scripts. If you need to compute something, do it inline, for example with\n  `python3 -c \"...\"`.\n"
+      },
+      {
+        "id": "T24",
+        "slug": "app-freeform",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T24-app-freeform",
+        "timeout_seconds": 1800,
+        "repeats": 1,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 360,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Build a small kanban board web app in the current directory: an aiohttp backend `server.py`, started as `python3 server.py`, that listens on the port from the `PORT` environment variable (default 8770) and serves the page at `/`, and a plain JavaScript frontend with no frameworks, no build step and nothing loaded from the internet. The board has three columns, To Do, Doing and Done, behind a JSON API: `GET /api/cards` returns the list of all cards, each an object `{\"id\": ..., \"title\": ..., \"column\": ...}` with a unique id and the column `todo`, `doing` or `done`; `POST /api/cards` with `{\"title\": ...}` creates a card in `todo` and returns it, or answers 400 when the title is blank; `PATCH /api/cards/<id>` with `{\"column\": ...}` moves the card and returns it, or answers 400 for an unknown column; `DELETE /api/cards/<id>` removes the card; and both of the last two answer 404 for an id that does not exist. Every change is saved, before the server answers, to a JSON file at the path from the `BOARD_FILE` environment variable (default `board.json`; no file yet means an empty board), so the board survives a restart of the server, even a hard kill. The page has a text input `#new-card` and a button `#add-btn` that adds a card with the typed title (pressing Enter in the input does the same), and column elements `#todo`, `#doing` and `#done` that hold one `.card` element per card, showing its title, with the buttons `.move-left` and `.move-right` to move it to the neighbouring column (they may be missing or disabled where there is none) and `.delete`; the page changes the board only through the API, loads it when it opens and always shows it exactly as the server stores it. Write `test_board.py`, an automated test that starts `server.py` itself as a subprocess on a free port with its own temporary `BOARD_FILE`, checks the API, stops the server even when a check fails, finishes within 60 seconds and exits 0 only if everything works, then run it and make it pass. `python3` on your PATH already has aiohttp, so install nothing, and stop the servers you started before you finish, each by the PID of the process you launched — never by matching names with pkill or killall: other processes on this machine are not yours.\n"
+      },
+      {
+        "id": "T25",
+        "slug": "app-planned",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T25-app-planned",
+        "timeout_seconds": 1800,
+        "repeats": 1,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 360,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "# Kanban board web app\n\n## Brief\n\nBuild a small kanban board web app in the current directory: an aiohttp\nbackend, a plain JavaScript page and an automated test. The board has three\ncolumns, To Do, Doing and Done; cards can be added, moved between columns and\ndeleted, and the board is kept in a JSON file, so it survives a restart.\n\n## Requirements\n\n### Server\n\n- `server.py`, on aiohttp, started as `python3 server.py`.\n- Port: the `PORT` environment variable, default `8770`.\n- Serves the page at `/`.\n\n### JSON API\n\n- `GET /api/cards` returns the list of all cards. A card is an object\n  `{\"id\": ..., \"title\": ..., \"column\": ...}`: the id is unique, the column is\n  `todo`, `doing` or `done`.\n- `POST /api/cards` with `{\"title\": ...}` creates a card in `todo` and returns\n  it. A blank title: 400.\n- `PATCH /api/cards/<id>` with `{\"column\": ...}` moves the card and returns it.\n  An unknown column: 400.\n- `DELETE /api/cards/<id>` removes the card.\n- `PATCH` and `DELETE` answer 404 for an id that does not exist.\n\n### Storage\n\n- Every change is saved, before the server answers, to a JSON file at the\n  path from the `BOARD_FILE` environment variable, default `board.json`.\n- No file yet means an empty board.\n- The board survives a restart of the server, even a hard kill.\n\n### Page\n\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet.\n- A text input `#new-card` and a button `#add-btn` that adds a card with the\n  typed title. Pressing Enter in the input does the same.\n- Column elements `#todo`, `#doing` and `#done`, holding one `.card` element\n  per card.\n- Each `.card` shows its title and has the buttons `.move-left` and\n  `.move-right` (move it to the neighbouring column; they may be missing or\n  disabled where there is none) and `.delete`.\n- The page changes the board only through the API, loads it when it opens and\n  always shows it exactly as the server stores it.\n\n### Test: `test_board.py`\n\n- Starts `server.py` itself as a subprocess on a free port with its own\n  temporary `BOARD_FILE`.\n- Checks the API.\n- Stops the server, even when a check fails.\n- Finishes within 60 seconds and exits 0 only if everything works.\n- You run it and make it pass.\n\n### Environment\n\n- `python3` on your PATH already has aiohttp: install nothing.\n- Stop the servers you started before you finish, each by the PID of the\n  process you launched — never by matching names with pkill or killall: other\n  processes on this machine are not yours.\n\n## Plan\n\nWork in this order and finish each step before the next.\n\n1. **Server and storage.** Write `server.py`: the port, the board loaded from\n   `BOARD_FILE`, the four API routes with their 400 and 404 answers, a save on\n   every change.\n2. **Check the API by hand.** Start the server with a temporary `BOARD_FILE`\n   and walk the API: create, a blank title, move, an unknown column, delete,\n   an unknown id. Kill the server with SIGKILL, start it again on the same\n   `BOARD_FILE` and confirm that the board is unchanged.\n3. **Page.** Serve it at `/` with the required ids and classes. It loads the\n   board when it opens; adding (button and Enter), moving left and right and\n   deleting go through the API; after every action the page shows the board as\n   the server stores it.\n4. **Test.** Write `test_board.py` as required above.\n5. **Run and fix.** Run `python3 test_board.py` until it passes, then go\n   through the Definition of Done item by item and fix what fails.\n6. **Clean up.** Stop every server you started.\n\n## TODO\n\n- [ ] `server.py` starts with `python3 server.py`, port from `PORT` (default 8770)\n- [ ] `GET /` serves the page\n- [ ] `GET /api/cards`\n- [ ] `POST /api/cards`, 400 for a blank title\n- [ ] `PATCH /api/cards/<id>`, 400 for an unknown column, 404 for an unknown id\n- [ ] `DELETE /api/cards/<id>`, 404 for an unknown id\n- [ ] Board saved to `BOARD_FILE` on every change, before answering; loaded at start; no file means an empty board\n- [ ] Page: `#new-card` and `#add-btn`, Enter adds too\n- [ ] Page: `#todo`, `#doing`, `#done` with one `.card` per card: title, `.move-left`, `.move-right`, `.delete`\n- [ ] Page: loads the board on open, changes it only through the API, always shows it as the server stores it\n- [ ] `test_board.py` written, run, passing\n- [ ] Every Definition of Done item checked\n- [ ] Every server you started is stopped\n\n## Definition of Done\n\nThe task is done when all of the following hold.\n\nAPI and storage, with the server started on a `BOARD_FILE` that does not exist yet:\n\n1. `GET /` answers 200 with the page; `GET /api/cards` answers 200 with `[]`.\n2. `POST /api/cards` with a title answers 2xx with the new card: an id, the\n   same title, the column `todo`. Three cards get three different ids, and\n   `GET /api/cards` lists all three in `todo`.\n3. `POST /api/cards` with the title `\"\"` or `\"   \"` answers 400 and creates\n   nothing.\n4. `PATCH /api/cards/<id>` to any of the three columns answers 2xx with the\n   card in that column, and `GET /api/cards` agrees. With\n   `{\"column\": \"archive\"}` it answers 400 and the card stays where it was.\n5. `DELETE /api/cards/<id>` answers 2xx, and the card is gone from\n   `GET /api/cards`.\n6. `PATCH` and `DELETE` of an id that does not exist, or no longer exists,\n   answer 404.\n7. After a change the file at `BOARD_FILE` exists and holds valid JSON.\n8. Killed with SIGKILL right after a change and started again on the same\n   `BOARD_FILE`, the server returns exactly the same cards: ids, titles,\n   columns. A card created after the restart gets an id no other card has, and\n   it survives the next SIGKILL and restart as well.\n\nPage, in a real browser, typing and clicking like a user:\n\n9. Cards that are already stored show up when the page opens, each as one\n   `.card` in its column (`#todo`, `#doing`, `#done`).\n10. Typing a title into `#new-card` and pressing Enter adds the card to\n    `#todo`, on the page and on the server. Typing a title and clicking\n    `#add-btn` does the same.\n11. Clicking `#add-btn` with an empty or blank title adds nothing, neither on\n    the page nor on the server.\n12. `.move-right` on a card in `#todo` moves it to `#doing`, once more to\n    `#done`; `.move-left` on it in `#done` moves it back to `#doing`. After\n    each click the card is in exactly one column on the page, and the server\n    has it in the same column.\n13. `.delete` removes the card from the page and from the server.\n14. The page never shows more or fewer cards than the server has. Reloading\n    it, or opening it in a second browser, shows the same board.\n\nTest:\n\n15. `python3 test_board.py`, with nothing running beforehand, exits 0 within\n    60 seconds and leaves no server running.\n16. If `server.py` cannot start (say, it exits at once), `python3 test_board.py`\n    exits non-zero.\n"
+      },
+      {
+        "id": "T26",
+        "slug": "chat-freeform",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T26-chat-freeform",
+        "timeout_seconds": 1800,
+        "repeats": 1,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Build a small multi-user chat in the current working directory: a Python backend `server.py` on aiohttp, a plain JavaScript frontend in `static/index.html`, `static/app.js` and `static/style.css`, and an automated test `test_chat.py`; a checker will start your server, talk to it over WebSocket and drive the page in a headless browser like a real user (typing and clicking), so follow this contract exactly. The server is started as `python3 server.py` from the working directory and must keep running until it is killed; it listens on the port from the `PORT` environment variable, default `8765`, on `0.0.0.0` or `127.0.0.1` (the checker connects to `127.0.0.1`), `GET /` returns `static/index.html`, every file in `static/` is also served at `/static/<name>`, `index.html` loads `/static/style.css` and `/static/app.js` from there, and the WebSocket endpoint is `/ws` on the same port. Every WebSocket message is a text frame holding one JSON object: a client sends `{\"type\": \"join\", \"nick\": \"<nick>\"}` and `{\"type\": \"message\", \"text\": \"<text>\"}`, and a client that is connected but has not joined gets no broadcasts and its `message` frames are ignored. The server sends `{\"type\": \"history\", \"messages\": [...]}` only to the client that joined, right after its `join`, with the last 50 chat messages, oldest first, each in the `message` form below (system notices are not part of the history); it sends `{\"type\": \"system\", \"text\": \"...\"}` to every joined client when a client joins and when a joined client leaves (its WebSocket closes), with a text that names the nick, e.g. `alice joined`, `alice left` (whether the joining client also receives its own join notice is up to you); and when a joined client sends a message it broadcasts `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}` to every joined client, the sender included, where `nick` is the sender's nick and `ts` is the server time in Unix milliseconds. `static/index.html` has elements with exactly these ids: `nick` (text input), `join-btn` (button), `msg` (text input), `send-btn` (button) and `messages` (the chat feed), and there is no auto-join: loading the page must never send `join` by itself, not even with a default or remembered nick, the user joins only by acting, and until then `#nick` and `#join-btn` are visible and enabled and `#messages` is empty (no placeholder text). Clicking `#join-btn` joins with the nick typed into `#nick`, and pressing Enter in `#nick` does the same; after joining, `#msg` and `#send-btn` are visible and enabled (before joining they may be hidden or disabled), and pressing Enter in `#msg` or clicking `#send-btn` sends the typed text as a message. On join `#messages` shows the received history, after that every incoming `message` and `system` notice is appended to `#messages` with its text visible, and a message is shown when its broadcast comes back from the server (the sender receives its own broadcast too); the page may open the WebSocket on load or when the user joins, and it is plain JavaScript with no frameworks, no build step and nothing loaded from the internet, because the checker's browser can reach only your server. Write your own automated test `test_chat.py` and ship it with the code: it runs as `python3 test_chat.py` from the working directory, needs nothing already running and finishes within 60 seconds; it starts `server.py` itself as a subprocess (use `sys.executable`) with `PORT` set to a free port it picks, waits until the server accepts connections, and stops the server at the end, also when a check fails; it checks the protocol with real WebSocket clients (join and history, broadcast between two clients, join and leave notices, history for a newcomer), and it exits with status 0 only if every check passed, non-zero otherwise. `python3` on your PATH has aiohttp available and is the same Python the checker uses to run `server.py` and `test_chat.py`, so there is nothing to install: do not install packages globally; you may start the server and run your test while you work, and stop the servers you started before you finish, each by the PID of the process you launched — never by matching names with pkill or killall: other processes on this machine are not yours.\n"
+      },
+      {
+        "id": "T27",
+        "slug": "chat-planned",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T27-chat-planned",
+        "timeout_seconds": 1800,
+        "repeats": 1,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "# Multi-user WebSocket chat\n\n## Brief\n\nBuild a small multi-user chat in the current working directory: a Python\nbackend on aiohttp, a plain JavaScript frontend and an automated test. Users\nopen the page, join under the nick they type and exchange messages over a\nWebSocket; a newcomer sees the recent history. A checker will start your\nserver, talk to it over WebSocket, and drive the page in a headless browser\nlike a real user (typing and clicking). Follow the requirements below exactly.\n\n## Requirements\n\n### Files\n\n- `server.py`\n- `static/index.html`\n- `static/app.js`\n- `static/style.css`\n- `test_chat.py`\n\n### Server: `server.py`\n\n- Python 3 with aiohttp. It is started as `python3 server.py` from the working\n  directory and must keep running until it is killed.\n- Port: the `PORT` environment variable, default `8765`. Listen on `0.0.0.0`\n  or `127.0.0.1`: the checker connects to `127.0.0.1`.\n- `GET /` returns `static/index.html`. Every file in `static/` is also served\n  at `/static/<name>`, and `index.html` loads `/static/style.css` and\n  `/static/app.js` from there.\n- The WebSocket endpoint is `/ws` on the same port.\n\n### Protocol\n\nEvery WebSocket message is a text frame holding one JSON object.\n\nClient to server:\n\n- `{\"type\": \"join\", \"nick\": \"<nick>\"}`\n- `{\"type\": \"message\", \"text\": \"<text>\"}`\n\nServer to client:\n\n- `{\"type\": \"history\", \"messages\": [...]}`: sent only to the client that\n  joined, right after its `join`. `messages` holds the last 50 chat messages,\n  oldest first, each in the `message` form below. System notices are not part\n  of the history.\n- `{\"type\": \"system\", \"text\": \"...\"}`: sent to every joined client when a\n  client joins and when a joined client leaves (its WebSocket closes). The\n  text names the nick, e.g. `alice joined`, `alice left`. Whether the joining\n  client also receives its own join notice is up to you.\n- `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}`: when a\n  joined client sends a message, the server broadcasts it to every joined\n  client, the sender included. `nick` is the sender's nick, `ts` is the server\n  time in Unix milliseconds.\n\nA client that is connected but has not joined gets no broadcasts, and its\n`message` frames are ignored.\n\n### Page\n\n- `static/index.html` has elements with exactly these ids: `nick` (text\n  input), `join-btn` (button), `msg` (text input), `send-btn` (button),\n  `messages` (the chat feed).\n- No auto-join. Loading the page must never send `join` by itself, not even\n  with a default or remembered nick: the user joins only by acting. Until then\n  `#nick` and `#join-btn` are visible and enabled, and `#messages` is empty\n  (no placeholder text).\n- Clicking `#join-btn` joins with the nick typed into `#nick`. Pressing Enter\n  in `#nick` does the same.\n- After joining, `#msg` and `#send-btn` are visible and enabled (before\n  joining they may be hidden or disabled). Pressing Enter in `#msg` or\n  clicking `#send-btn` sends the typed text as a message.\n- On join, `#messages` shows the received history. After that, every incoming\n  `message` and `system` notice is appended to `#messages` with its text\n  visible. A message is shown when its broadcast comes back from the server\n  (the sender receives its own broadcast too).\n- The page may open the WebSocket on load or when the user joins.\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet. The checker's browser can reach only your server.\n\n### Test: `test_chat.py`\n\nWrite your own automated test and ship it with the code:\n\n- It runs as `python3 test_chat.py` from the working directory, needs nothing\n  already running, and finishes within 60 seconds.\n- It starts `server.py` itself as a subprocess (use `sys.executable`), with\n  `PORT` set to a free port it picks, waits until the server accepts\n  connections, and stops the server at the end, also when a check fails.\n- It checks the protocol with real WebSocket clients: join and history,\n  broadcast between two clients, join and leave notices, history for a\n  newcomer.\n- It exits with status 0 only if every check passed, non-zero otherwise.\n\n### Environment\n\n- `python3` on your PATH has aiohttp available. It is the same Python the\n  checker uses to run `server.py` and `test_chat.py`, so there is nothing to\n  install. Do not install packages globally.\n- You may start the server and run your test while you work. Stop the servers\n  you started before you finish, each by the PID of the process you launched —\n  never by matching names with pkill or killall: other processes on this\n  machine are not yours.\n\n## Plan\n\nWork in this order and finish each step before the next.\n\n1. **Server.** Write `server.py`: the port, `GET /` and `/static/<name>`, the\n   `/ws` endpoint. On `join`: `history` to the joining client, a `system`\n   notice to every joined client. On `message` from a joined client: the\n   broadcast to every joined client, the sender included. On a joined\n   client's disconnect: the leave notice. Clients that have not joined get\n   nothing and are not heard.\n2. **Test.** Write `test_chat.py` as required above: it starts the server on a\n   free port, checks join and history, broadcast between two clients, join and\n   leave notices and history for a newcomer, and stops the server whatever\n   happens.\n3. **Run and fix the server.** Run `python3 test_chat.py` until it passes.\n4. **Page.** Write `static/index.html`, `static/app.js` and `static/style.css`:\n   the five ids, join by click and by Enter, send by click and by Enter, the\n   history on join and every incoming `message` and `system` notice appended\n   to `#messages`.\n5. **Walk the page as a user.** The checker uses the page in a real browser,\n   so go through `static/app.js` step by step the way a user meets it: the\n   page loads and nobody touches it; a nick is typed and Enter is pressed; a\n   message is typed and Enter is pressed; another one is typed and\n   `#send-btn` is clicked; a second user opens the page, types a nick and\n   clicks `#join-btn`. After each step the page and the server must be in the\n   state the Page requirements describe.\n6. **Check the Definition of Done.** Go through it item by item and fix what\n   fails.\n7. **Clean up.** Stop every server you started.\n\n## TODO\n\n- [ ] `server.py` starts with `python3 server.py`, port from `PORT` (default 8765), keeps running until killed\n- [ ] `GET /` serves `static/index.html`; every file in `static/` is served at `/static/<name>`\n- [ ] `/ws`: `join` gets `history` (the last 50 chat messages, oldest first, no system notices), sent only to the joining client\n- [ ] `system` notice naming the nick to every joined client on a join and on a leave\n- [ ] `message` broadcast to every joined client, the sender included, with `nick` and `ts` (Unix milliseconds)\n- [ ] A client that has not joined gets no broadcasts, and its `message` frames are ignored\n- [ ] Page: ids `nick`, `join-btn`, `msg`, `send-btn`, `messages`\n- [ ] Page: no auto-join; before joining `#nick` and `#join-btn` are visible and enabled, `#messages` is empty\n- [ ] Page: join by clicking `#join-btn` or pressing Enter in `#nick`\n- [ ] Page: after joining, `#msg` and `#send-btn` are visible and enabled; send by pressing Enter in `#msg` or clicking `#send-btn`\n- [ ] Page: history on join, then every incoming `message` and `system` notice appended to `#messages`\n- [ ] Page: plain JavaScript, no frameworks, no build step, nothing loaded from the internet\n- [ ] `test_chat.py` written, run, passing\n- [ ] Every Definition of Done item checked\n- [ ] Every server you started is stopped\n\n## Definition of Done\n\nThe task is done when all of the following hold.\n\n1. `server.py`, `static/index.html`, `static/app.js`, `static/style.css` and\n   `test_chat.py` exist in the working directory.\n\nProtocol, with the server started as `python3 server.py` and `PORT` set to a\nfree port:\n\n2. The server answers HTTP on `127.0.0.1` at that port and keeps running.\n3. A client that opens a WebSocket at `/ws` and sends `join` receives a\n   `history` frame; on a fresh server its `messages` is empty.\n4. When a second client joins, it receives its own `history`, and the first\n   client receives a `system` notice whose text names the second client's\n   nick.\n5. A `message` sent by a joined client reaches every joined client, the sender\n   included, as a `message` frame with the sender's `nick`, the same `text`\n   and a `ts` that is a positive number.\n6. When a joined client's WebSocket closes, the joined clients that remain\n   receive a `system` notice that names its nick.\n7. A client that joins later receives in its `history` exactly the chat\n   messages sent so far, oldest first, each with its `nick`, `text` and `ts`,\n   and no system notices.\n8. After more than 50 chat messages, many of them sent in a quick burst, every\n   one of them is broadcast, and a newcomer's `history` holds exactly the last\n   50, oldest first.\n\nPage, in a real browser that can reach only your server, typing and clicking\nlike a user:\n\n9. `GET /` answers 200 with a page that has elements with the ids `nick`,\n   `join-btn`, `msg`, `send-btn` and `messages`.\n10. Left alone after it loads, the page joins nobody: the server announces no\n    join and no message, `#messages` is empty, `#nick` is visible and\n    editable, `#join-btn` is visible and enabled.\n11. Typing a nick into `#nick` and pressing Enter joins under that nick: the\n    other joined clients receive a `system` notice that names it.\n12. Typing a text into `#msg` and pressing Enter sends it: every joined client\n    receives its broadcast with the page's nick, and the text appears in the\n    page's own `#messages`.\n13. Typing a text into `#msg` and clicking `#send-btn` does the same.\n14. On a second page, typing a nick into `#nick` and clicking `#join-btn`\n    joins: its `#messages` shows the texts of the messages sent before, and\n    the first page's `#messages` shows a notice that names the newcomer.\n15. A message sent from the second page appears in the first page's\n    `#messages`.\n\nTest:\n\n16. `python3 test_chat.py`, with nothing running beforehand, exits 0 within 60\n    seconds and leaves no server running.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T01",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:05:58.100243Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 13.213347417,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 4244,
+        "output": 92,
+        "cached": 3648
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 119,
+      "stdout_path": "logs/glm53/T01/1.stdout.txt",
+      "stderr_path": "logs/glm53/T01/1.stderr.txt",
+      "session_path": "sessions/glm53/T01/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T02",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:06:11.344706Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 4.807432875,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 2820,
+        "output": 20,
+        "cached": 2304
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 1,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 11,
+      "stdout_path": "logs/glm53/T02/1.stdout.txt",
+      "stderr_path": "logs/glm53/T02/1.stderr.txt",
+      "session_path": "sessions/glm53/T02/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T03",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:06:16.184216Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 20.444990542,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 8741,
+        "output": 210,
+        "cached": 7616
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 189,
+      "stdout_path": "logs/glm53/T03/1.stdout.txt",
+      "stderr_path": "logs/glm53/T03/1.stderr.txt",
+      "session_path": "sessions/glm53/T03/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T04",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:06:36.763896Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 16.376771791,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 7054,
+        "output": 203,
+        "cached": 6016
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "all tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 263,
+      "stdout_path": "logs/glm53/T04/1.stdout.txt",
+      "stderr_path": "logs/glm53/T04/1.stderr.txt",
+      "session_path": "sessions/glm53/T04/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T05",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:06:53.259018Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 15.635311791,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 8535,
+        "output": 499,
+        "cached": 6784
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 10,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 3,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 275,
+      "stdout_path": "logs/glm53/T05/1.stdout.txt",
+      "stderr_path": "logs/glm53/T05/1.stderr.txt",
+      "session_path": "sessions/glm53/T05/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T06",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:07:09.03494Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 19.077534333,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 8880,
+        "output": 340,
+        "cached": 7040
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 7,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 257,
+      "stdout_path": "logs/glm53/T06/1.stdout.txt",
+      "stderr_path": "logs/glm53/T06/1.stderr.txt",
+      "session_path": "sessions/glm53/T06/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T07",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:07:28.134509Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 19.245861959,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 6603,
+        "output": 154,
+        "cached": 5760
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 142,
+      "stdout_path": "logs/glm53/T07/1.stdout.txt",
+      "stderr_path": "logs/glm53/T07/1.stderr.txt",
+      "session_path": "sessions/glm53/T07/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T08",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:07:47.406455Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 9.344437959,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 4616,
+        "output": 132,
+        "cached": 3968
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 138,
+      "stdout_path": "logs/glm53/T08/1.stdout.txt",
+      "stderr_path": "logs/glm53/T08/1.stderr.txt",
+      "session_path": "sessions/glm53/T08/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T09",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:07:56.894662Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 24.154717917,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 10145,
+        "output": 497,
+        "cached": 8448
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 427,
+      "stdout_path": "logs/glm53/T09/1.stdout.txt",
+      "stderr_path": "logs/glm53/T09/1.stderr.txt",
+      "session_path": "sessions/glm53/T09/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T10",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:08:21.217034Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 16.817073208,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 6155,
+        "output": 319,
+        "cached": 4608
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 239,
+      "stdout_path": "logs/glm53/T10/1.stdout.txt",
+      "stderr_path": "logs/glm53/T10/1.stderr.txt",
+      "session_path": "sessions/glm53/T10/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T11",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:08:38.069639Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 20.9403065,
+      "timeout_seconds": 750.0,
+      "tokens": {
+        "input": 10736,
+        "output": 544,
+        "cached": 8320
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 6,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "normalize_spaces: ok\ntruncate_words: ok\nwrap_line: ok\ncount_sentences: ok\nslugify: ok\nall tests passed\n",
+        "stderr": ""
+      },
+      "answer_chars": 526,
+      "stdout_path": "logs/glm53/T11/1.stdout.txt",
+      "stderr_path": "logs/glm53/T11/1.stderr.txt",
+      "session_path": "sessions/glm53/T11/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T12",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:08:59.130634Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 11.949691541,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 8576,
+        "output": 288,
+        "cached": 6784
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 7,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 334,
+      "stdout_path": "logs/glm53/T12/1.stdout.txt",
+      "stderr_path": "logs/glm53/T12/1.stderr.txt",
+      "session_path": "sessions/glm53/T12/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T13",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:09:11.11941Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 14.232895334,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 8488,
+        "output": 399,
+        "cached": 6016
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 5,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 477,
+      "stdout_path": "logs/glm53/T13/1.stdout.txt",
+      "stderr_path": "logs/glm53/T13/1.stderr.txt",
+      "session_path": "sessions/glm53/T13/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T14",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:09:25.407452Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 17.859307083,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 8601,
+        "output": 497,
+        "cached": 6400
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 348,
+      "stdout_path": "logs/glm53/T14/1.stdout.txt",
+      "stderr_path": "logs/glm53/T14/1.stderr.txt",
+      "session_path": "sessions/glm53/T14/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T15",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:09:43.300949Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 80.834024042,
+      "timeout_seconds": 900.0,
+      "tokens": {
+        "input": 36349,
+        "output": 647,
+        "cached": 22080
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 9,
+        "tool_errors": 0,
+        "compactions": 2,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 2,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 716,
+      "stdout_path": "logs/glm53/T15/1.stdout.txt",
+      "stderr_path": "logs/glm53/T15/1.stderr.txt",
+      "session_path": "sessions/glm53/T15/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T16",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:11:04.184739Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 9.508514041,
+      "timeout_seconds": 450.0,
+      "tokens": {
+        "input": 5701,
+        "output": 276,
+        "cached": 4416
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 6,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 425,
+      "stdout_path": "logs/glm53/T16/1.stdout.txt",
+      "stderr_path": "logs/glm53/T16/1.stderr.txt",
+      "session_path": "sessions/glm53/T16/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:11:13.729241Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 242.497832,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 296526,
+        "output": 12521,
+        "cached": 280512
+      },
+      "session": {
+        "assistant_messages": 29,
+        "tool_uses": 28,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 2675,
+      "stdout_path": "logs/glm53/T17/1.stdout.txt",
+      "stderr_path": "logs/glm53/T17/1.stderr.txt",
+      "session_path": "sessions/glm53/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T18",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:15:23.011196Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1.9699388340000001,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 1397,
+        "output": 72,
+        "cached": 1024
+      },
+      "session": {
+        "assistant_messages": 1,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 53,
+      "stdout_path": "logs/glm53/T18/1.stdout.txt",
+      "stderr_path": "logs/glm53/T18/1.stderr.txt",
+      "session_path": "sessions/glm53/T18/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T19",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:15:25.021832Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 5.825591083,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 4187,
+        "output": 230,
+        "cached": 3648
+      },
+      "session": {
+        "assistant_messages": 3,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 121,
+      "stdout_path": "logs/glm53/T19/1.stdout.txt",
+      "stderr_path": "logs/glm53/T19/1.stderr.txt",
+      "session_path": "sessions/glm53/T19/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T20",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:15:30.88684Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 24.340972,
+      "timeout_seconds": 1500.0,
+      "tokens": {
+        "input": 17407,
+        "output": 1421,
+        "cached": 12800
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 5,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 480,
+      "stdout_path": "logs/glm53/T20/1.stdout.txt",
+      "stderr_path": "logs/glm53/T20/1.stderr.txt",
+      "session_path": "sessions/glm53/T20/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T21",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:15:55.266282Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.398904917,
+      "timeout_seconds": 1500.0,
+      "tokens": {
+        "input": 6960,
+        "output": 388,
+        "cached": 3904
+      },
+      "session": {
+        "assistant_messages": 2,
+        "tool_uses": 2,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 34,
+      "stdout_path": "logs/glm53/T21/1.stdout.txt",
+      "stderr_path": "logs/glm53/T21/1.stderr.txt",
+      "session_path": "sessions/glm53/T21/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T22",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:16:03.676351Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 41.474053416,
+      "timeout_seconds": 750.0,
+      "tokens": {
+        "input": 33561,
+        "output": 1169,
+        "cached": 27456
+      },
+      "session": {
+        "assistant_messages": 8,
+        "tool_uses": 12,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 3
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 759,
+      "stdout_path": "logs/glm53/T22/1.stdout.txt",
+      "stderr_path": "logs/glm53/T22/1.stderr.txt",
+      "session_path": "sessions/glm53/T22/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T23",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:16:45.494487Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 110.330855625,
+      "timeout_seconds": 1200.0,
+      "tokens": {
+        "input": 41226,
+        "output": 1615,
+        "cached": 20672
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 11,
+        "tool_errors": 0,
+        "compactions": 3,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 3,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 1362,
+      "stdout_path": "logs/glm53/T23/1.stdout.txt",
+      "stderr_path": "logs/glm53/T23/1.stderr.txt",
+      "session_path": "sessions/glm53/T23/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T24",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:18:35.889883Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 147.810444292,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 53856,
+        "output": 9652,
+        "cached": 45056
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 10,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): FAIL\nT24 layer C (own test_board.py): PASS\n",
+        "stderr": "FAIL [layer B ui]: page 1: cannot click .move-right on the card 'Typed with Enter 673e3c' in #todo (clicking .move-right on a card in #todo): Locator.click: Timeout 5000ms exceeded.\n"
+      },
+      "answer_chars": 2404,
+      "stdout_path": "logs/glm53/T24/1.stdout.txt",
+      "stderr_path": "logs/glm53/T24/1.stderr.txt",
+      "session_path": "sessions/glm53/T24/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T25",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:21:27.542813Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 343.516793166,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 639539,
+        "output": 18087,
+        "cached": 615360
+      },
+      "session": {
+        "assistant_messages": 44,
+        "tool_uses": 43,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): PASS\nT25 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 4061,
+      "stdout_path": "logs/glm53/T25/1.stdout.txt",
+      "stderr_path": "logs/glm53/T25/1.stderr.txt",
+      "session_path": "sessions/glm53/T25/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T26",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:27:15.94414Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 344.322223416,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 168402,
+        "output": 20771,
+        "cached": 155584
+      },
+      "session": {
+        "assistant_messages": 21,
+        "tool_uses": 20,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 3477,
+      "stdout_path": "logs/glm53/T26/1.stdout.txt",
+      "stderr_path": "logs/glm53/T26/1.stderr.txt",
+      "session_path": "sessions/glm53/T26/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T27",
+      "repeat": 1,
+      "started_at": "2026-11-05T23:33:07.865994Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 183.761015292,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 251500,
+        "output": 10920,
+        "cached": 236032
+      },
+      "session": {
+        "assistant_messages": 24,
+        "tool_uses": 23,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793921771912}\n"
+      },
+      "answer_chars": 2699,
+      "stdout_path": "logs/glm53/T27/1.stdout.txt",
+      "stderr_path": "logs/glm53/T27/1.stderr.txt",
+      "session_path": "sessions/glm53/T27/1.jsonl",
+      "error": null
+    }
+  ]
+}
