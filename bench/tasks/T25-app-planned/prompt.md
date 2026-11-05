@@ -60,7 +60,9 @@ deleted, and the board is kept in a JSON file, so it survives a restart.
 ### Environment
 
 - `python3` on your PATH already has aiohttp: install nothing.
-- Stop any server you started before you finish.
+- Stop the servers you started before you finish, each by the PID of the
+  process you launched — never by matching names with pkill or killall: other
+  processes on this machine are not yours.
 
 ## Plan
 

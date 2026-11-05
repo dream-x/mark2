@@ -1027,7 +1027,10 @@ pub(crate) mod tests {
             "status 0",
             "aiohttp available",
             "install packages globally",
-            "any server you started",
+            // T17 говорит «stop any server you started», пара после инцидента
+            // 2026-11-05 — «stop the servers you started … by the PID»: общий
+            // хвост фразы есть во всех трёх промптах.
+            "you started before you finish",
         ] {
             for (name, prompt) in &prompts {
                 let found = prompt.to_lowercase().contains(&needle.to_lowercase());

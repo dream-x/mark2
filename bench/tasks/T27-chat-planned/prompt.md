@@ -98,8 +98,10 @@ Write your own automated test and ship it with the code:
 - `python3` on your PATH has aiohttp available. It is the same Python the
   checker uses to run `server.py` and `test_chat.py`, so there is nothing to
   install. Do not install packages globally.
-- You may start the server and run your test while you work. Stop any server
-  you started before you finish.
+- You may start the server and run your test while you work. Stop the servers
+  you started before you finish, each by the PID of the process you launched —
+  never by matching names with pkill or killall: other processes on this
+  machine are not yours.
 
 ## Plan
 
