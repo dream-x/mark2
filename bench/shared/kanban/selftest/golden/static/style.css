@@ -1,0 +1,9 @@
+body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #172b4d; }
+header { display: flex; gap: 1rem; align-items: center; padding: 1rem 1.5rem; background: #fff; }
+h1 { margin: 0; font-size: 1.4rem; }
+.new { display: flex; gap: 0.5rem; }
+.board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; padding: 1.5rem; }
+.column { background: #ebecf0; border-radius: 6px; padding: 0.75rem; min-height: 12rem; }
+.column h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+.card { background: #fff; border-radius: 4px; padding: 0.5rem; margin-bottom: 0.5rem; box-shadow: 0 1px 1px rgba(9, 30, 66, 0.25); }
+.card .actions { display: flex; gap: 0.25rem; margin-top: 0.5rem; }

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kanban</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Kanban</h1>
+    <div class="new">
+      <input id="new-card" type="text" placeholder="New card title" autocomplete="off">
+      <button id="add-btn" type="button">Add</button>
+    </div>
+  </header>
+  <main class="board">
+    <section id="todo" class="column"><h2>To Do</h2><div class="cards"></div></section>
+    <section id="doing" class="column"><h2>Doing</h2><div class="cards"></div></section>
+    <section id="done" class="column"><h2>Done</h2><div class="cards"></div></section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

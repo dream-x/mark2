@@ -1,0 +1,16 @@
+[task]
+# Kanban pair T24-app-freeform / T25-app-planned: the same app, two prompt
+# styles. This file and verify.sh are byte-identical in both task directories
+# (crates/bench task.rs tests assert it): only prompt.md differs.
+timeout_seconds = 1800
+tags = ["project"]
+policy = "yolo"
+# A whole project, like T17 (flint:40b ran into the default 50 there).
+max_turns = 80
+# Three layers (api; headless browser; the model's test run twice, up to
+# 60 s each). bench/uitest/.venv is already built by the runner (uitest_env
+# below), so the bootstrap verify calls is instant; ~30 s only standalone.
+verify_timeout_seconds = 360
+# The model's python3 is the bench/uitest/.venv interpreter (aiohttp), the
+# same one verify runs server.py and test_board.py with; see T17's task.toml.
+uitest_env = true

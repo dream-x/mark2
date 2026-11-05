@@ -1,0 +1,85 @@
+<!doctype html>
+<!-- Selftest fixture `variant`: one inlined page, unlike golden's static/. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Board</title>
+<style>
+  ul { list-style: none; padding: 0; min-height: 4em; }
+  li.card .tools { visibility: hidden; }
+  li.card:hover .tools { visibility: visible; }
+  .cols { display: flex; gap: 2em; }
+</style>
+</head>
+<body>
+<form id="add-form">
+  <input id="new-card" placeholder="What needs doing?">
+  <button id="add-btn" disabled>Add card</button>
+</form>
+<div class="cols">
+  <div><h2>To Do</h2><ul id="todo"></ul></div>
+  <div><h2>Doing</h2><ul id="doing"></ul></div>
+  <div><h2>Done</h2><ul id="done"></ul></div>
+</div>
+<script>
+const ORDER = ["todo", "doing", "done"];
+const form = document.getElementById("add-form");
+const field = document.getElementById("new-card");
+const addButton = document.getElementById("add-btn");
+
+field.addEventListener("input", () => { addButton.disabled = field.value.trim() === ""; });
+
+async function load() {
+  const response = await fetch("/api/cards");
+  const cards = await response.json();
+  ORDER.forEach((c) => { document.getElementById(c).innerHTML = ""; });
+  cards.forEach((card) => {
+    const li = document.createElement("li");
+    li.className = "card";
+    li.textContent = card.title + " ";
+    const tools = document.createElement("span");
+    tools.className = "tools";
+    const at = ORDER.indexOf(card.column);
+    if (at > 0) tools.append(tool("move-left", "<", () => send("PATCH", card.id, { column: ORDER[at - 1] })));
+    if (at < 2) tools.append(tool("move-right", ">", () => send("PATCH", card.id, { column: ORDER[at + 1] })));
+    tools.append(tool("delete", "x", () => { if (confirm("Delete this card?")) send("DELETE", card.id); }));
+    li.append(tools);
+    document.getElementById(card.column).append(li);
+  });
+}
+
+function tool(cls, label, onClick) {
+  const b = document.createElement("button");
+  b.className = cls;
+  b.textContent = label;
+  b.onclick = onClick;
+  return b;
+}
+
+async function send(method, id, body) {
+  await fetch("/api/cards/" + id, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  await load();
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const title = field.value.trim();
+  if (!title) return;
+  await fetch("/api/cards", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  field.value = "";
+  addButton.disabled = true;
+  await load();
+});
+
+load();
+</script>
+</body>
+</html>

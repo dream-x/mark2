@@ -775,6 +775,125 @@ pub(crate) mod tests {
         }
     }
 
+    /// Пара T24/T25 — эксперимент «вклад структуры промпта»: одно приложение
+    /// (канбан), два стиля промпта. Сравнение честное, только если всё, кроме
+    /// `prompt.md`, одинаково: `task.toml` и `verify.sh` байт-в-байт, проверки
+    /// живут один раз в `bench/shared/kanban/`, а каждый идентификатор
+    /// контракта, на который смотрит verify, назван в обоих промптах.
+    #[test]
+    fn kanban_pair_differs_only_in_the_prompt() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(DEFAULT_TASKS_DIR);
+        // Напрямую, не обходом: недописанная соседняя задача не должна ронять
+        // проверку пары (её поймает repository_tasks_load_with_the_current_contract).
+        let freeform = &load_task(&dir.join("T24-app-freeform")).unwrap();
+        let planned = &load_task(&dir.join("T25-app-planned")).unwrap();
+        assert_eq!(freeform.id, "T24");
+        assert_eq!(planned.id, "T25");
+        assert_eq!(freeform.slug, "app-freeform");
+        assert_eq!(planned.slug, "app-planned");
+
+        for name in [VERIFY_SCRIPT, TASK_FILE] {
+            let a = std::fs::read(freeform.dir.join(name)).unwrap();
+            let b = std::fs::read(planned.dir.join(name)).unwrap();
+            assert!(a == b, "{name} у T24 и T25 обязан совпадать байт-в-байт");
+        }
+        assert_ne!(freeform.prompt, planned.prompt);
+
+        // Проектный тир: настройки не меньше, чем у T17.
+        for task in [freeform, planned] {
+            assert_eq!(task.policy, TaskPolicy::Yolo);
+            assert!(task.uitest_env, "{}", task.name());
+            assert_eq!(task.max_turns, Some(80));
+            assert!(task.timeout_seconds >= 1800);
+            assert!(task.verify_timeout_seconds.is_some_and(|s| s >= 300));
+            assert_eq!(task.tags, ["project"]);
+            assert!(
+                task.setup_dir().is_none(),
+                "{} стартует с пустой cwd",
+                task.name()
+            );
+        }
+
+        // Обёртка ведёт в общий verify, и все его слои на месте.
+        let wrapper = std::fs::read_to_string(freeform.verify_script()).unwrap();
+        assert!(wrapper.contains("shared/kanban/verify.sh"), "{wrapper}");
+        let shared = dir.join("../shared/kanban");
+        for file in [
+            "verify.sh",
+            "checks/common.py",
+            "checks/api.py",
+            "checks/ui.py",
+            "checks/own_test.py",
+            "selftest/run.sh",
+        ] {
+            assert!(
+                shared.join(file).is_file(),
+                "нет bench/shared/kanban/{file}"
+            );
+        }
+
+        for needle in [
+            "server.py",
+            "PORT",
+            "8770",
+            "BOARD_FILE",
+            "board.json",
+            "GET /api/cards",
+            "POST /api/cards",
+            "PATCH /api/cards/<id>",
+            "DELETE /api/cards/<id>",
+            "400",
+            "404",
+            "`todo`",
+            "`doing`",
+            "`done`",
+            "#new-card",
+            "#add-btn",
+            "#todo",
+            "#doing",
+            "#done",
+            ".card",
+            ".move-left",
+            ".move-right",
+            ".delete",
+            "Enter",
+            "hard kill",
+            "test_board.py",
+            "60 seconds",
+            "install nothing",
+        ] {
+            for task in [freeform, planned] {
+                assert!(
+                    task.prompt.contains(needle),
+                    "{}: нет {needle:?}",
+                    task.name()
+                );
+            }
+        }
+
+        // T24 — сплошной текст: ни заголовков, ни списков, один абзац.
+        assert!(
+            !freeform.prompt.lines().any(|line| {
+                let line = line.trim_start();
+                line.starts_with('#') || line.starts_with("- ") || line.starts_with("1.")
+            }),
+            "T24 должен быть плейн-текстом"
+        );
+        assert_eq!(freeform.prompt.trim().lines().count(), 1);
+        // T25 — ТЗ, план, чеклист и DoD.
+        for section in [
+            "## Brief",
+            "## Plan",
+            "## TODO",
+            "- [ ]",
+            "## Definition of Done",
+        ] {
+            assert!(planned.prompt.contains(section), "T25: нет {section:?}");
+        }
+    }
+
     /// Пути задачи используются из tmp-cwd прогона (`sh verify.sh`, копия
     /// `setup/`), поэтому загрузка обязана вернуть абсолютные и нормализованные.
     #[test]
