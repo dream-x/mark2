@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "label": "chatpair-v1-glm53flash",
+  "run_id": "20261105-140301-chatpair-v1-glm53flash",
+  "started_at": "2026-11-05T11:03:01.812602Z",
+  "finished_at": "2026-11-05T11:46:52.986064Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 2,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "glm53-flash",
+        "model": "glm-5.3-flash",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "timeout_multiplier": 2.5,
+        "api_key_env": "ZAI_API_KEY"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T17",
+        "slug": "ws-chat",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T17-ws-chat",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project",
+          "frontend",
+          "backend",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Build a small multi-user chat in the current working directory: a Python\nbackend on aiohttp, a plain JavaScript frontend, and an automated test for\nit. A checker will start your server, talk to it over WebSocket, and drive\nthe page in a headless browser like a real user (typing and clicking).\nFollow the contract below exactly.\n\n## Files\n\n- `server.py`\n- `static/index.html`\n- `static/app.js`\n- `static/style.css`\n- `test_chat.py`\n\n## Server (`server.py`)\n\n- Python 3 with aiohttp. It is started as `python3 server.py` from the\n  working directory and must keep running until it is killed.\n- Port: the `PORT` environment variable, default `8765`. Listen on `0.0.0.0`\n  or `127.0.0.1`: the checker connects to `127.0.0.1`.\n- `GET /` returns `static/index.html`. Every file in `static/` is also served\n  at `/static/<name>`, and `index.html` loads `/static/style.css` and\n  `/static/app.js` from there.\n- The WebSocket endpoint is `/ws` on the same port.\n\n## Protocol\n\nEvery WebSocket message is a text frame holding one JSON object.\n\nClient to server:\n\n- `{\"type\": \"join\", \"nick\": \"<nick>\"}`\n- `{\"type\": \"message\", \"text\": \"<text>\"}`\n\nServer to client:\n\n- `{\"type\": \"history\", \"messages\": [...]}`: sent only to the client that\n  joined, right after its `join`. `messages` holds the last 50 chat messages,\n  oldest first, each in the `message` form below. System notices are not\n  part of the history.\n- `{\"type\": \"system\", \"text\": \"...\"}`: sent to every joined client when a\n  client joins and when a joined client leaves (its WebSocket closes). The\n  text names the nick, e.g. `alice joined`, `alice left`. Whether the joining\n  client also receives its own join notice is up to you.\n- `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}`: when a\n  joined client sends a message, the server broadcasts it to every joined\n  client, the sender included. `nick` is the sender's nick, `ts` is the\n  server time in Unix milliseconds.\n\nA client that is connected but has not joined gets no broadcasts, and its\n`message` frames are ignored.\n\n## Page\n\n- `static/index.html` has elements with exactly these ids: `nick` (text\n  input), `join-btn` (button), `msg` (text input), `send-btn` (button),\n  `messages` (the chat feed).\n- No auto-join. Loading the page must never send `join` by itself, not even\n  with a default or remembered nick: the user joins only by acting. Until\n  then `#nick` and `#join-btn` are visible and enabled, and `#messages` is\n  empty (no placeholder text).\n- Clicking `#join-btn` joins with the nick typed into `#nick`. Pressing Enter\n  in `#nick` does the same.\n- After joining, `#msg` and `#send-btn` are visible and enabled (before\n  joining they may be hidden or disabled). Pressing Enter in `#msg` or\n  clicking `#send-btn` sends the typed text as a message.\n- On join, `#messages` shows the received history. After that, every\n  incoming `message` and `system` notice is appended to `#messages` with its\n  text visible. A message is shown when its broadcast comes back from the\n  server (the sender receives its own broadcast too).\n- The page may open the WebSocket on load or when the user joins.\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet. The checker's browser can reach only your server.\n\n## Test (`test_chat.py`)\n\nWrite your own automated test and ship it with the code:\n\n- It runs as `python3 test_chat.py` from the working directory, needs\n  nothing already running, and finishes within 60 seconds.\n- It starts `server.py` itself as a subprocess (use `sys.executable`), with\n  `PORT` set to a free port it picks, waits until the server accepts\n  connections, and stops the server at the end, also when a check fails.\n- It checks the protocol with real WebSocket clients: join and history,\n  broadcast between two clients, join and leave notices, history for a\n  newcomer.\n- It exits with status 0 only if every check passed, non-zero otherwise.\n\n## Environment\n\n`python3` on your PATH has aiohttp available. It is the same Python the\nchecker uses to run `server.py` and `test_chat.py`, so there is nothing to\ninstall. Do not install packages globally. You may start the server and run\nyour test while you work, but you don't have to. Stop any server you started\nbefore you finish.\n"
+      },
+      {
+        "id": "T26",
+        "slug": "chat-freeform",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T26-chat-freeform",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Build a small multi-user chat in the current working directory: a Python backend `server.py` on aiohttp, a plain JavaScript frontend in `static/index.html`, `static/app.js` and `static/style.css`, and an automated test `test_chat.py`; a checker will start your server, talk to it over WebSocket and drive the page in a headless browser like a real user (typing and clicking), so follow this contract exactly. The server is started as `python3 server.py` from the working directory and must keep running until it is killed; it listens on the port from the `PORT` environment variable, default `8765`, on `0.0.0.0` or `127.0.0.1` (the checker connects to `127.0.0.1`), `GET /` returns `static/index.html`, every file in `static/` is also served at `/static/<name>`, `index.html` loads `/static/style.css` and `/static/app.js` from there, and the WebSocket endpoint is `/ws` on the same port. Every WebSocket message is a text frame holding one JSON object: a client sends `{\"type\": \"join\", \"nick\": \"<nick>\"}` and `{\"type\": \"message\", \"text\": \"<text>\"}`, and a client that is connected but has not joined gets no broadcasts and its `message` frames are ignored. The server sends `{\"type\": \"history\", \"messages\": [...]}` only to the client that joined, right after its `join`, with the last 50 chat messages, oldest first, each in the `message` form below (system notices are not part of the history); it sends `{\"type\": \"system\", \"text\": \"...\"}` to every joined client when a client joins and when a joined client leaves (its WebSocket closes), with a text that names the nick, e.g. `alice joined`, `alice left` (whether the joining client also receives its own join notice is up to you); and when a joined client sends a message it broadcasts `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}` to every joined client, the sender included, where `nick` is the sender's nick and `ts` is the server time in Unix milliseconds. `static/index.html` has elements with exactly these ids: `nick` (text input), `join-btn` (button), `msg` (text input), `send-btn` (button) and `messages` (the chat feed), and there is no auto-join: loading the page must never send `join` by itself, not even with a default or remembered nick, the user joins only by acting, and until then `#nick` and `#join-btn` are visible and enabled and `#messages` is empty (no placeholder text). Clicking `#join-btn` joins with the nick typed into `#nick`, and pressing Enter in `#nick` does the same; after joining, `#msg` and `#send-btn` are visible and enabled (before joining they may be hidden or disabled), and pressing Enter in `#msg` or clicking `#send-btn` sends the typed text as a message. On join `#messages` shows the received history, after that every incoming `message` and `system` notice is appended to `#messages` with its text visible, and a message is shown when its broadcast comes back from the server (the sender receives its own broadcast too); the page may open the WebSocket on load or when the user joins, and it is plain JavaScript with no frameworks, no build step and nothing loaded from the internet, because the checker's browser can reach only your server. Write your own automated test `test_chat.py` and ship it with the code: it runs as `python3 test_chat.py` from the working directory, needs nothing already running and finishes within 60 seconds; it starts `server.py` itself as a subprocess (use `sys.executable`) with `PORT` set to a free port it picks, waits until the server accepts connections, and stops the server at the end, also when a check fails; it checks the protocol with real WebSocket clients (join and history, broadcast between two clients, join and leave notices, history for a newcomer), and it exits with status 0 only if every check passed, non-zero otherwise. `python3` on your PATH has aiohttp available and is the same Python the checker uses to run `server.py` and `test_chat.py`, so there is nothing to install: do not install packages globally; you may start the server and run your test while you work, and stop any server you started before you finish.\n"
+      },
+      {
+        "id": "T27",
+        "slug": "chat-planned",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T27-chat-planned",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "# Multi-user WebSocket chat\n\n## Brief\n\nBuild a small multi-user chat in the current working directory: a Python\nbackend on aiohttp, a plain JavaScript frontend and an automated test. Users\nopen the page, join under the nick they type and exchange messages over a\nWebSocket; a newcomer sees the recent history. A checker will start your\nserver, talk to it over WebSocket, and drive the page in a headless browser\nlike a real user (typing and clicking). Follow the requirements below exactly.\n\n## Requirements\n\n### Files\n\n- `server.py`\n- `static/index.html`\n- `static/app.js`\n- `static/style.css`\n- `test_chat.py`\n\n### Server: `server.py`\n\n- Python 3 with aiohttp. It is started as `python3 server.py` from the working\n  directory and must keep running until it is killed.\n- Port: the `PORT` environment variable, default `8765`. Listen on `0.0.0.0`\n  or `127.0.0.1`: the checker connects to `127.0.0.1`.\n- `GET /` returns `static/index.html`. Every file in `static/` is also served\n  at `/static/<name>`, and `index.html` loads `/static/style.css` and\n  `/static/app.js` from there.\n- The WebSocket endpoint is `/ws` on the same port.\n\n### Protocol\n\nEvery WebSocket message is a text frame holding one JSON object.\n\nClient to server:\n\n- `{\"type\": \"join\", \"nick\": \"<nick>\"}`\n- `{\"type\": \"message\", \"text\": \"<text>\"}`\n\nServer to client:\n\n- `{\"type\": \"history\", \"messages\": [...]}`: sent only to the client that\n  joined, right after its `join`. `messages` holds the last 50 chat messages,\n  oldest first, each in the `message` form below. System notices are not part\n  of the history.\n- `{\"type\": \"system\", \"text\": \"...\"}`: sent to every joined client when a\n  client joins and when a joined client leaves (its WebSocket closes). The\n  text names the nick, e.g. `alice joined`, `alice left`. Whether the joining\n  client also receives its own join notice is up to you.\n- `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}`: when a\n  joined client sends a message, the server broadcasts it to every joined\n  client, the sender included. `nick` is the sender's nick, `ts` is the server\n  time in Unix milliseconds.\n\nA client that is connected but has not joined gets no broadcasts, and its\n`message` frames are ignored.\n\n### Page\n\n- `static/index.html` has elements with exactly these ids: `nick` (text\n  input), `join-btn` (button), `msg` (text input), `send-btn` (button),\n  `messages` (the chat feed).\n- No auto-join. Loading the page must never send `join` by itself, not even\n  with a default or remembered nick: the user joins only by acting. Until then\n  `#nick` and `#join-btn` are visible and enabled, and `#messages` is empty\n  (no placeholder text).\n- Clicking `#join-btn` joins with the nick typed into `#nick`. Pressing Enter\n  in `#nick` does the same.\n- After joining, `#msg` and `#send-btn` are visible and enabled (before\n  joining they may be hidden or disabled). Pressing Enter in `#msg` or\n  clicking `#send-btn` sends the typed text as a message.\n- On join, `#messages` shows the received history. After that, every incoming\n  `message` and `system` notice is appended to `#messages` with its text\n  visible. A message is shown when its broadcast comes back from the server\n  (the sender receives its own broadcast too).\n- The page may open the WebSocket on load or when the user joins.\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet. The checker's browser can reach only your server.\n\n### Test: `test_chat.py`\n\nWrite your own automated test and ship it with the code:\n\n- It runs as `python3 test_chat.py` from the working directory, needs nothing\n  already running, and finishes within 60 seconds.\n- It starts `server.py` itself as a subprocess (use `sys.executable`), with\n  `PORT` set to a free port it picks, waits until the server accepts\n  connections, and stops the server at the end, also when a check fails.\n- It checks the protocol with real WebSocket clients: join and history,\n  broadcast between two clients, join and leave notices, history for a\n  newcomer.\n- It exits with status 0 only if every check passed, non-zero otherwise.\n\n### Environment\n\n- `python3` on your PATH has aiohttp available. It is the same Python the\n  checker uses to run `server.py` and `test_chat.py`, so there is nothing to\n  install. Do not install packages globally.\n- You may start the server and run your test while you work. Stop any server\n  you started before you finish.\n\n## Plan\n\nWork in this order and finish each step before the next.\n\n1. **Server.** Write `server.py`: the port, `GET /` and `/static/<name>`, the\n   `/ws` endpoint. On `join`: `history` to the joining client, a `system`\n   notice to every joined client. On `message` from a joined client: the\n   broadcast to every joined client, the sender included. On a joined\n   client's disconnect: the leave notice. Clients that have not joined get\n   nothing and are not heard.\n2. **Test.** Write `test_chat.py` as required above: it starts the server on a\n   free port, checks join and history, broadcast between two clients, join and\n   leave notices and history for a newcomer, and stops the server whatever\n   happens.\n3. **Run and fix the server.** Run `python3 test_chat.py` until it passes.\n4. **Page.** Write `static/index.html`, `static/app.js` and `static/style.css`:\n   the five ids, join by click and by Enter, send by click and by Enter, the\n   history on join and every incoming `message` and `system` notice appended\n   to `#messages`.\n5. **Walk the page as a user.** The checker uses the page in a real browser,\n   so go through `static/app.js` step by step the way a user meets it: the\n   page loads and nobody touches it; a nick is typed and Enter is pressed; a\n   message is typed and Enter is pressed; another one is typed and\n   `#send-btn` is clicked; a second user opens the page, types a nick and\n   clicks `#join-btn`. After each step the page and the server must be in the\n   state the Page requirements describe.\n6. **Check the Definition of Done.** Go through it item by item and fix what\n   fails.\n7. **Clean up.** Stop every server you started.\n\n## TODO\n\n- [ ] `server.py` starts with `python3 server.py`, port from `PORT` (default 8765), keeps running until killed\n- [ ] `GET /` serves `static/index.html`; every file in `static/` is served at `/static/<name>`\n- [ ] `/ws`: `join` gets `history` (the last 50 chat messages, oldest first, no system notices), sent only to the joining client\n- [ ] `system` notice naming the nick to every joined client on a join and on a leave\n- [ ] `message` broadcast to every joined client, the sender included, with `nick` and `ts` (Unix milliseconds)\n- [ ] A client that has not joined gets no broadcasts, and its `message` frames are ignored\n- [ ] Page: ids `nick`, `join-btn`, `msg`, `send-btn`, `messages`\n- [ ] Page: no auto-join; before joining `#nick` and `#join-btn` are visible and enabled, `#messages` is empty\n- [ ] Page: join by clicking `#join-btn` or pressing Enter in `#nick`\n- [ ] Page: after joining, `#msg` and `#send-btn` are visible and enabled; send by pressing Enter in `#msg` or clicking `#send-btn`\n- [ ] Page: history on join, then every incoming `message` and `system` notice appended to `#messages`\n- [ ] Page: plain JavaScript, no frameworks, no build step, nothing loaded from the internet\n- [ ] `test_chat.py` written, run, passing\n- [ ] Every Definition of Done item checked\n- [ ] Every server you started is stopped\n\n## Definition of Done\n\nThe task is done when all of the following hold.\n\n1. `server.py`, `static/index.html`, `static/app.js`, `static/style.css` and\n   `test_chat.py` exist in the working directory.\n\nProtocol, with the server started as `python3 server.py` and `PORT` set to a\nfree port:\n\n2. The server answers HTTP on `127.0.0.1` at that port and keeps running.\n3. A client that opens a WebSocket at `/ws` and sends `join` receives a\n   `history` frame; on a fresh server its `messages` is empty.\n4. When a second client joins, it receives its own `history`, and the first\n   client receives a `system` notice whose text names the second client's\n   nick.\n5. A `message` sent by a joined client reaches every joined client, the sender\n   included, as a `message` frame with the sender's `nick`, the same `text`\n   and a `ts` that is a positive number.\n6. When a joined client's WebSocket closes, the joined clients that remain\n   receive a `system` notice that names its nick.\n7. A client that joins later receives in its `history` exactly the chat\n   messages sent so far, oldest first, each with its `nick`, `text` and `ts`,\n   and no system notices.\n8. After more than 50 chat messages, many of them sent in a quick burst, every\n   one of them is broadcast, and a newcomer's `history` holds exactly the last\n   50, oldest first.\n\nPage, in a real browser that can reach only your server, typing and clicking\nlike a user:\n\n9. `GET /` answers 200 with a page that has elements with the ids `nick`,\n   `join-btn`, `msg`, `send-btn` and `messages`.\n10. Left alone after it loads, the page joins nobody: the server announces no\n    join and no message, `#messages` is empty, `#nick` is visible and\n    editable, `#join-btn` is visible and enabled.\n11. Typing a nick into `#nick` and pressing Enter joins under that nick: the\n    other joined clients receive a `system` notice that names it.\n12. Typing a text into `#msg` and pressing Enter sends it: every joined client\n    receives its broadcast with the page's nick, and the text appears in the\n    page's own `#messages`.\n13. Typing a text into `#msg` and clicking `#send-btn` does the same.\n14. On a second page, typing a nick into `#nick` and clicking `#join-btn`\n    joins: its `#messages` shows the texts of the messages sent before, and\n    the first page's `#messages` shows a notice that names the newcomer.\n15. A message sent from the second page appears in the first page's\n    `#messages`.\n\nTest:\n\n16. `python3 test_chat.py`, with nothing running beforehand, exits 0 within 60\n    seconds and leaves no server running.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "glm53-flash",
+      "model_id": "glm-5.3-flash",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-05T11:03:07.33924Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 477.577283625,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 273804,
+        "output": 15475,
+        "cached": 256576
+      },
+      "session": {
+        "assistant_messages": 28,
+        "tool_uses": 30,
+        "tool_errors": 6,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 6
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 2341,
+      "stdout_path": "logs/glm53-flash/T17/1.stdout.txt",
+      "stderr_path": "logs/glm53-flash/T17/1.stderr.txt",
+      "session_path": "sessions/glm53-flash/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53-flash",
+      "model_id": "glm-5.3-flash",
+      "task": "T17",
+      "repeat": 2,
+      "started_at": "2026-11-05T11:11:10.928099Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": false,
+      "wall_time_seconds": 389.909551042,
+      "timeout_seconds": 4500.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 6,
+        "tool_errors": 0,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): FAIL\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793877461826}\nFAIL [layer B ui]: page 1: typing into #msg and pressing Enter did not send the message: probef8b1d4 expected the broadcast of 'typed-enter-f8b1d4' from annf8b1d4 within 5 s; received instead: nothing\nFAIL [layer C own test_chat.py]: `python3 test_chat.py` exited with code 1; its output:\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-XtbvZA/cwd/test_chat.py\", line 102, in recv_until\n    frame = await self.recv(remaining)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-XtbvZA/cwd/test_chat.py\", line 93, in recv\n    return await asyncio.wait_for(self.queue.get(), timeout)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 487, in wait_for\n    async with timeouts.timeout(timeout):\n               ~~~~~~~~~~~~~~~~^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/timeouts.py\", line 115, in __aexit__\n    raise TimeoutError from exc_val\nTimeoutError\n"
+      },
+      "answer_chars": 140,
+      "stdout_path": "logs/glm53-flash/T17/2.stdout.txt",
+      "stderr_path": "logs/glm53-flash/T17/2.stderr.txt",
+      "session_path": "sessions/glm53-flash/T17/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53-flash",
+      "model_id": "glm-5.3-flash",
+      "task": "T26",
+      "repeat": 1,
+      "started_at": "2026-11-05T11:17:56.915035Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": false,
+      "wall_time_seconds": 213.306359458,
+      "timeout_seconds": 4500.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 0,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL [files]: missing contract file(s): server.py static/index.html static/app.js static/style.css\nT17 files: FAIL\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/glm53-flash/T26/1.stdout.txt",
+      "stderr_path": "logs/glm53-flash/T26/1.stderr.txt",
+      "session_path": "sessions/glm53-flash/T26/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53-flash",
+      "model_id": "glm-5.3-flash",
+      "task": "T26",
+      "repeat": 2,
+      "started_at": "2026-11-05T11:21:30.251126Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 678.37559175,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 199763,
+        "output": 27927,
+        "cached": 180928
+      },
+      "session": {
+        "assistant_messages": 20,
+        "tool_uses": 20,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 3406,
+      "stdout_path": "logs/glm53-flash/T26/2.stdout.txt",
+      "stderr_path": "logs/glm53-flash/T26/2.stderr.txt",
+      "session_path": "sessions/glm53-flash/T26/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53-flash",
+      "model_id": "glm-5.3-flash",
+      "task": "T27",
+      "repeat": 1,
+      "started_at": "2026-11-05T11:33:00.711302Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": false,
+      "wall_time_seconds": 33.612377375,
+      "timeout_seconds": 4500.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 0,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL [files]: missing contract file(s): static/index.html static/app.js static/style.css\nT17 files: FAIL\n"
+      },
+      "answer_chars": 62,
+      "stdout_path": "logs/glm53-flash/T27/1.stdout.txt",
+      "stderr_path": "logs/glm53-flash/T27/1.stderr.txt",
+      "session_path": "sessions/glm53-flash/T27/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm53-flash",
+      "model_id": "glm-5.3-flash",
+      "task": "T27",
+      "repeat": 2,
+      "started_at": "2026-11-05T11:33:34.343526Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 782.466424167,
+      "timeout_seconds": 4500.0,
+      "tokens": {
+        "input": 479884,
+        "output": 19698,
+        "cached": 456448
+      },
+      "session": {
+        "assistant_messages": 38,
+        "tool_uses": 37,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): FAIL\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": "FAIL [layer A protocol]: carol: history may hold only `message` objects (system notices are not part of it), found {\"nick\": \"alice\", \"text\": \"hello from alice\", \"ts\": 1793879197605}\n"
+      },
+      "answer_chars": 4116,
+      "stdout_path": "logs/glm53-flash/T27/2.stdout.txt",
+      "stderr_path": "logs/glm53-flash/T27/2.stderr.txt",
+      "session_path": "sessions/glm53-flash/T27/2.jsonl",
+      "error": null
+    }
+  ]
+}

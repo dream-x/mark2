@@ -1,0 +1,605 @@
+{
+  "schema_version": 1,
+  "label": "ctx-v1-remote",
+  "run_id": "20261105-120939-ctx-v1-remote",
+  "started_at": "2026-11-05T09:09:39.917977Z",
+  "finished_at": "2026-11-05T09:22:25.792337Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 3,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "qwen27",
+        "model": "qwen3.8:27b",
+        "base_url": "http://white.local:11434/v1",
+        "timeout_multiplier": 2.5
+      },
+      {
+        "alias": "glm52",
+        "model": "glm-5.2",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "timeout_multiplier": 2.5,
+        "api_key_env": "ZAI_API_KEY"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T22",
+        "slug": "ctx-repo-needle",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T22-ctx-repo-needle",
+        "timeout_seconds": 300,
+        "repeats": 3,
+        "tags": [
+          "context",
+          "search",
+          "edit"
+        ],
+        "policy": "yolo",
+        "context_limit": 16384,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory is the backend of an online shop (Python,\n`src/ledgerly/`). Support escalated a ticket: customers who ask for a refund\non the 30th day after delivery are turned down with\n\n    E-4127 refund window closed: order is 30 days old (limit 30 days)\n\nThe refund policy: a customer may ask for a refund up to and including the\n30th day after delivery; from day 31 on the request is rejected.\n\nFix the code so that refunds follow this policy.\n\nRules:\n\n- The fix is a one-line change in a single file.\n- Everything else in the repository is correct and must stay exactly as it\n  is: do not modify, rename or delete any other line or file.\n"
+      },
+      {
+        "id": "T23",
+        "slug": "ctx-scatter-synthesis",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T23-ctx-scatter-synthesis",
+        "timeout_seconds": 480,
+        "repeats": 3,
+        "tags": [
+          "context",
+          "compaction",
+          "read"
+        ],
+        "policy": "yolo",
+        "context_limit": 8192,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "`custody/` holds the custody log of a biobank's freezers: one file per duty\nday, in chronological order (`day-01.log` ... `day-08.log`). Entries are\nsometimes corrected, voided or superseded by later ones.\n\nQuestion: in which slot is the KESTREL study's reference aliquot at the end of\nduty day 08?\n\nWrite the answer to `answer.txt`: the slot alone, in the slot notation the\nlogs use (freezer/rack/box/position, for example `F1/R1/B01/A1`), on a single\nline, nothing else.\n\nRules:\n\n- `custody/` must stay exactly as it is.\n- Do not create any file other than `answer.txt`: no scratch notes, no helper\n  scripts. If you need to compute something, do it inline, for example with\n  `python3 -c \"...\"`.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T22",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:09:46.552474Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 12.223658,
+      "timeout_seconds": 750.0,
+      "tokens": {
+        "input": 25948,
+        "output": 895,
+        "cached": 21874
+      },
+      "session": {
+        "assistant_messages": 8,
+        "tool_uses": 7,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 462,
+      "stdout_path": "logs/qwen27/T22/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T22/1.stderr.txt",
+      "session_path": "sessions/qwen27/T22/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T22",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:09:59.243498Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 12.744722375,
+      "timeout_seconds": 750.0,
+      "tokens": {
+        "input": 24585,
+        "output": 992,
+        "cached": 20770
+      },
+      "session": {
+        "assistant_messages": 8,
+        "tool_uses": 7,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 463,
+      "stdout_path": "logs/qwen27/T22/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T22/2.stderr.txt",
+      "session_path": "sessions/qwen27/T22/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T22",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:10:12.470239Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 8.773730791,
+      "timeout_seconds": 750.0,
+      "tokens": {
+        "input": 10043,
+        "output": 405,
+        "cached": 7054
+      },
+      "session": {
+        "assistant_messages": 4,
+        "tool_uses": 3,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 397,
+      "stdout_path": "logs/qwen27/T22/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T22/3.stderr.txt",
+      "session_path": "sessions/qwen27/T22/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T23",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:10:21.740851Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 53.769918833,
+      "timeout_seconds": 1200.0,
+      "tokens": {
+        "input": 36431,
+        "output": 1414,
+        "cached": 15057
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 10,
+        "tool_errors": 0,
+        "compactions": 2,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 2,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 1056,
+      "stdout_path": "logs/qwen27/T23/1.stdout.txt",
+      "stderr_path": "logs/qwen27/T23/1.stderr.txt",
+      "session_path": "sessions/qwen27/T23/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T23",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:11:15.583757Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 51.50840925,
+      "timeout_seconds": 1200.0,
+      "tokens": {
+        "input": 30557,
+        "output": 1064,
+        "cached": 9522
+      },
+      "session": {
+        "assistant_messages": 7,
+        "tool_uses": 10,
+        "tool_errors": 0,
+        "compactions": 2,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 2,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 702,
+      "stdout_path": "logs/qwen27/T23/2.stdout.txt",
+      "stderr_path": "logs/qwen27/T23/2.stderr.txt",
+      "session_path": "sessions/qwen27/T23/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27",
+      "model_id": "qwen3.8:27b",
+      "task": "T23",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:12:07.415534Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 37.103188583,
+      "timeout_seconds": 1200.0,
+      "tokens": {
+        "input": 35296,
+        "output": 1920,
+        "cached": 20694
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 9,
+        "tool_errors": 0,
+        "compactions": 1,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 1,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 630,
+      "stdout_path": "logs/qwen27/T23/3.stdout.txt",
+      "stderr_path": "logs/qwen27/T23/3.stderr.txt",
+      "session_path": "sessions/qwen27/T23/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T22",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:12:50.42594Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 62.186942209,
+      "timeout_seconds": 750.0,
+      "tokens": {
+        "input": 43778,
+        "output": 1523,
+        "cached": 37312
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 11,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 3
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 1038,
+      "stdout_path": "logs/glm52/T22/1.stdout.txt",
+      "stderr_path": "logs/glm52/T22/1.stderr.txt",
+      "session_path": "sessions/glm52/T22/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T22",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:13:53.065926Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 47.917518667,
+      "timeout_seconds": 750.0,
+      "tokens": {
+        "input": 26691,
+        "output": 1083,
+        "cached": 21120
+      },
+      "session": {
+        "assistant_messages": 7,
+        "tool_uses": 8,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 654,
+      "stdout_path": "logs/glm52/T22/2.stdout.txt",
+      "stderr_path": "logs/glm52/T22/2.stderr.txt",
+      "session_path": "sessions/glm52/T22/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T22",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:14:42.490214Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 52.939461958,
+      "timeout_seconds": 750.0,
+      "tokens": {
+        "input": 34178,
+        "output": 738,
+        "cached": 29056
+      },
+      "session": {
+        "assistant_messages": 8,
+        "tool_uses": 9,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 513,
+      "stdout_path": "logs/glm52/T22/3.stdout.txt",
+      "stderr_path": "logs/glm52/T22/3.stderr.txt",
+      "session_path": "sessions/glm52/T22/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T23",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:15:36.810539Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 124.800646458,
+      "timeout_seconds": 1200.0,
+      "tokens": {
+        "input": 43105,
+        "output": 1498,
+        "cached": 26624
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 11,
+        "tool_errors": 0,
+        "compactions": 2,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 2,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 791,
+      "stdout_path": "logs/glm52/T23/1.stdout.txt",
+      "stderr_path": "logs/glm52/T23/1.stderr.txt",
+      "session_path": "sessions/glm52/T23/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T23",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:17:41.659717Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 144.2098545,
+      "timeout_seconds": 1200.0,
+      "tokens": {
+        "input": 38572,
+        "output": 1643,
+        "cached": 23104
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 10,
+        "tool_errors": 0,
+        "compactions": 2,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 2,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 491,
+      "stdout_path": "logs/glm52/T23/2.stdout.txt",
+      "stderr_path": "logs/glm52/T23/2.stderr.txt",
+      "session_path": "sessions/glm52/T23/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "glm52",
+      "model_id": "glm-5.2",
+      "task": "T23",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:20:05.939959Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 139.746498667,
+      "timeout_seconds": 1200.0,
+      "tokens": {
+        "input": 48002,
+        "output": 1476,
+        "cached": 26496
+      },
+      "session": {
+        "assistant_messages": 11,
+        "tool_uses": 13,
+        "tool_errors": 0,
+        "compactions": 3,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 3,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 712,
+      "stdout_path": "logs/glm52/T23/3.stdout.txt",
+      "stderr_path": "logs/glm52/T23/3.stderr.txt",
+      "session_path": "sessions/glm52/T23/3.jsonl",
+      "error": null
+    }
+  ]
+}

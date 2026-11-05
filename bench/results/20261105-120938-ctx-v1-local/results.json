@@ -1,0 +1,1135 @@
+{
+  "schema_version": 1,
+  "label": "ctx-v1-local",
+  "run_id": "20261105-120938-ctx-v1-local",
+  "started_at": "2026-11-05T09:09:38.584103Z",
+  "finished_at": "2026-11-05T10:19:54.825691Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 3,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "qwen9",
+        "model": "qwen3.5:9b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 1.0
+      },
+      {
+        "alias": "flint40",
+        "model": "flint:40b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0,
+        "edit_strategy": "whole_file"
+      },
+      {
+        "alias": "qwen36c",
+        "model": "qwen3.6:35b-a3b-coding",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "ornith35",
+        "model": "ornith-1.5:35b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T22",
+        "slug": "ctx-repo-needle",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T22-ctx-repo-needle",
+        "timeout_seconds": 300,
+        "repeats": 3,
+        "tags": [
+          "context",
+          "search",
+          "edit"
+        ],
+        "policy": "yolo",
+        "context_limit": 16384,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory is the backend of an online shop (Python,\n`src/ledgerly/`). Support escalated a ticket: customers who ask for a refund\non the 30th day after delivery are turned down with\n\n    E-4127 refund window closed: order is 30 days old (limit 30 days)\n\nThe refund policy: a customer may ask for a refund up to and including the\n30th day after delivery; from day 31 on the request is rejected.\n\nFix the code so that refunds follow this policy.\n\nRules:\n\n- The fix is a one-line change in a single file.\n- Everything else in the repository is correct and must stay exactly as it\n  is: do not modify, rename or delete any other line or file.\n"
+      },
+      {
+        "id": "T23",
+        "slug": "ctx-scatter-synthesis",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T23-ctx-scatter-synthesis",
+        "timeout_seconds": 480,
+        "repeats": 3,
+        "tags": [
+          "context",
+          "compaction",
+          "read"
+        ],
+        "policy": "yolo",
+        "context_limit": 8192,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "`custody/` holds the custody log of a biobank's freezers: one file per duty\nday, in chronological order (`day-01.log` ... `day-08.log`). Entries are\nsometimes corrected, voided or superseded by later ones.\n\nQuestion: in which slot is the KESTREL study's reference aliquot at the end of\nduty day 08?\n\nWrite the answer to `answer.txt`: the slot alone, in the slot notation the\nlogs use (freezer/rack/box/position, for example `F1/R1/B01/A1`), on a single\nline, nothing else.\n\nRules:\n\n- `custody/` must stay exactly as it is.\n- Do not create any file other than `answer.txt`: no scratch notes, no helper\n  scripts. If you need to compute something, do it inline, for example with\n  `python3 -c \"...\"`.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T22",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:09:43.00095Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 24.661762167,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 20522,
+        "output": 1100,
+        "cached": 15451
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 374,
+      "stdout_path": "logs/qwen9/T22/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T22/1.stderr.txt",
+      "session_path": "sessions/qwen9/T22/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T22",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:10:08.098047Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 26.578073333,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 20522,
+        "output": 964,
+        "cached": 15451
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 367,
+      "stdout_path": "logs/qwen9/T22/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T22/2.stderr.txt",
+      "session_path": "sessions/qwen9/T22/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T22",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:10:35.175936Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 29.600775916,
+      "timeout_seconds": 300.0,
+      "tokens": {
+        "input": 20542,
+        "output": 1062,
+        "cached": 15466
+      },
+      "session": {
+        "assistant_messages": 6,
+        "tool_uses": 5,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 303,
+      "stdout_path": "logs/qwen9/T22/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T22/3.stderr.txt",
+      "session_path": "sessions/qwen9/T22/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T23",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:11:05.485595Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 124.880060416,
+      "timeout_seconds": 480.0,
+      "tokens": {
+        "input": 36525,
+        "output": 1203,
+        "cached": 27408
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 9,
+        "tool_errors": 1,
+        "compactions": 1,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 1,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt says 'A2', expected 'F5/R2/B23/B7': not a slot any step of the chain leads to\n"
+      },
+      "answer_chars": 149,
+      "stdout_path": "logs/qwen9/T23/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T23/1.stderr.txt",
+      "session_path": "sessions/qwen9/T23/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T23",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:13:10.51463Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 113.775662708,
+      "timeout_seconds": 480.0,
+      "tokens": {
+        "input": 36238,
+        "output": 1041,
+        "cached": 27571
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 9,
+        "tool_errors": 0,
+        "compactions": 1,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 1,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt says 'F3/R1/B05/A2', expected 'F5/R2/B23/B7': the TR-2291 target: that ticket was voided on day 06\n"
+      },
+      "answer_chars": 198,
+      "stdout_path": "logs/qwen9/T23/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T23/2.stderr.txt",
+      "session_path": "sessions/qwen9/T23/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T23",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:15:04.417175Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 245.299219875,
+      "timeout_seconds": 480.0,
+      "tokens": {
+        "input": 76336,
+        "output": 2351,
+        "cached": 51502
+      },
+      "session": {
+        "assistant_messages": 15,
+        "tool_uses": 16,
+        "tool_errors": 3,
+        "compactions": 2,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 2,
+        "tool_errors": 3
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt says 'F2/R4/B12/B7', expected 'F5/R2/B23/B7': the day-01 slot: the TR-2291 void was applied but the day-08 EM-07 relocation of F2/R4 was missed\n"
+      },
+      "answer_chars": 166,
+      "stdout_path": "logs/qwen9/T23/3.stdout.txt",
+      "stderr_path": "logs/qwen9/T23/3.stderr.txt",
+      "session_path": "sessions/qwen9/T23/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T22",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:19:15.095029Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 41.965793791,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 39734,
+        "output": 2918,
+        "cached": 32488
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 8,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 998,
+      "stdout_path": "logs/flint40/T22/1.stdout.txt",
+      "stderr_path": "logs/flint40/T22/1.stderr.txt",
+      "session_path": "sessions/flint40/T22/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T22",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:19:57.666285Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 78.76340425,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 114532,
+        "output": 5687,
+        "cached": 104828
+      },
+      "session": {
+        "assistant_messages": 17,
+        "tool_uses": 19,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 1830,
+      "stdout_path": "logs/flint40/T22/2.stdout.txt",
+      "stderr_path": "logs/flint40/T22/2.stderr.txt",
+      "session_path": "sessions/flint40/T22/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T22",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:21:17.170233Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 27.61172925,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 42186,
+        "output": 2013,
+        "cached": 36646
+      },
+      "session": {
+        "assistant_messages": 11,
+        "tool_uses": 10,
+        "tool_errors": 4,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 4
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 1187,
+      "stdout_path": "logs/flint40/T22/3.stdout.txt",
+      "stderr_path": "logs/flint40/T22/3.stderr.txt",
+      "session_path": "sessions/flint40/T22/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T23",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:21:45.457942Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 310.222581583,
+      "timeout_seconds": 960.0,
+      "tokens": {
+        "input": 41206,
+        "output": 1089,
+        "cached": 19998
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 11,
+        "tool_errors": 0,
+        "compactions": 2,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 2,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 828,
+      "stdout_path": "logs/flint40/T23/1.stdout.txt",
+      "stderr_path": "logs/flint40/T23/1.stderr.txt",
+      "session_path": "sessions/flint40/T23/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T23",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:26:55.772328Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 636.126157958,
+      "timeout_seconds": 960.0,
+      "tokens": {
+        "input": 84609,
+        "output": 10002,
+        "cached": 42532
+      },
+      "session": {
+        "assistant_messages": 18,
+        "tool_uses": 27,
+        "tool_errors": 0,
+        "compactions": 6,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 6,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 824,
+      "stdout_path": "logs/flint40/T23/2.stdout.txt",
+      "stderr_path": "logs/flint40/T23/2.stderr.txt",
+      "session_path": "sessions/flint40/T23/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T23",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:37:31.998427Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 960.004421167,
+      "timeout_seconds": 960.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 11,
+        "tool_uses": 18,
+        "tool_errors": 0,
+        "compactions": 4,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 4,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt does not exist\nFAIL: the set of files is not custody/ plus answer.txt; found:\n./custody/day-01.log\n./custody/day-02.log\n./custody/day-03.log\n./custody/day-04.log\n./custody/day-05.log\n./custody/day-06.log\n./custody/day-07.log\n./custody/day-08.log\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/flint40/T23/3.stdout.txt",
+      "stderr_path": "logs/flint40/T23/3.stderr.txt",
+      "session_path": "sessions/flint40/T23/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T22",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:53:39.683596Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 60.842312584,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 75129,
+        "output": 4606,
+        "cached": 66800
+      },
+      "session": {
+        "assistant_messages": 13,
+        "tool_uses": 12,
+        "tool_errors": 4,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 4
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 673,
+      "stdout_path": "logs/qwen36c/T22/1.stdout.txt",
+      "stderr_path": "logs/qwen36c/T22/1.stderr.txt",
+      "session_path": "sessions/qwen36c/T22/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T22",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:54:40.979886Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 34.341160208,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 46088,
+        "output": 2551,
+        "cached": 40374
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 9,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 645,
+      "stdout_path": "logs/qwen36c/T22/2.stdout.txt",
+      "stderr_path": "logs/qwen36c/T22/2.stderr.txt",
+      "session_path": "sessions/qwen36c/T22/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T22",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:55:15.72013Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 32.925905583,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 37989,
+        "output": 2231,
+        "cached": 32740
+      },
+      "session": {
+        "assistant_messages": 8,
+        "tool_uses": 7,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 518,
+      "stdout_path": "logs/qwen36c/T22/3.stdout.txt",
+      "stderr_path": "logs/qwen36c/T22/3.stderr.txt",
+      "session_path": "sessions/qwen36c/T22/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T23",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:55:49.226626Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 25.862437583,
+      "timeout_seconds": 960.0,
+      "tokens": {
+        "input": 45346,
+        "output": 1705,
+        "cached": 40365
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 9,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt says 'F3/R1/B05/A2', expected 'F5/R2/B23/B7': the TR-2291 target: that ticket was voided on day 06\n"
+      },
+      "answer_chars": 337,
+      "stdout_path": "logs/qwen36c/T23/1.stdout.txt",
+      "stderr_path": "logs/qwen36c/T23/1.stderr.txt",
+      "session_path": "sessions/qwen36c/T23/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T23",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:56:15.171466Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 23.7698455,
+      "timeout_seconds": 960.0,
+      "tokens": {
+        "input": 38920,
+        "output": 1536,
+        "cached": 34120
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 8,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt says 'F3/R1/B05/A2', expected 'F5/R2/B23/B7': the TR-2291 target: that ticket was voided on day 06\n"
+      },
+      "answer_chars": 339,
+      "stdout_path": "logs/qwen36c/T23/2.stdout.txt",
+      "stderr_path": "logs/qwen36c/T23/2.stderr.txt",
+      "session_path": "sessions/qwen36c/T23/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T23",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:56:39.027129Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 55.538624041,
+      "timeout_seconds": 960.0,
+      "tokens": {
+        "input": 39474,
+        "output": 1878,
+        "cached": 33637
+      },
+      "session": {
+        "assistant_messages": 11,
+        "tool_uses": 10,
+        "tool_errors": 1,
+        "compactions": 1,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 1,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt says 'F3/R1/B05/A2', expected 'F5/R2/B23/B7': the TR-2291 target: that ticket was voided on day 06\n"
+      },
+      "answer_chars": 69,
+      "stdout_path": "logs/qwen36c/T23/3.stdout.txt",
+      "stderr_path": "logs/qwen36c/T23/3.stderr.txt",
+      "session_path": "sessions/qwen36c/T23/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T22",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:57:44.191854Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 17.308589625,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 13474,
+        "output": 919,
+        "cached": 9845
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 861,
+      "stdout_path": "logs/ornith35/T22/1.stdout.txt",
+      "stderr_path": "logs/ornith35/T22/1.stderr.txt",
+      "session_path": "sessions/ornith35/T22/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T22",
+      "repeat": 2,
+      "started_at": "2026-11-05T09:58:02.174539Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 30.291760458,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 28671,
+        "output": 1325,
+        "cached": 24385
+      },
+      "session": {
+        "assistant_messages": 9,
+        "tool_uses": 8,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 895,
+      "stdout_path": "logs/ornith35/T22/2.stdout.txt",
+      "stderr_path": "logs/ornith35/T22/2.stderr.txt",
+      "session_path": "sessions/ornith35/T22/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T22",
+      "repeat": 3,
+      "started_at": "2026-11-05T09:58:33.195801Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 17.619814667,
+      "timeout_seconds": 600.0,
+      "tokens": {
+        "input": 13692,
+        "output": 752,
+        "cached": 9844
+      },
+      "session": {
+        "assistant_messages": 5,
+        "tool_uses": 4,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 791,
+      "stdout_path": "logs/ornith35/T22/3.stdout.txt",
+      "stderr_path": "logs/ornith35/T22/3.stderr.txt",
+      "session_path": "sessions/ornith35/T22/3.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T23",
+      "repeat": 1,
+      "started_at": "2026-11-05T09:58:51.6401Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 960.003857167,
+      "timeout_seconds": 960.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 18,
+        "tool_uses": 30,
+        "tool_errors": 0,
+        "compactions": 4,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 4,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt does not exist\nFAIL: the set of files is not custody/ plus answer.txt; found:\n./custody/day-01.log\n./custody/day-02.log\n./custody/day-03.log\n./custody/day-04.log\n./custody/day-05.log\n./custody/day-06.log\n./custody/day-07.log\n./custody/day-08.log\n"
+      },
+      "answer_chars": 686,
+      "stdout_path": "logs/ornith35/T23/1.stdout.txt",
+      "stderr_path": "logs/ornith35/T23/1.stderr.txt",
+      "session_path": "sessions/ornith35/T23/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T23",
+      "repeat": 2,
+      "started_at": "2026-11-05T10:14:51.831741Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 244.607439291,
+      "timeout_seconds": 960.0,
+      "tokens": {
+        "input": 69752,
+        "output": 4670,
+        "cached": 33100
+      },
+      "session": {
+        "assistant_messages": 16,
+        "tool_uses": 18,
+        "tool_errors": 2,
+        "compactions": 4,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 4,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt does not exist\nFAIL: the set of files is not custody/ plus answer.txt; found:\n./custody/day-01.log\n./custody/day-02.log\n./custody/day-03.log\n./custody/day-04.log\n./custody/day-05.log\n./custody/day-06.log\n./custody/day-07.log\n./custody/day-08.log\n"
+      },
+      "answer_chars": 2973,
+      "stdout_path": "logs/ornith35/T23/2.stdout.txt",
+      "stderr_path": "logs/ornith35/T23/2.stderr.txt",
+      "session_path": "sessions/ornith35/T23/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T23",
+      "repeat": 3,
+      "started_at": "2026-11-05T10:18:56.512586Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 58.213441917,
+      "timeout_seconds": 960.0,
+      "tokens": {
+        "input": 30228,
+        "output": 1095,
+        "cached": 20861
+      },
+      "session": {
+        "assistant_messages": 8,
+        "tool_uses": 8,
+        "tool_errors": 0,
+        "compactions": 1,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 1,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": "FAIL: answer.txt says 'F3/R1/B05/A2', expected 'F5/R2/B23/B7': the TR-2291 target: that ticket was voided on day 06\n"
+      },
+      "answer_chars": 732,
+      "stdout_path": "logs/ornith35/T23/3.stdout.txt",
+      "stderr_path": "logs/ornith35/T23/3.stderr.txt",
+      "session_path": "sessions/ornith35/T23/3.jsonl",
+      "error": null
+    }
+  ]
+}
