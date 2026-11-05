@@ -101,6 +101,14 @@ model = "mimo-v2.6:9b"
 base_url = "http://localhost:11434/v1"
 timeout_multiplier = 1.5
 
+# Ornith-1.5 35B-A3B (ornith.ai, авг–окт 2026): MoE, tools+thinking, 256K.
+# Затянута 2026-11-05 как «свежая кодерская», смоук через mark2 чистый.
+[[models]]
+alias = "ornith35"
+model = "ornith-1.5:35b"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 2.0
+
 # Бесплатная облачная агентная модель Reflection (проверена 2026-11-03).
 [[models]]
 alias = "beam"
