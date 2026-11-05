@@ -1,0 +1,4 @@
+[task]
+timeout_seconds = 300
+tags = ["context", "search", "edit"]
+context_limit = 16384

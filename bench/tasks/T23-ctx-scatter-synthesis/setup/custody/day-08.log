@@ -1,0 +1,95 @@
+BIOBANK CUSTODY LOG - duty day 08 of 08
+Period: 2026-10-19 07:00 -> 2026-10-20 07:00
+Duty lead: T. Chen / second: M. Varga
+Slot notation: freezer/rack/box/position, e.g. F1/R1/B01/A1 (box rows A-I, columns 1-9).
+
+-- Handover received --
+See the handover at the end of day 07; nothing else open.
+
+-- Entries --
+10-19 07:07 RCV   S-2547  plasma 2x1.0mL -> F5/R1/B04/I7  study HERON, courier DHL-5733
+10-19 07:35 TEMP  F1 -80.2C | F2 -78.7C | F3 -80.2C | F4 -80.2C | F5 -79.9C | F6 -78.3C
+10-19 07:55 MOVE  S-1957  F5/R1/B01/E5 -> F3/R2/B12/B4  ticket TR-2445
+10-19 08:17 PULL  S-1454  F6/R3/B12/D1  for assay AS-425 (Dr. Lindqvist)
+10-19 08:36 AUDIT F4/R2/B06  7 tubes, matches inventory
+10-19 09:04 MOVE  S-2694  F4/R4/B01/F4 -> F4/R3/B12/I3  ticket TR-2446
+10-19 09:26 MOVE  S-2440  F1/R2/B02/G4 -> F2/R3/B09/G4  ticket TR-2447
+10-19 09:42 RCV   S-2328  PBMC 1x1.0mL -> F2/R4/B03/D8  study HERON, courier TNT-5262
+10-19 10:14 RET   S-1454  -> F6/R3/B12/D1  after AS-425
+10-19 10:14 VOID  ticket TR-2420: entered but never carried out, S-1211 is still in F5/R2/B12/H6; inventory reverted
+10-19 10:14 TEMP  F1 -80.3C | F2 -78.3C | F3 -79.7C | F4 -80.0C | F5 -79.4C | F6 -78.0C
+10-19 10:41 VOID  ticket TR-2423: entered but never carried out, S-0078 is still in F2/R2/B12/D1; inventory reverted
+10-19 10:41 PULL  S-1457  F1/R2/B11/E6  for assay AS-380 (Dr. Lindqvist)
+10-19 10:58 RCV   S-2473  saliva 1x1.0mL -> F4/R3/B09/C9  study OSPREY, courier UPS-5156
+10-19 11:28 RCV   S-2479  plasma 2x1.0mL -> F5/R1/B06/E5  study LARK, courier MED-5439
+10-19 11:49 MOVE  S-0079  F4/R3/B05/F3 -> F4/R1/B04/A1  ticket TR-2448
+10-19 12:05 RCV   S-0129  DNA 1x0.2mL -> F3/R1/B09/C1  study PLOVER, courier MED-5493
+10-19 12:28 AUDIT F1/R4/B10  4 tubes, matches inventory
+10-19 12:46 RCV   S-1762  serum 2x0.5mL -> F3/R3/B01/A1  study OSPREY, courier BIO-5379
+10-19 13:04 TEMP  F1 -78.3C | F2 -79.8C | F3 -79.3C | F4 -79.1C | F5 -79.0C | F6 -78.2C
+10-19 13:30 RET   S-1457  -> F1/R2/B11/E6  after AS-380
+10-19 13:30 RCV   S-0540  CSF 1x0.5mL -> F6/R3/B06/I7  study PLOVER, courier BIO-5745
+10-19 14:02 RCV   S-2988  saliva 1x1.0mL -> F4/R3/B04/G4  study LARK, courier MED-5636
+10-19 14:16 DISP  S-0300  F3/R3/B09/A7  consumed by AS-314
+10-19 14:39 PULL  S-2612  F1/R1/B05/E3  for assay AS-345 (Dr. Lindqvist)
+10-19 15:02 PULL  S-0233  F4/R2/B06/D2  for assay AS-326 (Dr. Moreau)
+10-19 15:18 RET   S-2612  -> F1/R1/B05/E3  after AS-345
+10-19 15:18 MOVE  S-0952  F3/R3/B07/C8 -> F6/R2/B12/D5  ticket TR-2449
+10-19 15:47 TEMP  F1 -78.1C | F2 -79.8C | F3 -80.4C | F4 -81.1C | F5 -80.5C | F6 -78.3C
+10-19 16:16 RCV   S-2929  urine 2x1.0mL -> F2/R2/B12/G2  study LARK, courier BIO-5601
+10-19 16:45 RET   S-0233  -> F4/R2/B06/D2  after AS-326
+10-19 16:45 MOVE  S-2724  F2/R4/B03/D5 -> F6/R4/B12/C2  ticket TR-2450
+10-19 17:08 NOTE  label printer on bench 1 jammed; labels for S-2667 and S-2300 reprinted
+10-19 17:27 AUDIT F2/R2/B06  4 tubes, matches inventory
+10-19 17:58 AUDIT F6/R2/B06  2 tubes, matches inventory
+10-19 18:26 TEMP  F1 -79.3C | F2 -79.4C | F3 -81.0C | F4 -81.0C | F5 -78.6C | F6 -78.7C
+10-19 18:42 DISP  S-2530  F2/R2/B06/I3  consumed by AS-388
+10-19 19:15 RCV   S-2847  plasma 2x1.0mL -> F1/R2/B12/F7  study OSPREY, courier MED-5083
+10-19 19:32 DISP  S-2107  F5/R3/B01/G5  consumed by AS-395
+10-19 19:55 MOVE  S-1651  F3/R4/B10/C1 -> F6/R2/B08/D4  ticket TR-2451
+10-19 20:17 AUDIT F4/R1/B09  2 tubes, matches inventory
+10-19 20:42 RCV   S-2430  serum 1x0.5mL -> F4/R4/B03/A8  study WREN, courier BIO-5066
+10-19 21:03 CORR  entry of 10-19 09:42 for S-2328: the slot is F2/R4/B03/B8, not F2/R4/B03/D8 (typo)
+10-19 21:03 TEMP  F1 -79.2C | F2 -80.7C | F3 -80.2C | F4 -81.1C | F5 -79.6C | F6 -78.8C
+10-19 21:35 MOVE  S-1192  F3/R2/B01/H8 -> F2/R1/B11/G6  ticket TR-2452
+10-19 22:00 RCV   S-0960  RNA 1x0.1mL -> F3/R1/B10/I6  study HERON, courier UPS-5258
+10-19 22:27 PULL  S-1175  F1/R2/B11/E1  for assay AS-475 (Dr. Lindqvist)
+10-19 22:46 RCV   S-1170  urine 2x1.0mL -> F1/R3/B05/C7  study LARK, courier BIO-5703
+10-19 23:13 PULL  S-2212  F6/R3/B07/E8  for assay AS-394 (Dr. Moreau)
+10-19 23:32 MOVE  S-1979  F1/R4/B10/C8 -> F4/R1/B12/H7  ticket TR-2453
+10-19 23:56 NOTE  label printer on bench 1 jammed; labels for S-1515 and S-1933 reprinted
+10-20 00:17 TEMP  F1 -79.4C | F2 -79.2C | F3 -80.2C | F4 -78.3C | F5 -80.6C | F6 -78.9C
+10-20 00:42 PULL  S-1157  F1/R3/B09/G5  for assay AS-312 (Dr. Ruiz)
+10-20 01:00 PULL  S-2084  F3/R2/B07/I5  for assay AS-440 (Dr. Ruiz)
+10-20 01:20 RET   S-2212  -> F6/R3/B07/E8  after AS-394
+10-20 01:20 PULL  S-1952  F4/R3/B09/D6  for assay AS-399 (Dr. Lindqvist)
+10-20 01:41 AUDIT F2/R2/B04  4 tubes, matches inventory
+10-20 02:09 RET   S-1157  -> F1/R3/B09/G5  after AS-312
+10-20 02:09 AUDIT F6/R3/B12  5 tubes, matches inventory
+10-20 02:10 ALARM F2 compressor failure, cabinet at -61C and rising; on-call lead called in
+10-20 02:24 MOVE  box F2/R4/B09 -> F5/R2/B21  whole box, positions unchanged (EM-07, emergency)
+10-20 02:24 RET   S-1175  -> F1/R2/B11/E1  after AS-475
+10-20 02:24 NOTE  label printer on bench 3 jammed; labels for S-2498 and S-0392 reprinted
+10-20 02:26 MOVE  box F2/R4/B10 -> F5/R2/B22  whole box, positions unchanged (EM-07, emergency)
+10-20 02:28 MOVE  box F2/R4/B11 -> F5/R2/B23  whole box, positions unchanged (EM-07, emergency)
+10-20 02:30 MOVE  box F2/R4/B12 -> F5/R2/B24  whole box, positions unchanged (EM-07, emergency)
+10-20 02:40 NOTE  F2 emptied and switched off; the 10-25 move to F6/R3 is cancelled, the F2/R4 boxes stay in F5/R2
+10-20 02:52 NOTE  training: L. Brooks shadowed the duty lead on receipts
+10-20 03:06 NOTE  label printer on bench 1 jammed; labels for S-0126 and S-0452 reprinted
+10-20 03:29 TEMP  F1 -78.0C | F2 off | F3 -79.5C | F4 -78.4C | F5 -78.0C | F6 -80.3C
+10-20 04:00 VOID  ticket TR-2419: audit found F5/R3/B09/I4 empty, the tube never left its original slot; ticket voided, inventory reverted
+10-20 04:00 RET   S-2084  -> F3/R2/B07/I5  after AS-440
+10-20 04:00 NOTE  barcode of S-1878 unreadable, relabelled from LIMS record
+10-20 04:18 NOTE  S-1253 found rotated in its slot during a pick; no change of slot
+10-20 04:51 RET   S-1952  -> F4/R3/B09/D6  after AS-399
+10-20 04:51 AUDIT F6/R1/B08  4 tubes, matches inventory
+10-20 05:08 NOTE  spill kit restocked, size M gloves running low
+10-20 05:33 NOTE  assay AS-322 results due 10-24
+10-20 05:48 AUDIT F3/R2/B05  4 tubes, matches inventory
+10-20 06:10 NOTE  F4/R3/B08 lid cracked, box replaced like for like, positions unchanged
+10-20 06:15 AUDIT F5/R2/B23  4 tubes, labels read KESTREL; inventory expects 5 other tubes there
+10-20 06:40 CORR  EM-07: the box labels were swapped when the boxes were shelved at 02:28 and 02:30; F5/R2/B23 holds the former F2/R4/B12 and F5/R2/B24 holds the former F2/R4/B11. Inventory corrected; no tube changed position inside its box
+10-20 06:42 TEMP  F1 -80.1C | F2 off | F3 -80.7C | F4 -79.4C | F5 -78.3C | F6 -79.6C
+
+-- Handover to next duty --
+13 receipts, 9 moves, 9 pulls (all returned), 3 disposals, 9 audits. F2 failed at 02:10 and is off. Its R4 boxes are in F5/R2 (EM-07, mind the 06:40 correction). Next duty: confirm F5 holds below -78C. Temperatures normal; LN2 tank above half.

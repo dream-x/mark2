@@ -1,0 +1,86 @@
+BIOBANK CUSTODY LOG - duty day 02 of 08
+Period: 2026-10-13 07:00 -> 2026-10-14 07:00
+Duty lead: M. Varga / second: T. Chen
+Slot notation: freezer/rack/box/position, e.g. F1/R1/B01/A1 (box rows A-I, columns 1-9).
+
+-- Handover received --
+See the handover at the end of day 01; nothing else open.
+
+-- Entries --
+10-13 07:09 MOVE  S-1265  F1/R4/B03/F5 -> F6/R1/B08/H2  ticket TR-2235
+10-13 07:28 TEMP  F1 -81.0C | F2 -79.0C | F3 -78.6C | F4 -78.8C | F5 -80.9C | F6 -79.8C
+10-13 07:52 MOVE  S-0868  F5/R1/B02/B2 -> F1/R1/B12/E9  ticket TR-2236
+10-13 08:15 PULL  S-1967  F5/R2/B01/C8  for assay AS-455 (Dr. Nakamura)
+10-13 08:48 MOVE  S-0434  F4/R1/B09/E2 -> F3/R4/B07/I9  ticket TR-2237
+10-13 09:07 PULL  S-0431  F4/R4/B11/I6  for assay AS-393 (Dr. Moreau)
+10-13 09:36 RCV   S-0520  saliva 1x1.0mL -> F3/R2/B05/H2  study LARK, courier UPS-5129
+10-13 09:56 DISP  S-1221  F1/R1/B03/G4  consumed by AS-437
+10-13 10:15 TEMP  F1 -78.4C | F2 -80.0C | F3 -79.5C | F4 -79.2C | F5 -80.7C | F6 -78.8C
+10-13 10:29 AUDIT F5/R4/B02  5 tubes, matches inventory
+10-13 10:51 RET   S-1967  -> F5/R2/B01/C8  after AS-455
+10-13 10:51 VOID  ticket TR-2211 cancelled by the requester before the move; inventory reverted, F2/R3/B08 untouched
+10-13 10:51 DISP  S-0621  F3/R1/B07/G2  consumed by AS-474
+10-13 11:10 PULL  S-0732  F2/R4/B12/B8  for assay AS-418 (Dr. Ivers)
+10-13 11:10 AUDIT F2/R3/B04  5 tubes, matches inventory
+10-13 11:33 RCV   S-1769  plasma 2x1.0mL -> F2/R2/B03/D4  study PLOVER, courier MED-5534
+10-13 11:55 PULL  S-0042  F4/R1/B05/B5  for assay AS-416 (Dr. Hale)
+10-13 12:11 RCV   S-0966  serum 1x0.5mL -> F3/R3/B04/A3  study OSPREY, courier BIO-5208
+10-13 12:41 MOVE  S-2421  F3/R2/B11/B1 -> F2/R1/B11/I1  ticket TR-2238
+10-13 13:02 RET   S-0431  -> F4/R4/B11/I6  after AS-393
+10-13 13:02 RCV   S-0384  PBMC 1x1.0mL -> F3/R1/B08/H8  study PLOVER, courier UPS-5659
+10-13 13:31 TEMP  F1 -79.1C | F2 -78.3C | F3 -79.0C | F4 -80.2C | F5 -78.7C | F6 -78.6C
+10-13 13:45 RET   S-0732  -> F2/R4/B12/B8  after AS-418
+10-13 14:02 MOVE  S-0089  F5/R4/B04/G4 -> F5/R4/B03/C3  ticket TR-2239
+10-13 14:20 NOTE  label printer on bench 2 jammed; labels for S-1546 and S-0419 reprinted
+10-13 14:50 RCV   S-0567  PBMC 1x1.0mL -> F1/R1/B09/B7  study OSPREY, courier DHL-5998
+10-13 15:10 RCV   S-2327  PBMC 1x1.0mL -> F4/R2/B04/A7  study OSPREY, courier TNT-5707
+10-13 15:30 NOTE  Dr. Ivers asked to take the KESTREL tubes out of F2 (too much door traffic) and keep them together in F3; space in F3/R1 to be checked
+10-13 15:34 RET   S-0042  -> F4/R1/B05/B5  after AS-416
+10-13 15:34 NOTE  door alarm on F3 acknowledged after 33 s, cabinet stayed below -75C
+10-13 16:02 TEMP  F1 -79.4C | F2 -78.0C | F3 -80.6C | F4 -80.1C | F5 -80.7C | F6 -79.8C
+10-13 16:18 DISP  S-0133  F1/R3/B06/F7  consumed by AS-466
+10-13 16:44 PULL  S-1377  F3/R3/B07/A9  for assay AS-318 (Dr. Hale)
+10-13 17:17 AUDIT F6/R4/B01  6 tubes, matches inventory
+10-13 17:35 RCV   S-2082  PBMC 1x1.0mL -> F2/R1/B07/B7  study SWIFT, courier DHL-5730
+10-13 18:04 MOVE  S-2566  F1/R3/B10/F3 -> F1/R1/B06/B2  ticket TR-2240
+10-13 18:24 MOVE  S-1962  F6/R2/B10/F5 -> F4/R3/B10/E9  ticket TR-2241
+10-13 18:48 RCV   S-1280  urine 2x1.0mL -> F2/R3/B12/E6  study LARK, courier UPS-5998
+10-13 19:09 PULL  S-0654  F5/R2/B07/G7  for assay AS-392 (Dr. Lindqvist)
+10-13 19:25 TEMP  F1 -78.0C | F2 -78.4C | F3 -80.8C | F4 -79.7C | F5 -81.0C | F6 -79.4C
+10-13 19:42 RET   S-1377  -> F3/R3/B07/A9  after AS-318
+10-13 19:42 RCV   S-1814  PBMC 1x1.0mL -> F2/R3/B08/D1  study SWIFT, courier TNT-5565
+10-13 20:06 MOVE  S-0642  F4/R2/B10/B3 -> F4/R2/B02/H6  ticket TR-2242
+10-13 20:20 MOVE  S-2922  F1/R1/B11/D5 -> F1/R4/B11/G2  ticket TR-2243
+10-13 20:51 RCV   S-0175  saliva 1x1.0mL -> F6/R3/B12/A6  study SWIFT, courier BIO-5141
+10-13 21:22 DISP  S-1365  F5/R1/B05/H2  consumed by AS-490
+10-13 21:54 TEMP  F1 -78.5C | F2 -79.7C | F3 -80.2C | F4 -80.3C | F5 -80.5C | F6 -78.9C
+10-13 22:17 PULL  S-1391  F5/R1/B01/E6  for assay AS-444 (Dr. Hale)
+10-13 22:33 MOVE  S-0541  F6/R4/B02/I8 -> F5/R2/B04/D6  ticket TR-2244
+10-13 22:49 RET   S-0654  -> F5/R2/B07/G7  after AS-392
+10-13 22:49 MOVE  S-1546  F1/R1/B10/A8 -> F6/R4/B09/I6  ticket TR-2245
+10-13 23:21 RET   S-1391  -> F5/R1/B01/E6  after AS-444
+10-13 23:21 DISP  S-1950  F3/R4/B12/C2  consumed by AS-315
+10-13 23:52 RCV   S-0926  plasma 1x0.5mL -> F4/R2/B10/B7  study SWIFT, courier TNT-5114
+10-14 00:12 AUDIT F1/R4/B03  7 tubes, matches inventory
+10-14 00:41 MOVE  S-2610  F6/R1/B08/B4 -> F2/R3/B12/A4  ticket TR-2246
+10-14 01:02 TEMP  F1 -80.1C | F2 -80.3C | F3 -79.5C | F4 -80.7C | F5 -79.1C | F6 -80.3C
+10-14 01:16 RCV   S-0340  saliva 1x1.0mL -> F4/R1/B10/C5  study OSPREY, courier TNT-5066
+10-14 01:40 MOVE  S-2845  F1/R3/B11/H8 -> F4/R4/B11/D2  ticket TR-2247
+10-14 01:58 RCV   S-2344  saliva 1x1.0mL -> F3/R4/B06/A3  study SWIFT, courier UPS-5302
+10-14 02:22 MOVE  S-1326  F5/R3/B01/A5 -> F6/R4/B12/H3  ticket TR-2248
+10-14 02:39 PULL  S-2703  F5/R2/B04/F2  for assay AS-452 (Dr. Lindqvist)
+10-14 02:54 MOVE  S-2467  F2/R2/B07/A5 -> F1/R4/B07/A5  ticket TR-2249
+10-14 03:15 NOTE  door alarm on F3 acknowledged after 68 s, cabinet stayed below -75C
+10-14 03:39 TEMP  F1 -79.7C | F2 -79.0C | F3 -80.7C | F4 -80.8C | F5 -80.3C | F6 -79.3C
+10-14 04:09 RET   S-2703  -> F5/R2/B04/F2  after AS-452
+10-14 04:09 NOTE  courier BIO-5370 arrived 57 min late, dry ice topped up
+10-14 04:41 NOTE  label printer on bench 3 jammed; labels for S-1214 and S-0907 reprinted
+10-14 04:56 MOVE  S-2352  F4/R4/B03/I6 -> F2/R2/B12/G9  ticket TR-2250
+10-14 05:16 NOTE  Dr. Hale asked for the OSPREY aliquot list; exported from LIMS
+10-14 05:46 NOTE  S-0459 found rotated in its slot during a pick; no change of slot
+10-14 06:14 NOTE  door alarm on F4 acknowledged after 41 s, cabinet stayed below -75C
+10-14 06:34 VOID  ticket TR-2246: entered but never carried out, S-2610 is still in F6/R1/B08/B4; inventory reverted
+10-14 06:34 NOTE  label printer on bench 3 jammed; labels for S-0170 and S-2614 reprinted
+
+-- Handover to next duty --
+13 receipts, 16 moves, 7 pulls (all returned), 5 disposals, 4 audits. Temperatures normal; LN2 tank above half.

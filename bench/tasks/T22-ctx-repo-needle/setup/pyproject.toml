@@ -1,0 +1,7 @@
+[project]
+name = "ledgerly"
+version = "2.14.0"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]

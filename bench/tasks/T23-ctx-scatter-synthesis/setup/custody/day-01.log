@@ -1,0 +1,90 @@
+BIOBANK CUSTODY LOG - duty day 01 of 08
+Period: 2026-10-12 07:00 -> 2026-10-13 07:00
+Duty lead: R. Okafor / second: J. Lind
+Slot notation: freezer/rack/box/position, e.g. F1/R1/B01/A1 (box rows A-I, columns 1-9).
+
+-- Handover received --
+Quiet night. All six freezers between -78C and -81C. Nothing open.
+
+-- Entries --
+10-12 07:05 RCV   S-1239  PBMC 1x1.0mL -> F4/R1/B09/A5  study LARK, courier DHL-5993
+10-12 07:22 TEMP  F1 -80.4C | F2 -80.8C | F3 -80.3C | F4 -80.3C | F5 -78.9C | F6 -79.0C
+10-12 07:36 MOVE  S-2956  F5/R3/B01/G3 -> F2/R3/B03/F8  ticket TR-2200
+10-12 07:59 DISP  S-0832  F4/R4/B03/I7  consumed by AS-437
+10-12 08:21 AUDIT F4/R2/B02  6 tubes, matches inventory
+10-12 08:50 MOVE  S-1879  F1/R2/B06/D8 -> F2/R4/B05/C3  ticket TR-2201
+10-12 09:14 RCV   S-2127  serum 2x0.5mL -> F3/R3/B08/D7  study WREN, courier BIO-5853
+10-12 09:37 AUDIT F3/R2/B03  3 tubes, matches inventory
+10-12 09:52 RCV   S-0731  serum 1x1.0mL -> F2/R4/B12/B7  study KESTREL, courier MED-2207
+10-12 09:54 RCV   S-0732  serum 1x0.5mL -> F2/R4/B12/B8  study KESTREL, courier MED-2207
+10-12 09:56 RCV   S-0733  serum 1x0.5mL -> F2/R4/B12/B9  study KESTREL, courier MED-2207
+10-12 09:58 RCV   S-0734  plasma 1x0.5mL -> F2/R4/B12/C1  study KESTREL, courier MED-2207
+10-12 10:01 RCV   S-0736  serum 1x0.5mL -> F3/R2/B14/E6  study KESTREL, courier MED-2207, tube carries the sender's sticker "REF"
+10-12 10:03 PULL  S-1467  F2/R4/B03/D3  for assay AS-341 (Dr. Hale)
+10-12 10:06 NOTE  MED-2207 manifest lists S-0735 but the tube is not in the shipper; sender confirms it was never drawn
+10-12 10:09 NOTE  KESTREL (Dr. M. Ivers): S-0736 is marked "REF" by the sender, so it is logged as the study reference aliquot for now
+10-12 10:23 TEMP  F1 -80.0C | F2 -80.1C | F3 -78.3C | F4 -80.4C | F5 -80.7C | F6 -78.3C
+10-12 10:39 DISP  S-2377  F4/R3/B02/G5  consumed by AS-481
+10-12 10:40 RCV   S-0713  urine 2x1.0mL -> F2/R4/B11/C3  study HERON, courier DHL-5530
+10-12 11:04 MOVE  S-0868  F3/R3/B08/F4 -> F5/R1/B02/B2  ticket TR-2202
+10-12 11:28 PULL  S-1026  F4/R3/B05/D4  for assay AS-418 (Dr. Hale)
+10-12 11:59 RET   S-1467  -> F2/R4/B03/D3  after AS-341
+10-12 11:59 NOTE  S-2826 found rotated in its slot during a pick; no change of slot
+10-12 12:13 RCV   S-1369  urine 2x1.0mL -> F2/R4/B01/I4  study WREN, courier BIO-5760
+10-12 12:42 RCV   S-1231  serum 1x0.5mL -> F6/R1/B09/A4  study LARK, courier MED-5844
+10-12 13:13 TEMP  F1 -78.0C | F2 -81.1C | F3 -79.3C | F4 -81.0C | F5 -79.1C | F6 -78.0C
+10-12 13:45 AUDIT F4/R4/B04  5 tubes, matches inventory
+10-12 14:13 MOVE  S-0844  F4/R4/B01/C9 -> F6/R3/B10/E5  ticket TR-2203
+10-12 14:39 MOVE  S-1214  F6/R2/B06/C2 -> F1/R3/B12/H9  ticket TR-2204
+10-12 15:03 RET   S-1026  -> F4/R3/B05/D4  after AS-418
+10-12 15:03 MOVE  S-1413  F1/R2/B08/A2 -> F5/R1/B03/F9  ticket TR-2205
+10-12 15:32 DISP  S-1447  F5/R2/B08/I6  consumed by AS-348
+10-12 15:48 CORR  entry of 10-12 07:05 for S-1239: the slot is F4/R1/B09/C8, not F4/R1/B09/A5 (typo)
+10-12 15:48 RCV   S-0292  CSF 1x0.5mL -> F5/R2/B10/H8  study PLOVER, courier BIO-5040
+10-12 16:02 PULL  S-2017  F5/R1/B09/G6  for assay AS-478 (Dr. Moreau)
+10-12 16:21 TEMP  F1 -79.1C | F2 -78.7C | F3 -80.4C | F4 -80.0C | F5 -79.0C | F6 -80.5C
+10-12 16:41 RCV   S-0322  plasma 1x0.5mL -> F2/R2/B11/E9  study HERON, courier BIO-5765
+10-12 17:01 RET   S-2017  -> F5/R1/B09/G6  after AS-478
+10-12 17:01 DISP  S-1518  F3/R4/B11/B8  consumed by AS-441
+10-12 17:22 RCV   S-1873  serum 2x0.5mL -> F1/R3/B09/I9  study PLOVER, courier BIO-5724
+10-12 17:43 RCV   S-0408  plasma 2x1.0mL -> F3/R4/B06/C6  study LARK, courier UPS-5927
+10-12 18:05 RCV   S-1950  urine 2x1.0mL -> F3/R4/B12/C2  study WREN, courier MED-5150
+10-12 18:37 AUDIT F1/R1/B06  2 tubes, matches inventory
+10-12 19:10 MOVE  S-2172  F2/R2/B07/F4 -> F5/R1/B10/E2  ticket TR-2206
+10-12 19:25 RCV   S-1686  DNA 1x0.2mL -> F3/R4/B02/B6  study LARK, courier TNT-5213
+10-12 19:41 TEMP  F1 -79.5C | F2 -78.9C | F3 -81.1C | F4 -79.2C | F5 -78.6C | F6 -79.7C
+10-12 19:59 MOVE  S-1510  F2/R1/B11/A6 -> F6/R1/B04/I3  ticket TR-2207
+10-12 20:19 DISP  S-2561  F5/R3/B04/D5  consumed by AS-450
+10-12 20:49 MOVE  S-2076  F2/R1/B12/D5 -> F2/R2/B05/D9  ticket TR-2208
+10-12 21:06 AUDIT F5/R1/B04  4 tubes, matches inventory
+10-12 21:33 NOTE  LN2 delivery received, tank at 71%
+10-12 21:56 CORR  entry of 10-12 16:41 for S-0322: the slot is F2/R2/B11/G8, not F2/R2/B11/E9 (typo)
+10-12 21:56 RCV   S-1142  plasma 2x1.0mL -> F1/R2/B08/A6  study HERON, courier DHL-5742
+10-12 22:15 PULL  S-1171  F6/R1/B11/F7  for assay AS-494 (Dr. Ruiz)
+10-12 22:38 TEMP  F1 -80.9C | F2 -79.8C | F3 -79.0C | F4 -80.1C | F5 -78.0C | F6 -80.3C
+10-12 23:08 PULL  S-2924  F1/R3/B01/C7  for assay AS-311 (Dr. Lindqvist)
+10-12 23:28 RCV   S-2639  serum 2x0.5mL -> F2/R2/B01/G5  study OSPREY, courier TNT-5487
+10-12 23:59 NOTE  label printer on bench 3 jammed; labels for S-0364 and S-0275 reprinted
+10-13 00:20 RCV   S-2463  PBMC 1x1.0mL -> F5/R2/B11/E7  study LARK, courier BIO-5229
+10-13 00:35 PULL  S-2380  F1/R3/B03/B3  for assay AS-458 (Dr. Ruiz)
+10-13 00:50 RET   S-1171  -> F6/R1/B11/F7  after AS-494
+10-13 00:50 AUDIT F2/R1/B08  6 tubes, matches inventory
+10-13 01:12 MOVE  S-1077  F6/R1/B10/C3 -> F1/R1/B05/D7  ticket TR-2209
+10-13 01:33 RET   S-2380  -> F1/R3/B03/B3  after AS-458
+10-13 01:33 TEMP  F1 -80.5C | F2 -80.2C | F3 -78.8C | F4 -78.8C | F5 -78.9C | F6 -80.9C
+10-13 02:01 RET   S-2924  -> F1/R3/B01/C7  after AS-311
+10-13 02:01 RCV   S-0561  urine 2x1.0mL -> F5/R2/B06/G1  study HERON, courier BIO-5120
+10-13 02:15 RCV   S-2694  serum 2x0.5mL -> F4/R4/B01/F4  study SWIFT, courier BIO-5432
+10-13 02:34 AUDIT F6/R2/B10  7 tubes, matches inventory
+10-13 03:01 DISP  S-0801  F3/R2/B06/A5  consumed by AS-326
+10-13 03:32 MOVE  S-2319  F3/R4/B07/B8 -> F5/R1/B02/A8  ticket TR-2210
+10-13 04:05 TEMP  F1 -80.8C | F2 -81.0C | F3 -80.2C | F4 -78.5C | F5 -79.3C | F6 -80.2C
+10-13 04:32 MOVE  S-2990  F3/R2/B08/B8 -> F2/R3/B08/D9  ticket TR-2211
+10-13 04:57 RCV   S-1546  RNA 1x0.1mL -> F1/R1/B10/A8  study PLOVER, courier DHL-5492
+10-13 05:21 AUDIT F2/R3/B12  5 tubes, matches inventory
+10-13 05:49 RCV   S-0916  serum 1x0.5mL -> F1/R1/B06/F4  study OSPREY, courier UPS-5140
+10-13 06:14 NOTE  Dr. Nakamura asked for the HERON aliquot list; exported from LIMS
+10-13 06:45 RCV   S-0252  DNA 1x0.2mL -> F2/R4/B04/E7  study PLOVER, courier BIO-5487
+
+-- Handover to next duty --
+24 receipts, 12 moves, 6 pulls (all returned), 6 disposals, 8 audits. KESTREL intake done. Correction to the 10:09 note: Dr. Ivers phoned at 16:20, the "REF" sticker on S-0736 is the sender's mistake. The KESTREL reference aliquot is S-0731, the 1.0 mL serum; S-0732, S-0733, S-0734 and S-0736 are working aliquots. The reference may only be thawed on her written request. Freezers in range at the last round.

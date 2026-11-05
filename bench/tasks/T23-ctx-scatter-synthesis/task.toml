@@ -1,0 +1,5 @@
+[task]
+timeout_seconds = 480
+tags = ["context", "compaction", "read"]
+policy = "yolo"
+context_limit = 8192
