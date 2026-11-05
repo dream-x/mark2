@@ -1,0 +1,769 @@
+{
+  "schema_version": 1,
+  "label": "pair-v3-local",
+  "run_id": "20261105-164111-pair-v3-local",
+  "started_at": "2026-11-05T13:41:11.565138Z",
+  "finished_at": "2026-11-05T19:02:28.938124Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 2,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "qwen9",
+        "model": "qwen3.5:9b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 1.0
+      },
+      {
+        "alias": "flint40",
+        "model": "flint:40b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0,
+        "edit_strategy": "whole_file"
+      },
+      {
+        "alias": "qwen36c",
+        "model": "qwen3.6:35b-a3b-coding",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      },
+      {
+        "alias": "ornith35",
+        "model": "ornith-1.5:35b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 2.0
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T24",
+        "slug": "app-freeform",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T24-app-freeform",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 360,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Build a small kanban board web app in the current directory: an aiohttp backend `server.py`, started as `python3 server.py`, that listens on the port from the `PORT` environment variable (default 8770) and serves the page at `/`, and a plain JavaScript frontend with no frameworks, no build step and nothing loaded from the internet. The board has three columns, To Do, Doing and Done, behind a JSON API: `GET /api/cards` returns the list of all cards, each an object `{\"id\": ..., \"title\": ..., \"column\": ...}` with a unique id and the column `todo`, `doing` or `done`; `POST /api/cards` with `{\"title\": ...}` creates a card in `todo` and returns it, or answers 400 when the title is blank; `PATCH /api/cards/<id>` with `{\"column\": ...}` moves the card and returns it, or answers 400 for an unknown column; `DELETE /api/cards/<id>` removes the card; and both of the last two answer 404 for an id that does not exist. Every change is saved, before the server answers, to a JSON file at the path from the `BOARD_FILE` environment variable (default `board.json`; no file yet means an empty board), so the board survives a restart of the server, even a hard kill. The page has a text input `#new-card` and a button `#add-btn` that adds a card with the typed title (pressing Enter in the input does the same), and column elements `#todo`, `#doing` and `#done` that hold one `.card` element per card, showing its title, with the buttons `.move-left` and `.move-right` to move it to the neighbouring column (they may be missing or disabled where there is none) and `.delete`; the page changes the board only through the API, loads it when it opens and always shows it exactly as the server stores it. Write `test_board.py`, an automated test that starts `server.py` itself as a subprocess on a free port with its own temporary `BOARD_FILE`, checks the API, stops the server even when a check fails, finishes within 60 seconds and exits 0 only if everything works, then run it and make it pass. `python3` on your PATH already has aiohttp, so install nothing, and stop the servers you started before you finish, each by the PID of the process you launched — never by matching names with pkill or killall: other processes on this machine are not yours.\n"
+      },
+      {
+        "id": "T25",
+        "slug": "app-planned",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T25-app-planned",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 360,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "# Kanban board web app\n\n## Brief\n\nBuild a small kanban board web app in the current directory: an aiohttp\nbackend, a plain JavaScript page and an automated test. The board has three\ncolumns, To Do, Doing and Done; cards can be added, moved between columns and\ndeleted, and the board is kept in a JSON file, so it survives a restart.\n\n## Requirements\n\n### Server\n\n- `server.py`, on aiohttp, started as `python3 server.py`.\n- Port: the `PORT` environment variable, default `8770`.\n- Serves the page at `/`.\n\n### JSON API\n\n- `GET /api/cards` returns the list of all cards. A card is an object\n  `{\"id\": ..., \"title\": ..., \"column\": ...}`: the id is unique, the column is\n  `todo`, `doing` or `done`.\n- `POST /api/cards` with `{\"title\": ...}` creates a card in `todo` and returns\n  it. A blank title: 400.\n- `PATCH /api/cards/<id>` with `{\"column\": ...}` moves the card and returns it.\n  An unknown column: 400.\n- `DELETE /api/cards/<id>` removes the card.\n- `PATCH` and `DELETE` answer 404 for an id that does not exist.\n\n### Storage\n\n- Every change is saved, before the server answers, to a JSON file at the\n  path from the `BOARD_FILE` environment variable, default `board.json`.\n- No file yet means an empty board.\n- The board survives a restart of the server, even a hard kill.\n\n### Page\n\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet.\n- A text input `#new-card` and a button `#add-btn` that adds a card with the\n  typed title. Pressing Enter in the input does the same.\n- Column elements `#todo`, `#doing` and `#done`, holding one `.card` element\n  per card.\n- Each `.card` shows its title and has the buttons `.move-left` and\n  `.move-right` (move it to the neighbouring column; they may be missing or\n  disabled where there is none) and `.delete`.\n- The page changes the board only through the API, loads it when it opens and\n  always shows it exactly as the server stores it.\n\n### Test: `test_board.py`\n\n- Starts `server.py` itself as a subprocess on a free port with its own\n  temporary `BOARD_FILE`.\n- Checks the API.\n- Stops the server, even when a check fails.\n- Finishes within 60 seconds and exits 0 only if everything works.\n- You run it and make it pass.\n\n### Environment\n\n- `python3` on your PATH already has aiohttp: install nothing.\n- Stop the servers you started before you finish, each by the PID of the\n  process you launched — never by matching names with pkill or killall: other\n  processes on this machine are not yours.\n\n## Plan\n\nWork in this order and finish each step before the next.\n\n1. **Server and storage.** Write `server.py`: the port, the board loaded from\n   `BOARD_FILE`, the four API routes with their 400 and 404 answers, a save on\n   every change.\n2. **Check the API by hand.** Start the server with a temporary `BOARD_FILE`\n   and walk the API: create, a blank title, move, an unknown column, delete,\n   an unknown id. Kill the server with SIGKILL, start it again on the same\n   `BOARD_FILE` and confirm that the board is unchanged.\n3. **Page.** Serve it at `/` with the required ids and classes. It loads the\n   board when it opens; adding (button and Enter), moving left and right and\n   deleting go through the API; after every action the page shows the board as\n   the server stores it.\n4. **Test.** Write `test_board.py` as required above.\n5. **Run and fix.** Run `python3 test_board.py` until it passes, then go\n   through the Definition of Done item by item and fix what fails.\n6. **Clean up.** Stop every server you started.\n\n## TODO\n\n- [ ] `server.py` starts with `python3 server.py`, port from `PORT` (default 8770)\n- [ ] `GET /` serves the page\n- [ ] `GET /api/cards`\n- [ ] `POST /api/cards`, 400 for a blank title\n- [ ] `PATCH /api/cards/<id>`, 400 for an unknown column, 404 for an unknown id\n- [ ] `DELETE /api/cards/<id>`, 404 for an unknown id\n- [ ] Board saved to `BOARD_FILE` on every change, before answering; loaded at start; no file means an empty board\n- [ ] Page: `#new-card` and `#add-btn`, Enter adds too\n- [ ] Page: `#todo`, `#doing`, `#done` with one `.card` per card: title, `.move-left`, `.move-right`, `.delete`\n- [ ] Page: loads the board on open, changes it only through the API, always shows it as the server stores it\n- [ ] `test_board.py` written, run, passing\n- [ ] Every Definition of Done item checked\n- [ ] Every server you started is stopped\n\n## Definition of Done\n\nThe task is done when all of the following hold.\n\nAPI and storage, with the server started on a `BOARD_FILE` that does not exist yet:\n\n1. `GET /` answers 200 with the page; `GET /api/cards` answers 200 with `[]`.\n2. `POST /api/cards` with a title answers 2xx with the new card: an id, the\n   same title, the column `todo`. Three cards get three different ids, and\n   `GET /api/cards` lists all three in `todo`.\n3. `POST /api/cards` with the title `\"\"` or `\"   \"` answers 400 and creates\n   nothing.\n4. `PATCH /api/cards/<id>` to any of the three columns answers 2xx with the\n   card in that column, and `GET /api/cards` agrees. With\n   `{\"column\": \"archive\"}` it answers 400 and the card stays where it was.\n5. `DELETE /api/cards/<id>` answers 2xx, and the card is gone from\n   `GET /api/cards`.\n6. `PATCH` and `DELETE` of an id that does not exist, or no longer exists,\n   answer 404.\n7. After a change the file at `BOARD_FILE` exists and holds valid JSON.\n8. Killed with SIGKILL right after a change and started again on the same\n   `BOARD_FILE`, the server returns exactly the same cards: ids, titles,\n   columns. A card created after the restart gets an id no other card has, and\n   it survives the next SIGKILL and restart as well.\n\nPage, in a real browser, typing and clicking like a user:\n\n9. Cards that are already stored show up when the page opens, each as one\n   `.card` in its column (`#todo`, `#doing`, `#done`).\n10. Typing a title into `#new-card` and pressing Enter adds the card to\n    `#todo`, on the page and on the server. Typing a title and clicking\n    `#add-btn` does the same.\n11. Clicking `#add-btn` with an empty or blank title adds nothing, neither on\n    the page nor on the server.\n12. `.move-right` on a card in `#todo` moves it to `#doing`, once more to\n    `#done`; `.move-left` on it in `#done` moves it back to `#doing`. After\n    each click the card is in exactly one column on the page, and the server\n    has it in the same column.\n13. `.delete` removes the card from the page and from the server.\n14. The page never shows more or fewer cards than the server has. Reloading\n    it, or opening it in a second browser, shows the same board.\n\nTest:\n\n15. `python3 test_board.py`, with nothing running beforehand, exits 0 within\n    60 seconds and leaves no server running.\n16. If `server.py` cannot start (say, it exits at once), `python3 test_board.py`\n    exits non-zero.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T24",
+      "repeat": 1,
+      "started_at": "2026-11-05T13:41:14.178984Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 1800.006302209,
+      "timeout_seconds": 1800.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 53,
+        "tool_uses": 53,
+        "tool_errors": 26,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 2,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 40
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): FAIL\nT24 layer C (own test_board.py): FAIL\n",
+        "stderr": "FAIL [layer B ui]: page 1: the page has no element with id='new-card'\nFAIL [layer C own test_board.py]: `python3 test_board.py` exited with code 1; its output:\n    await check_api(session)\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-lQnLlQ/cwd/test_board.py\", line 43, in check_api\n    result = await make_request(session, 'PATCH', '/api/cards/1', {'column': 'doing'})\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-lQnLlQ/cwd/test_board.py\", line 17, in make_request\n    return await resp.json()\n           ^^^^^^^^^^^^^^^^^\n  File \"/Users/maks/projects/mark2/bench/uitest/.venv/lib/python3.14/site-packages/aiohttp/client_reqrep.py\", line 965, in json\n    raise ContentTypeError(\n    ...<7 lines>...\n    )\naiohttp.client_exceptions.ContentTypeError: 405, message='Attempt to decode JSON with unexpected mimetype: text/plain; charset=utf-8', url='http://localhost:8771/api/cards/1'\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/qwen9/T24/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T24/1.stderr.txt",
+      "session_path": "sessions/qwen9/T24/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T24",
+      "repeat": 2,
+      "started_at": "2026-11-05T14:11:16.918518Z",
+      "pass": false,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 1158.868616292,
+      "timeout_seconds": 1800.0,
+      "tokens": {
+        "input": 1540992,
+        "output": 16309,
+        "cached": 1502384
+      },
+      "session": {
+        "assistant_messages": 80,
+        "tool_uses": 80,
+        "tool_errors": 60,
+        "compactions": 0,
+        "stop_reason": "max_turns",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 4,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 60
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): FAIL\nT24 layer C (own test_board.py): PASS\n",
+        "stderr": "FAIL [layer B ui]: page 1: the page has no element with id='new-card'\n"
+      },
+      "answer_chars": 80,
+      "stdout_path": "logs/qwen9/T24/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T24/2.stderr.txt",
+      "session_path": "sessions/qwen9/T24/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T25",
+      "repeat": 1,
+      "started_at": "2026-11-05T14:30:48.481586Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 317.724515125,
+      "timeout_seconds": 1800.0,
+      "tokens": {
+        "input": 319807,
+        "output": 8094,
+        "cached": 299026
+      },
+      "session": {
+        "assistant_messages": 27,
+        "tool_uses": 26,
+        "tool_errors": 5,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 5
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): FAIL\nT25 layer C (own test_board.py): FAIL\n",
+        "stderr": "FAIL [layer B ui]: page 1: clicking .move-right on a card in #todo: for title 'Typed with Enter f2c533' the page must show exactly one .card with it, in #doing within 5 s; .card elements with it now: #todo: 1, #doing: 0, #done: 0\nFAIL [layer C own test_board.py]: with server.py replaced by a stub that exits at once, `python3 test_board.py` still exited 0: the test does not really start and check the server; its output:\nAll tests passed!\n"
+      },
+      "answer_chars": 1453,
+      "stdout_path": "logs/qwen9/T25/1.stdout.txt",
+      "stderr_path": "logs/qwen9/T25/1.stderr.txt",
+      "session_path": "sessions/qwen9/T25/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen9",
+      "model_id": "qwen3.5:9b",
+      "task": "T25",
+      "repeat": 2,
+      "started_at": "2026-11-05T14:36:31.543244Z",
+      "pass": false,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 742.047845,
+      "timeout_seconds": 1800.0,
+      "tokens": {
+        "input": 1263592,
+        "output": 11114,
+        "cached": 1240321
+      },
+      "session": {
+        "assistant_messages": 80,
+        "tool_uses": 80,
+        "tool_errors": 66,
+        "compactions": 0,
+        "stop_reason": "max_turns",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 11,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 66
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): FAIL\nT25 layer C (own test_board.py): FAIL\n",
+        "stderr": "FAIL [layer B ui]: page 1: clicking .move-right on a card in #todo: for title 'Typed with Enter 7868fe' the page must show exactly one .card with it, in #doing within 5 s; .card elements with it now: #todo: 1, #doing: 0, #done: 0\nFAIL [layer C own test_board.py]: test_board.py is missing: the task requires a self-contained test\n"
+      },
+      "answer_chars": 80,
+      "stdout_path": "logs/qwen9/T25/2.stdout.txt",
+      "stderr_path": "logs/qwen9/T25/2.stderr.txt",
+      "session_path": "sessions/qwen9/T25/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T24",
+      "repeat": 1,
+      "started_at": "2026-11-05T14:49:07.886364Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 290.794150209,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 557914,
+        "output": 27744,
+        "cached": 534804
+      },
+      "session": {
+        "assistant_messages": 44,
+        "tool_uses": 43,
+        "tool_errors": 6,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 6
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): PASS\nT24 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 3007,
+      "stdout_path": "logs/flint40/T24/1.stdout.txt",
+      "stderr_path": "logs/flint40/T24/1.stderr.txt",
+      "session_path": "sessions/flint40/T24/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T24",
+      "repeat": 2,
+      "started_at": "2026-11-05T14:54:03.318732Z",
+      "pass": true,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 1003.778400959,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 1820291,
+        "output": 59202,
+        "cached": 1770836
+      },
+      "session": {
+        "assistant_messages": 80,
+        "tool_uses": 80,
+        "tool_errors": 8,
+        "compactions": 0,
+        "stop_reason": "max_turns",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 1,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 8
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): PASS\nT24 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 3339,
+      "stdout_path": "logs/flint40/T24/2.stdout.txt",
+      "stderr_path": "logs/flint40/T24/2.stderr.txt",
+      "session_path": "sessions/flint40/T24/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T25",
+      "repeat": 1,
+      "started_at": "2026-11-05T15:11:06.605009Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 3600.004839,
+      "timeout_seconds": 3600.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 29,
+        "tool_uses": 29,
+        "tool_errors": 9,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 1,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 10
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): PASS\nT25 layer C (own test_board.py): FAIL\n",
+        "stderr": "FAIL [layer C own test_board.py]: test_board.py is missing: the task requires a self-contained test\n"
+      },
+      "answer_chars": 1177,
+      "stdout_path": "logs/flint40/T25/1.stdout.txt",
+      "stderr_path": "logs/flint40/T25/1.stderr.txt",
+      "session_path": "sessions/flint40/T25/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "flint40",
+      "model_id": "flint:40b",
+      "task": "T25",
+      "repeat": 2,
+      "started_at": "2026-11-05T16:11:10.519192Z",
+      "pass": false,
+      "exit_code": 1,
+      "timed_out": false,
+      "wall_time_seconds": 1614.74633575,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 5033922,
+        "output": 81416,
+        "cached": 4920530
+      },
+      "session": {
+        "assistant_messages": 80,
+        "tool_uses": 80,
+        "tool_errors": 12,
+        "compactions": 0,
+        "stop_reason": "max_turns",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 2,
+        "post_edit_failures": 0,
+        "coerced": 4,
+        "compactions": 0,
+        "tool_errors": 12
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): FAIL\nT25 layer B (ui): FAIL\nT25 layer C (own test_board.py): FAIL\n",
+        "stderr": "FAIL [layer A api]: PATCH /api/cards/1 {\"column\": \"doing\"} must succeed (2xx), got 500: 500 Internal Server Error\n\nServer got itself in trouble\nFAIL [layer B ui]: PATCH /api/cards/2 {\"column\": \"done\"} must succeed (2xx), got 500: 500 Internal Server Error\n\nServer got itself in trouble\nFAIL [layer C own test_board.py]: `python3 test_board.py` exited with code 1; its output:\n    return runner.run(main)\n           ~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/runners.py\", line 128, in run\n    return self._loop.run_until_complete(task)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py\", line 719, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-HY2MJ9/cwd/test_board.py\", line 125, in main\n    assert 200 <= resp.status < 300, f\"PATCH doing -> {resp.status}\"\n           ^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: PATCH doing -> 500\n"
+      },
+      "answer_chars": 2370,
+      "stdout_path": "logs/flint40/T25/2.stdout.txt",
+      "stderr_path": "logs/flint40/T25/2.stderr.txt",
+      "session_path": "sessions/flint40/T25/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T24",
+      "repeat": 1,
+      "started_at": "2026-11-05T16:38:11.558194Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 117.256176084,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 130434,
+        "output": 9038,
+        "cached": 118315
+      },
+      "session": {
+        "assistant_messages": 16,
+        "tool_uses": 15,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 3
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): PASS\nT24 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 1597,
+      "stdout_path": "logs/qwen36c/T24/1.stdout.txt",
+      "stderr_path": "logs/qwen36c/T24/1.stderr.txt",
+      "session_path": "sessions/qwen36c/T24/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T24",
+      "repeat": 2,
+      "started_at": "2026-11-05T16:40:23.771378Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 110.243515875,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 101634,
+        "output": 10808,
+        "cached": 88333
+      },
+      "session": {
+        "assistant_messages": 13,
+        "tool_uses": 12,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): PASS\nT24 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 1384,
+      "stdout_path": "logs/qwen36c/T24/2.stdout.txt",
+      "stderr_path": "logs/qwen36c/T24/2.stderr.txt",
+      "session_path": "sessions/qwen36c/T24/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T25",
+      "repeat": 1,
+      "started_at": "2026-11-05T16:42:24.453549Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 125.114457209,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 190433,
+        "output": 10802,
+        "cached": 170855
+      },
+      "session": {
+        "assistant_messages": 16,
+        "tool_uses": 15,
+        "tool_errors": 3,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 3
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): PASS\nT25 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 2086,
+      "stdout_path": "logs/qwen36c/T25/1.stdout.txt",
+      "stderr_path": "logs/qwen36c/T25/1.stderr.txt",
+      "session_path": "sessions/qwen36c/T25/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen36c",
+      "model_id": "qwen3.6:35b-a3b-coding",
+      "task": "T25",
+      "repeat": 2,
+      "started_at": "2026-11-05T16:44:51.241474Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 218.216317875,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 782877,
+        "output": 18572,
+        "cached": 753924
+      },
+      "session": {
+        "assistant_messages": 48,
+        "tool_uses": 47,
+        "tool_errors": 9,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 2,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 9
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): PASS\nT25 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 3580,
+      "stdout_path": "logs/qwen36c/T25/2.stdout.txt",
+      "stderr_path": "logs/qwen36c/T25/2.stderr.txt",
+      "session_path": "sessions/qwen36c/T25/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T24",
+      "repeat": 1,
+      "started_at": "2026-11-05T16:49:00.849718Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 418.438695083,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 155830,
+        "output": 23095,
+        "cached": 143580
+      },
+      "session": {
+        "assistant_messages": 20,
+        "tool_uses": 19,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): PASS\nT24 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 3471,
+      "stdout_path": "logs/ornith35/T24/1.stdout.txt",
+      "stderr_path": "logs/ornith35/T24/1.stderr.txt",
+      "session_path": "sessions/ornith35/T24/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T24",
+      "repeat": 2,
+      "started_at": "2026-11-05T16:56:13.701776Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 3600.005086167,
+      "timeout_seconds": 3600.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 0,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T24 files: FAIL\n",
+        "stderr": "FAIL [files]: server.py is missing in /private/var/folders/4b/36vfp1t92_1djx8nb0xlc3k80000gn/T/mark2-bench-lUn8ZO/cwd\n"
+      },
+      "answer_chars": 0,
+      "stdout_path": "logs/ornith35/T24/2.stdout.txt",
+      "stderr_path": "logs/ornith35/T24/2.stderr.txt",
+      "session_path": "sessions/ornith35/T24/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T25",
+      "repeat": 1,
+      "started_at": "2026-11-05T17:56:13.767016Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 359.988104833,
+      "timeout_seconds": 3600.0,
+      "tokens": {
+        "input": 340867,
+        "output": 15073,
+        "cached": 317256
+      },
+      "session": {
+        "assistant_messages": 28,
+        "tool_uses": 27,
+        "tool_errors": 2,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): PASS\nT25 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 4435,
+      "stdout_path": "logs/ornith35/T25/1.stdout.txt",
+      "stderr_path": "logs/ornith35/T25/1.stderr.txt",
+      "session_path": "sessions/ornith35/T25/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "ornith35",
+      "model_id": "ornith-1.5:35b",
+      "task": "T25",
+      "repeat": 2,
+      "started_at": "2026-11-05T18:02:18.551419Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 3600.004915916,
+      "timeout_seconds": 3600.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 26,
+        "tool_uses": 26,
+        "tool_errors": 5,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 5
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): PASS\nT25 layer C (own test_board.py): FAIL\n",
+        "stderr": "FAIL [layer C own test_board.py]: `python3 test_board.py` exited with code 1; its output:\n    ...<3 lines>...\n    )\n    ^\n  File \"/Users/maks/projects/mark2/bench/uitest/.venv/lib/python3.14/site-packages/playwright/_impl/_connection.py\", line 636, in wrap_api_call\n    raise rewrite_error(error, f\"{parsed_st['apiName']}: {error}\") from None\nplaywright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 5000ms exceeded.\nCall log:\n  - waiting for locator(\"#todo .card:text-is('via-enter')\") to be visible\n\nERROR: Page.wait_for_selector: Timeout 5000ms exceeded.\nCall log:\n  - waiting for locator(\"#todo .card:text-is('via-enter')\") to be visible\n"
+      },
+      "answer_chars": 2668,
+      "stdout_path": "logs/ornith35/T25/2.stdout.txt",
+      "stderr_path": "logs/ornith35/T25/2.stderr.txt",
+      "session_path": "sessions/ornith35/T25/2.jsonl",
+      "error": null
+    }
+  ]
+}
