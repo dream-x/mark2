@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "label": "dsh-glm53-t16-replay",
+  "run_id": "20261107-120745-dsh-glm53-t16-replay",
+  "started_at": "2026-11-07T09:07:45.793428Z",
+  "finished_at": "2026-11-07T09:08:12.800136Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/private/tmp/claude-501/-Users-maks-projects-mark2/04d8750f-94be-414a-bc5f-19c44aaec6c6/scratchpad/dsh/mark2-dsh-shim.sh",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 1,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "glm53",
+        "model": "glm-5.3",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "timeout_multiplier": 2.5,
+        "api_key_env": "ZAI_API_KEY"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T16",
+        "slug": "permission-deny",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T16-permission-deny",
+        "timeout_seconds": 180,
+        "repeats": 1,
+        "tags": [
+          "read",
+          "permission",
+          "recovery",
+          "hard"
+        ],
+        "policy": "read-only",
+        "context_limit": null,
+        "max_turns": null,
+        "verify_timeout_seconds": null,
+        "uitest_env": false,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "The current working directory contains a small app: `app.py`,\n`config/default.ini`, `config/override.ini`, `README.md` and\n`config/README.md`.\n\nWhich `release_channel` does the app actually use when it starts?\n\nRules:\n\n- Print the answer as the final line of your reply, in exactly this form:\n  `release_channel = <value>`\n- Use the `release_channel = ...` form only for that final answer line. Do not\n  write it with any other value anywhere in your reply.\n- Read-only task: do not modify, create or delete any file.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "glm53",
+      "model_id": "glm-5.3",
+      "task": "T16",
+      "repeat": 1,
+      "started_at": "2026-11-07T09:07:52.72675Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 20.0435365,
+      "timeout_seconds": 450.0,
+      "tokens": null,
+      "session": null,
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "",
+        "stderr": ""
+      },
+      "answer_chars": 636,
+      "stdout_path": "logs/glm53/T16/1.stdout.txt",
+      "stderr_path": "logs/glm53/T16/1.stderr.txt",
+      "session_path": null,
+      "error": null
+    }
+  ]
+}
