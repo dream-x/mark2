@@ -64,9 +64,10 @@ pub struct RunConfig {
     /// Строки `--agent-override`, дописанные в `[agent]` `.mark2.toml` каждого
     /// прогона после базы и настроек задачи: абляция настроек mark2
     /// (`arg_coercion = false`, `write_churn = false`, `post_edit_command =
-    /// ""`). Ключ post-edit сенсора задачи override перекрывает, остальные
-    /// совпадения с ранером — ошибка до прогона. Пусто — mark2 с дефолтами; в
-    /// старых `results.json` поля нет.
+    /// ""`). Одноимённый ключ ранера (`temperature` из
+    /// [`RunConfig::project_config`], `max_turns` и сенсор задачи) override
+    /// перекрывает: строка ранера в `.mark2.toml` не попадает. Пусто — mark2 с
+    /// дефолтами; в старых `results.json` поля нет.
     #[serde(default)]
     pub agent_overrides: Vec<String>,
     /// Матрица моделей после фильтра `--models`.

@@ -21,9 +21,9 @@
 //!   модели, а не задачи);
 //! * **абляция** — строки `--agent-override 'key = value'` ([`Runner::agent_overrides`])
 //!   дописываются в `[agent]` каждого `.mark2.toml` после базы и настроек
-//!   задачи; ключ post-edit сенсора задачи override **перекрывает** (строка
-//!   задачи не пишется — `post_edit_command = ""` выключает сенсор), прочие
-//!   совпадения с тем, что пишет ранер, — ошибка; каждая строка и каждый
+//!   задачи; одноимённую строку ранера override **перекрывает** (строка базы
+//!   или задачи не пишется: `temperature = 0.6` вместо базового `0.0`,
+//!   `post_edit_command = ""` выключает сенсор задачи); каждая строка и каждый
 //!   итоговый конфиг проверяются парсером ядра до первого прогона
 //!   ([`parse_agent_override`], [`check_project_configs`]);
 //! * **окружение uitest** — задаче с `uitest_env = true` ранер до первой
@@ -656,13 +656,20 @@ pub fn mark2_args(
 /// байт как раньше. `max_turns`, post-edit сенсор задачи и затем строки
 /// `agent_overrides` (как есть, по одной на строку) дописываются сразу за
 /// базой: база — это секция `[agent]` целиком, так что они попадают в неё же.
-/// Ключ post-edit сенсора, который назван и в override, от задачи не пишется:
-/// абляция сенсора — его выключение там, где задача его включила, а дубликат
-/// ключа TOML не простил бы. `context_limit` задачи и `edit_strategy` модели —
-/// в одну секцию `[models."<model_id>"]` (TOML не терпит повторного
-/// заголовка): ключ — точный id модели, а точное совпадение в
-/// `mark2_core::config` важнее любого приблизительного, так что настройки
-/// гарантированно достаются этой модели.
+///
+/// Override **перекрывает** одноимённую строку ранера (сравнение по
+/// [`override_key`]): строка базы или задачи с ключом, который назван в
+/// override, не пишется, вместо неё стоит строка override — на своём месте
+/// после базы и задачи; порядок остальных строк прежний. Так абляция меняет
+/// любое значение ранера (`temperature = 0.6` вместо базового `0.0`,
+/// `max_turns` вместо задачного, `post_edit_command = ""` выключает сенсор
+/// задачи), а дубликата ключа TOML не возникает.
+///
+/// `context_limit` задачи и `edit_strategy` модели — в одну секцию
+/// `[models."<model_id>"]` (TOML не терпит повторного заголовка): ключ —
+/// точный id модели, а точное совпадение в `mark2_core::config` важнее любого
+/// приблизительного, так что настройки гарантированно достаются этой модели.
+/// Override пишет только в `[agent]`, с этой секцией он не пересекается.
 pub fn project_config(
     model_id: &str,
     context_limit: Option<u64>,
@@ -671,30 +678,34 @@ pub fn project_config(
     edit_strategy: Option<EditStrategy>,
     agent_overrides: &[String],
 ) -> String {
-    let mut text = PROJECT_CONFIG.to_string();
-    if let Some(turns) = max_turns {
-        text.push_str(&format!("max_turns = {turns}\n"));
-    }
-    if let Some(post_edit) = post_edit {
-        let overridden: Vec<String> = agent_overrides
-            .iter()
-            .filter_map(|line| override_key(line))
-            .collect();
-        let free = |key: &str| !overridden.iter().any(|named| named == key);
-        if free("post_edit_command") {
-            text.push_str(&format!(
-                "post_edit_command = {}\n",
-                toml_basic_string(&post_edit.command)
-            ));
-        }
-        if let Some(seconds) = post_edit.timeout_seconds
-            && free("post_edit_timeout_seconds")
-        {
-            text.push_str(&format!("post_edit_timeout_seconds = {seconds}\n"));
-        }
-    }
-    for line in agent_overrides {
-        text.push_str(line);
+    let overridden: Vec<String> = agent_overrides
+        .iter()
+        .filter_map(|line| override_key(line))
+        .collect();
+    // Заголовок секции (`[agent]` базы) не перекрывается никогда: override —
+    // всегда пара `key = value`, таблицы `parse_agent_override` не пускает.
+    let yields = |line: &str| {
+        !line.starts_with('[') && override_key(line).is_some_and(|key| overridden.contains(&key))
+    };
+
+    let base = PROJECT_CONFIG.lines().map(str::to_string);
+    let task = [
+        max_turns.map(|turns| format!("max_turns = {turns}")),
+        post_edit.map(|check| format!("post_edit_command = {}", toml_basic_string(&check.command))),
+        post_edit
+            .and_then(|check| check.timeout_seconds)
+            .map(|seconds| format!("post_edit_timeout_seconds = {seconds}")),
+    ]
+    .into_iter()
+    .flatten();
+
+    let mut text = String::new();
+    for line in base
+        .chain(task)
+        .filter(|line| !yields(line))
+        .chain(agent_overrides.iter().cloned())
+    {
+        text.push_str(&line);
         text.push('\n');
     }
 
@@ -766,10 +777,16 @@ fn override_key(line: &str) -> Option<String> {
 }
 
 /// Проверить до первого прогона, что `.mark2.toml` каждой пары модель × задача
-/// разбирается парсером ядра. Отдельные строки override уже валидны, но могут
-/// столкнуться с тем, что пишет сам ранер: `temperature` базы или `max_turns`
-/// задачи — дубликат ключа в TOML. Такое обязано всплыть сразу, с текстом
-/// конфига и строкой-виновницей, а не провалом каждого прогона задачи.
+/// разбирается парсером ядра.
+///
+/// Столкнуться с ключом, который пишет сам ранер (`temperature` базы,
+/// `max_turns` или сенсор задачи), override больше не может — по построению
+/// [`project_config`] его строка перекрывает строку ранера. Проверка парсером
+/// всё равно остаётся: override может оказаться кривым по типу значения
+/// (`temperature = "hot"` — строка, пришедшая мимо [`parse_agent_override`]),
+/// а два override с одним ключом — дубликат ключа TOML между собой. Такое
+/// обязано всплыть сразу, с текстом конфига и строкой-виновницей, а не
+/// провалом каждого прогона задачи.
 pub fn check_project_configs(
     models: &[ModelSpec],
     tasks: &[Task],
@@ -1218,6 +1235,87 @@ mod tests {
         );
     }
 
+    /// Абляция температуры: override перекрывает базовый `temperature = 0.0`,
+    /// а не сталкивается с ним — в конфиге одна температура, из override.
+    #[test]
+    fn agent_override_replaces_the_base_temperature() {
+        let overrides = [parse_agent_override("temperature = 0.6").unwrap()];
+        let text = project_config("m", None, None, None, None, &overrides);
+        assert_eq!(text, "[agent]\ntemperature = 0.6\n");
+        assert!(!text.contains("0.0"), "{text}");
+        let config = Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.temperature, Some(0.6));
+
+        // С настройками задачи и модели: база уступает только свой ключ,
+        // остальное — на прежних местах, override — после строк задачи.
+        let text = project_config(
+            "flint:40b",
+            Some(8192),
+            Some(80),
+            None,
+            Some(EditStrategy::WholeFile),
+            &overrides,
+        );
+        assert_eq!(
+            text,
+            "[agent]\nmax_turns = 80\ntemperature = 0.6\n\n[models.\"flint:40b\"]\ncontext_limit = 8192\nedit_strategy = \"whole_file\"\n"
+        );
+        let config = Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.temperature, Some(0.6));
+        assert_eq!(config.agent.max_turns, Some(80));
+    }
+
+    /// Override `max_turns` перекрывает `max_turns` задачи; соседние строки
+    /// задачи (сенсор) и база остаются как были.
+    #[test]
+    fn agent_override_replaces_the_task_max_turns() {
+        let overrides = [parse_agent_override("max_turns = 10").unwrap()];
+        let text = project_config("m", None, Some(80), None, None, &overrides);
+        assert_eq!(text, "[agent]\ntemperature = 0.0\nmax_turns = 10\n");
+        assert!(!text.contains("80"), "{text}");
+        let config = Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.max_turns, Some(10));
+        assert_eq!(config.agent.temperature, Some(0.0));
+
+        let check = post_edit("python3 -B test.py", Some(90));
+        let text = project_config("m", None, Some(80), Some(&check), None, &overrides);
+        assert_eq!(
+            text,
+            "[agent]\ntemperature = 0.0\npost_edit_command = \"python3 -B test.py\"\n\
+             post_edit_timeout_seconds = 90\nmax_turns = 10\n"
+        );
+        let config = Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.max_turns, Some(10));
+        assert_eq!(
+            sandbox_check(&text).map(|check| check.command),
+            Some("python3 -B test.py".to_string())
+        );
+
+        // Задача без max_turns: override просто дописывается за базой.
+        assert_eq!(
+            project_config("m", None, None, None, None, &overrides),
+            "[agent]\ntemperature = 0.0\nmax_turns = 10\n"
+        );
+    }
+
+    /// Override без коллизии с ранером ничего не вычёркивает: база и строки
+    /// задачи на месте, override — в конце `[agent]`.
+    #[test]
+    fn agent_override_without_a_collision_is_appended() {
+        let overrides = [parse_agent_override("arg_coercion = false").unwrap()];
+        let check = post_edit("python3 -B test.py", None);
+        let text = project_config("m", Some(4096), Some(80), Some(&check), None, &overrides);
+        assert_eq!(
+            text,
+            "[agent]\ntemperature = 0.0\nmax_turns = 80\npost_edit_command = \"python3 -B test.py\"\n\
+             arg_coercion = false\n\n[models.\"m\"]\ncontext_limit = 4096\n"
+        );
+        let config = Config::parse(&text, ".mark2.toml").unwrap();
+        assert_eq!(config.agent.temperature, Some(0.0));
+        assert_eq!(config.agent.max_turns, Some(80));
+        assert_eq!(config.agent.arg_coercion, Some(false));
+    }
+
     fn post_edit(command: &str, timeout_seconds: Option<u64>) -> PostEdit {
         PostEdit {
             command: command.into(),
@@ -1316,8 +1414,8 @@ mod tests {
         );
     }
 
-    /// Проверка конфигов до прогона: override сенсора с задачей, которая его
-    /// задаёт, — не дубликат; `max_turns` задачи по-прежнему конфликтует.
+    /// Проверка конфигов до прогона: override сенсора или `max_turns` с
+    /// задачей, которая их задаёт, — не дубликат, а перекрытие.
     #[test]
     fn post_edit_override_passes_the_project_config_check() {
         let root = TempDir::new().unwrap();
@@ -1342,18 +1440,13 @@ mod tests {
             "post_edit_command = \"\"",
             "post_edit_command = \"true\"",
             "post_edit_timeout_seconds = 5",
+            "max_turns = 10",
         ] {
             let line = parse_agent_override(raw).unwrap();
             check_project_configs(&models, &tasks, &[line]).unwrap_or_else(|error| {
                 panic!("{raw}: {error:#}");
             });
         }
-        let text = format!(
-            "{:#}",
-            check_project_configs(&models, &tasks, &["max_turns = 10".into()]).unwrap_err()
-        );
-        assert!(text.contains("qwen9 × T04"), "{text}");
-        assert!(text.contains("duplicate key"), "{text}");
     }
 
     #[test]
@@ -1408,8 +1501,9 @@ mod tests {
         }
     }
 
-    /// Каждая пара модель × задача проверяется до прогонов: override, который
-    /// сам по себе валиден, может столкнуться с ключом, который пишет ранер.
+    /// Каждая пара модель × задача проверяется до прогонов. Ключи ранера
+    /// override перекрывает, так что они проходят; ловятся кривой по типу
+    /// override и два override с одним ключом.
     #[test]
     fn project_configs_are_checked_for_every_model_and_task() {
         let root = TempDir::new().unwrap();
@@ -1440,22 +1534,37 @@ mod tests {
         )
         .unwrap();
 
-        // Дубликат с max_turns задачи — только у T17, но всплывает сразу.
-        let text = format!(
-            "{:#}",
-            check_project_configs(&models, &tasks, &["max_turns = 10".into()]).unwrap_err()
-        );
-        assert!(text.contains("qwen9 × T17"), "{text}");
-        assert!(text.contains("max_turns = 10"), "{text}");
-        assert!(text.contains("duplicate key"), "{text}");
+        // Ключи ранера — `max_turns` задачи T17 и `temperature` базы —
+        // override перекрывает: раньше это был дубликат ключа, теперь нет.
+        check_project_configs(&models, &tasks, &["max_turns = 10".into()]).unwrap();
+        check_project_configs(&models, &tasks, &["temperature = 0.7".into()]).unwrap();
 
-        // Дубликат с базой — на первой же паре.
+        // Кривой по типу override (мимо parse_agent_override) — на первой же
+        // паре, с текстом конфига и строкой-виновницей.
         let text = format!(
             "{:#}",
-            check_project_configs(&models, &tasks, &["temperature = 0.7".into()]).unwrap_err()
+            check_project_configs(&models, &tasks, &["temperature = \"hot\"".into()]).unwrap_err()
         );
         assert!(text.contains("qwen9 × T01"), "{text}");
-        assert!(text.contains("temperature = 0.7"), "{text}");
+        assert!(text.contains("temperature = \"hot\""), "{text}");
+        assert!(
+            !text.contains("temperature = 0.0"),
+            "база перекрыта: {text}"
+        );
+
+        // Два override с одним ключом сталкиваются между собой.
+        let text = format!(
+            "{:#}",
+            check_project_configs(
+                &models,
+                &tasks,
+                &["max_turns = 10".into(), "max_turns = 20".into()]
+            )
+            .unwrap_err()
+        );
+        assert!(text.contains("qwen9 × T01"), "{text}");
+        assert!(text.contains("max_turns = 10; max_turns = 20"), "{text}");
+        assert!(text.contains("duplicate key"), "{text}");
     }
 
     #[test]

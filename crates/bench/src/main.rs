@@ -84,8 +84,10 @@ struct Args {
 
     /// Строка `key = value` в секцию [agent] `.mark2.toml` каждого прогона —
     /// абляция настроек mark2 (например 'arg_coercion = false',
-    /// 'write_churn = false'). Повторяемый. Проверяется парсером mark2 до
-    /// первого прогона и пишется в results.json.
+    /// 'write_churn = false', 'temperature = 0.6'). Ключ, который пишет сам
+    /// ранер (temperature базы, max_turns и post_edit_* задачи), override
+    /// перекрывает: значение ранера не пишется. Повторяемый. Проверяется
+    /// парсером mark2 до первого прогона и пишется в results.json.
     #[arg(long = "agent-override", value_name = "KEY = VALUE")]
     agent_overrides: Vec<String>,
 }
@@ -135,9 +137,10 @@ async fn run(args: Args) -> Result<()> {
     let models = select_models(load_models(&args.models_file)?, &args.models)?;
     let tasks = select_tasks(discover_tasks(&args.tasks_dir)?, &args.tasks)?;
 
-    // Абляция — до окружений и директории результатов: опечатка в ключе или
-    // конфликт с тем, что пишет сам ранер, обязаны остановить бенч сразу, а не
-    // провалить каждый прогон.
+    // Абляция — до окружений и директории результатов: опечатка в ключе,
+    // кривое значение или два override с одним ключом обязаны остановить бенч
+    // сразу, а не провалить каждый прогон. Ключи самого ранера override
+    // перекрывает — это не ошибка.
     let agent_overrides = args
         .agent_overrides
         .iter()
@@ -281,20 +284,23 @@ mod tests {
     async fn invalid_agent_override_fails_before_any_run() {
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let out = tempfile::TempDir::new().unwrap();
-        for (raw, expected) in [
-            ("arg_coerciom = false", "не настройка [agent]"),
-            ("arg_coercion = maybe", "--agent-override"),
-            // Сам по себе валиден, но T17 пишет свой max_turns — дубликат ключа.
-            ("max_turns = 10", "× T17"),
+        let models_file = repo.join(DEFAULT_MODELS_FILE);
+        let tasks_dir = repo.join(DEFAULT_TASKS_DIR);
+        for (raws, expected) in [
+            (&["arg_coerciom = false"][..], "не настройка [agent]"),
+            (&["arg_coercion = maybe"][..], "--agent-override"),
+            // Каждый сам по себе валиден (и перекрыл бы max_turns T17), но
+            // вместе — дубликат ключа.
+            (&["max_turns = 10", "max_turns = 20"][..], "duplicate key"),
         ] {
-            let args = parse(&[
+            let mut argv = vec![
                 "mark2-bench",
                 "--mark2",
                 "/bin/sh",
                 "--models-file",
-                repo.join(DEFAULT_MODELS_FILE).to_str().unwrap(),
+                models_file.to_str().unwrap(),
                 "--tasks-dir",
-                repo.join(DEFAULT_TASKS_DIR).to_str().unwrap(),
+                tasks_dir.to_str().unwrap(),
                 "--models",
                 "qwen9",
                 "--tasks",
@@ -302,16 +308,20 @@ mod tests {
                 "--out",
                 out.path().to_str().unwrap(),
                 "--no-warmup",
-                "--agent-override",
-                raw,
-            ]);
+            ];
+            for raw in raws {
+                argv.extend(["--agent-override", raw]);
+            }
+            let args = parse(&argv);
             let text = format!("{:#}", run(args).await.unwrap_err());
-            assert!(text.contains(expected), "{raw}: {text}");
-            assert!(text.contains(raw), "строка-виновница в тексте: {text}");
+            assert!(text.contains(expected), "{raws:?}: {text}");
+            for raw in raws {
+                assert!(text.contains(raw), "строка-виновница в тексте: {text}");
+            }
             assert_eq!(
                 std::fs::read_dir(out.path()).unwrap().count(),
                 0,
-                "{raw}: прогон не должен был начаться"
+                "{raws:?}: прогон не должен был начаться"
             );
         }
     }
