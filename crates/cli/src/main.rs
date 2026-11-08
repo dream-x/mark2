@@ -328,6 +328,7 @@ async fn run(args: Args) -> Result<ExitCode> {
     let registry = tool_registry(
         settings.edit_strategy,
         config.agent.arg_coercion.unwrap_or(true),
+        config.web.fetch_enabled(),
         config.search_base_url().as_deref(),
     )?;
     let mut agent = Agent::new(
@@ -366,20 +367,23 @@ async fn run(args: Args) -> Result<ExitCode> {
     Ok(exit_code(reason))
 }
 
-/// Реестр тулов: базовые плюс `web_search`, если задан адрес SearXNG
+/// Реестр тулов: базовые (без `web_fetch` при `web_fetch == false` —
+/// `[web] fetch = false`) плюс `web_search`, если задан адрес SearXNG
 /// (`search_base_url` — уже с учётом [`SEARXNG_URL_ENV`]). Битый адрес —
 /// ошибка запуска, а не тул, который на каждый вызов отвечает ошибкой.
 fn tool_registry(
     edit_strategy: EditStrategy,
     arg_coercion: bool,
+    web_fetch: bool,
     search_base_url: Option<&str>,
 ) -> Result<ToolRegistry> {
-    ToolRegistry::with_defaults(edit_strategy)
-        .with_arg_coercion(arg_coercion)
-        .with_web_search(search_base_url)
-        .with_context(|| {
-            format!("web_search: проверь [web] search_base_url в конфиге или {SEARXNG_URL_ENV}")
-        })
+    let mut registry = ToolRegistry::with_defaults(edit_strategy).with_arg_coercion(arg_coercion);
+    if !web_fetch {
+        registry = registry.without_web_fetch();
+    }
+    registry.with_web_search(search_base_url).with_context(|| {
+        format!("web_search: проверь [web] search_base_url в конфиге или {SEARXNG_URL_ENV}")
+    })
 }
 
 /// Настройки агента из сложенных слоёв конфига; чего слои не сказали — дефолт
@@ -905,7 +909,7 @@ mod tests {
         let names = |registry: ToolRegistry| -> Vec<String> {
             registry.names().into_iter().map(str::to_string).collect()
         };
-        let plain = tool_registry(EditStrategy::SearchReplace, true, None).unwrap();
+        let plain = tool_registry(EditStrategy::SearchReplace, true, true, None).unwrap();
         assert!(plain.arg_coercion());
         let plain = names(plain);
         assert!(plain.contains(&"web_fetch".to_string()), "{plain:?}");
@@ -914,14 +918,20 @@ mod tests {
         let full = tool_registry(
             EditStrategy::WholeFile,
             false,
+            true,
             Some("http://localhost:8888"),
         )
         .unwrap();
         assert!(!full.arg_coercion());
         assert_eq!(names(full).last().map(String::as_str), Some("web_search"));
 
-        let error =
-            tool_registry(EditStrategy::SearchReplace, true, Some("localhost:8888")).unwrap_err();
+        let error = tool_registry(
+            EditStrategy::SearchReplace,
+            true,
+            true,
+            Some("localhost:8888"),
+        )
+        .unwrap_err();
         let text = format!("{error:#}");
         assert!(text.contains("[web] search_base_url"), "{text}");
         assert!(text.contains(SEARXNG_URL_ENV), "{text}");
@@ -940,10 +950,43 @@ mod tests {
         let registry = tool_registry(
             EditStrategy::SearchReplace,
             true,
+            merged.web.fetch_enabled(),
             merged.web.search_base_url_with_env(None).as_deref(),
         )
         .unwrap();
         assert!(registry.get("web_search").is_some());
+        assert!(registry.get("web_fetch").is_some());
+    }
+
+    /// `[web] fetch = false` из файла убирает `web_fetch` из реестра; прочие
+    /// тулы и `web_search` остаются на своих местах.
+    #[test]
+    fn web_fetch_switch_from_the_config_reaches_the_registry() {
+        let names = |registry: &ToolRegistry| -> Vec<String> {
+            registry.names().into_iter().map(str::to_string).collect()
+        };
+        let build = |toml: &str| {
+            let files = Config::parse(toml, "t").unwrap();
+            let merged = files.merge(parse(&["mark2", "--model", "m", "x"]).overrides());
+            tool_registry(
+                EditStrategy::SearchReplace,
+                true,
+                merged.web.fetch_enabled(),
+                merged.web.search_base_url_with_env(None).as_deref(),
+            )
+            .unwrap()
+        };
+
+        let on = build("");
+        let off = build("[web]\nfetch = false\n");
+        assert_eq!(names(&off), ["bash", "edit", "grep", "read", "write"]);
+        assert_eq!(names(&on).last().map(String::as_str), Some("web_fetch"));
+
+        let search_only = build("[web]\nfetch = false\nsearch_base_url = \"http://searx:8888\"\n");
+        assert_eq!(
+            names(&search_only),
+            ["bash", "edit", "grep", "read", "write", "web_search"]
+        );
     }
 
     #[test]

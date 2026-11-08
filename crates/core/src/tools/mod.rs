@@ -24,8 +24,9 @@
 //! ни симлинком.
 //!
 //! Сетевые тулы (модуль `web`) отдают содержимое сети только между маркерами
-//! недоверенных данных; `web_fetch` есть всегда, `web_search` — только при
-//! заданном бэкенде SearXNG ([`ToolRegistry::with_web_search`]).
+//! недоверенных данных; `web_fetch` есть всегда, если его не убрали
+//! ([`ToolRegistry::without_web_fetch`], `[web] fetch = false`), `web_search`
+//! — только при заданном бэкенде SearXNG ([`ToolRegistry::with_web_search`]).
 
 pub mod bash;
 mod coerce;
@@ -223,7 +224,8 @@ impl ToolRegistry {
 
     /// Реестр базовых тулов в фиксированном порядке: `bash`, `edit`, `grep`,
     /// `read`, `write`, `web_fetch`. Сетевой тул — в хвосте: префикс
-    /// определений пяти локальных тулов остаётся байт-в-байт прежним.
+    /// определений пяти локальных тулов остаётся байт-в-байт прежним, в том
+    /// числе без него ([`Self::without_web_fetch`]).
     pub fn with_defaults(edit_strategy: EditStrategy) -> Self {
         let mut registry = Self::new();
         registry.register(Box::new(BashTool::new()));
@@ -233,6 +235,15 @@ impl ToolRegistry {
         registry.register(Box::new(WriteTool::new()));
         registry.register(Box::new(WebFetchTool::new()));
         registry
+    }
+
+    /// Убрать `web_fetch` (`[web] fetch = false` — абляция бенча). Остальные
+    /// тулы, их порядок и определения не меняются; `web_search`, если его
+    /// добавят, остаётся последним.
+    #[must_use]
+    pub fn without_web_fetch(mut self) -> Self {
+        self.tools.retain(|entry| entry.tool.name() != "web_fetch");
+        self
     }
 
     /// Добавить `web_search` поверх SearXNG по `base_url`. `None` или пустая
@@ -534,6 +545,44 @@ mod tests {
 
         let error = registry_error(Some("localhost:8888"));
         assert!(error.contains("localhost:8888"), "{error}");
+    }
+
+    /// Абляция `web_fetch`: тул уходит, порядок и определения остальных —
+    /// байт-в-байт прежние, `web_search` при этом может остаться.
+    #[test]
+    fn web_fetch_can_be_removed_without_touching_the_other_tools() {
+        let without = registry().without_web_fetch();
+        assert_eq!(without.names(), ["bash", "edit", "grep", "read", "write"]);
+        assert!(without.get("web_fetch").is_none());
+
+        let full = serde_json::to_value(registry().defs()).unwrap();
+        let local = serde_json::to_value(without.defs()).unwrap();
+        assert_eq!(local.as_array().unwrap()[..], full.as_array().unwrap()[..5]);
+
+        let search = registry()
+            .without_web_fetch()
+            .with_web_search(Some("http://localhost:8888"))
+            .unwrap();
+        assert_eq!(
+            search.names(),
+            ["bash", "edit", "grep", "read", "write", "web_search"]
+        );
+        // Повторное удаление ничего не ломает.
+        assert_eq!(without.without_web_fetch().len(), 5);
+    }
+
+    /// Убранный тул — обычная ошибка «неизвестный тул», не паника.
+    #[tokio::test]
+    async fn removed_web_fetch_is_an_unknown_tool() {
+        let out = registry()
+            .without_web_fetch()
+            .execute("web_fetch", json!({"url": "https://example.com"}), &ctx())
+            .await;
+        assert!(out.is_error);
+        assert_eq!(
+            out.content,
+            "Unknown tool `web_fetch`. Available tools: bash, edit, grep, read, write."
+        );
     }
 
     fn registry_error(base_url: Option<&str>) -> String {

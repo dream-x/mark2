@@ -52,8 +52,9 @@ cargo run -q -p mark2-cli -- -p --yolo \
 подтверждений, `-C` — рабочая директория агента. Постоянные настройки удобнее
 держать в `~/.config/mark2/config.toml` (секции `[provider]`, `[agent]`, `[web]`).
 
-Сетевые тулы: `web_fetch` есть всегда, `web_search` регистрируется, только если
-задан SearXNG — `[web] search_base_url = "http://localhost:8888"` или переменная
+Сетевые тулы: `web_fetch` есть всегда, если не выключен `[web] fetch = false`
+(абляция бенча); `web_search` регистрируется, только если задан SearXNG —
+`[web] search_base_url = "http://localhost:8888"` или переменная
 `MARK2_SEARXNG_URL` (непустая — старше файлов); в `settings.yml` SearXNG должен
 быть включён формат `json`. Без `--yolo` оба спрашивают подтверждение, как `bash`,
 в `read_only` запрещены.

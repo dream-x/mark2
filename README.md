@@ -56,6 +56,7 @@ context_limit = 32768      # включает проактивную компа�
 
 [web]
 # search_base_url = "http://localhost:8888"  # SearXNG для web_search; env MARK2_SEARXNG_URL старше
+# fetch = false            # убрать web_fetch из реестра (абляция бенча); по умолчанию есть
 ```
 
 ## Тулы

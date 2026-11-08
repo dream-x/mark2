@@ -12,7 +12,10 @@
 //! * распространённые именованные и все числовые сущности декодируются.
 //!
 //! Битый HTML не ошибка: незакрытые теги и одинокий `<` переживаются, худший
-//! исход — лишний текст в выжимке.
+//! исход — лишний текст в выжимке. Поэтому выбрасываемый элемент без
+//! закрывающего тега дальше по документу (`<nav>` без `</nav>`) не
+//! выбрасывается: его содержимое идёт как обычная разметка, а не съедает
+//! остаток страницы.
 
 /// Результат конверсии.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +77,13 @@ pub(crate) fn html_to_text(html: &str) -> HtmlText {
     // Позиции в нижнем регистре совпадают побайтно: ASCII-lowercase не меняет
     // длину, а многобайтные символы не трогает.
     let lower = html.to_ascii_lowercase();
+    // Последний закрывающий тег каждого из SKIP_CONTENT — один проход на имя,
+    // а не поиск на каждый открывающий: иначе страница из тысяч незакрытых
+    // `<svg>` разбиралась бы квадратично.
+    let last_close: Vec<Option<usize>> = SKIP_CONTENT
+        .iter()
+        .map(|name| last_closing_tag(&lower, name))
+        .collect();
     let mut out = Writer::default();
     let mut title: Option<String> = None;
     // Внутри элемента с выброшенным содержимым: имя и глубина вложенности.
@@ -146,8 +156,11 @@ pub(crate) fn html_to_text(html: &str) -> HtmlText {
             continue;
         }
 
-        if SKIP_CONTENT.contains(&name) {
-            if !tag.closing && !tag.self_closing {
+        if let Some(index) = SKIP_CONTENT.iter().position(|skip| *skip == name) {
+            // Не закрыт дальше по документу — не выбрасываем: иначе он съел
+            // бы весь остаток страницы.
+            let closed_later = last_close[index].is_some_and(|close| close >= pos);
+            if !tag.closing && !tag.self_closing && closed_later {
                 skipping = Some((tag.name.clone(), 1));
             }
             continue;
@@ -187,6 +200,26 @@ pub(crate) fn html_to_text(html: &str) -> HtmlText {
     }
 }
 
+/// Начало последнего закрывающего тега `</name` в `lower` (документ в нижнем
+/// регистре): `</nav>`, `</nav >` и `</nav` в самом конце, но не `</navbar>`.
+fn last_closing_tag(lower: &str, name: &str) -> Option<usize> {
+    let needle = format!("</{name}");
+    lower
+        .rmatch_indices(&needle)
+        .map(|(start, _)| start)
+        .find(|start| {
+            !lower
+                .as_bytes()
+                .get(start + needle.len())
+                .is_some_and(is_name_byte)
+        })
+}
+
+/// Байт имени тега (после первой буквы).
+fn is_name_byte(b: &u8) -> bool {
+    b.is_ascii_alphanumeric() || *b == b'-' || *b == b':'
+}
+
 /// Уровень заголовка `h1`–`h6`.
 fn heading_level(name: &str) -> Option<usize> {
     match name.as_bytes() {
@@ -222,10 +255,7 @@ fn parse_tag(html: &str, start: usize) -> Option<Tag> {
     if !bytes.get(i).is_some_and(u8::is_ascii_alphabetic) {
         return None;
     }
-    while bytes
-        .get(i)
-        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b':')
-    {
+    while bytes.get(i).is_some_and(is_name_byte) {
         i += 1;
     }
     let name = html[name_start..i].to_ascii_lowercase();
@@ -477,6 +507,29 @@ mod tests {
              <svg><title>icon</title><path d='M0'/></svg><p>Body</p>",
         );
         assert_eq!(out, "Body");
+    }
+
+    /// Выбрасываемый элемент без закрывающего тега не съедает остаток
+    /// страницы: его содержимое идёт как обычный текст.
+    #[test]
+    fn unclosed_skipped_element_does_not_eat_the_rest_of_the_page() {
+        assert_eq!(text("<nav>Menu<p>Body text"), "Menu\n\nBody text");
+        assert_eq!(
+            text("<p>Intro</p><svg><path d='M0'/><p>Rest</p>"),
+            "Intro\n\nRest"
+        );
+        assert_eq!(
+            text("<p>Intro</p><SELECT><option>a<p>Rest"),
+            "Intro\n\na\n\nRest"
+        );
+        // `</navbar>` — не закрывающий `nav`.
+        assert_eq!(text("<nav>Menu</navbar><p>Body"), "Menu\n\nBody");
+        // Закрывающий тег дальше есть — выбрасывается как раньше, и `</nav`
+        // без `>` в самом конце тоже закрывает.
+        assert_eq!(text("<p>a</p><nav>Menu</nav ><p>b</p>"), "a\n\nb");
+        assert_eq!(text("<p>a</p><nav>Menu</nav"), "a");
+        // Закрывающий раньше открывающего не в счёт.
+        assert_eq!(text("</nav><p>a</p><nav>Menu<p>b"), "a\n\nMenu\n\nb");
     }
 
     #[test]

@@ -125,9 +125,18 @@ pub struct WebConfig {
     /// — тула `web_search` нет вовсе. Пустая строка — явное «выключить»:
     /// старший слой гасит адрес младшего.
     pub search_base_url: Option<String>,
+    /// Регистрировать ли `web_fetch` (по умолчанию да). `false` — для
+    /// абляции в бенче: реестр без `web_fetch`, остальные тулы и их порядок
+    /// не меняются. Итог слоёв — [`WebConfig::fetch_enabled`].
+    pub fetch: Option<bool>,
 }
 
 impl WebConfig {
+    /// Включён ли `web_fetch` после слияния слоёв: ключа нет — включён.
+    pub fn fetch_enabled(&self) -> bool {
+        self.fetch.unwrap_or(true)
+    }
+
     /// Адрес SearXNG с учётом значения переменной окружения `env`: непустая
     /// переменная побеждает, иначе — непустой `search_base_url`, иначе `None`.
     pub fn search_base_url_with_env(&self, env: Option<&str>) -> Option<String> {
@@ -299,6 +308,7 @@ impl Config {
             },
             web: WebConfig {
                 search_base_url: other.web.search_base_url.or(web.search_base_url),
+                fetch: other.web.fetch.or(web.fetch),
             },
             models,
         }
@@ -525,6 +535,7 @@ slot_id = 3
 
 [web]
 search_base_url = "http://localhost:8888"
+fetch = false
 
 [agent]
 model = "qwen3-coder-30b"
@@ -565,6 +576,8 @@ context_limit = 8192
             config.web.search_base_url.as_deref(),
             Some("http://localhost:8888")
         );
+        assert_eq!(config.web.fetch, Some(false));
+        assert!(!config.web.fetch_enabled());
 
         assert_eq!(config.agent.model.as_deref(), Some("qwen3-coder-30b"));
         assert_eq!(config.agent.max_turns, Some(12));
@@ -866,6 +879,41 @@ context_limit = 8192
         }
 
         let error = Config::parse("[web]\nsearch_base_url = 8888\n", "cfg.toml").unwrap_err();
+        assert!(error.chain().contains("cfg.toml"), "{}", error.chain());
+    }
+
+    /// `[web] fetch`: ключа нет ни в одном слое — `web_fetch` включён;
+    /// старший слой перекрывает младший в обе стороны.
+    #[test]
+    fn web_fetch_switch_merges_across_layers() {
+        assert_eq!(Config::default().web.fetch, None);
+        assert!(Config::default().web.fetch_enabled());
+        assert!(layer("[web]\n").web.fetch_enabled());
+
+        let off = layer("[web]\nfetch = false\n");
+        let on = layer("[web]\nfetch = true\n");
+        assert!(!off.web.fetch_enabled());
+        assert!(on.web.fetch_enabled());
+
+        // Старший выключает, старший включает обратно, молчащий не трогает.
+        assert!(!on.clone().merge(off.clone()).web.fetch_enabled());
+        assert!(off.clone().merge(on.clone()).web.fetch_enabled());
+        assert!(!off.clone().merge(layer("")).web.fetch_enabled());
+        assert!(
+            !off.clone()
+                .merge(layer("[web]\nsearch_base_url = \"http://s:8888\"\n"))
+                .web
+                .fetch_enabled()
+        );
+        // Выключатель не трогает адрес поиска, и наоборот.
+        let both = layer("[web]\nsearch_base_url = \"http://s:8888\"\n").merge(off);
+        assert_eq!(
+            both.web.search_base_url_with_env(None).as_deref(),
+            Some("http://s:8888")
+        );
+        assert!(!both.web.fetch_enabled());
+
+        let error = Config::parse("[web]\nfetch = \"no\"\n", "cfg.toml").unwrap_err();
         assert!(error.chain().contains("cfg.toml"), "{}", error.chain());
     }
 
