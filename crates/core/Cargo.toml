@@ -25,6 +25,9 @@ async-trait.workspace = true
 # Поиск тулом `grep`
 regex.workspace = true
 
+# HTTP тулов `web_fetch` и `web_search`
+reqwest.workspace = true
+
 # Ошибки, логи, прочее
 thiserror.workspace = true
 tracing.workspace = true

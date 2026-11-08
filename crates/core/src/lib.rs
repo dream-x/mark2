@@ -23,7 +23,9 @@ pub mod tools;
 
 pub use agent::{Agent, AgentConfig, AgentHandle};
 pub use compact::{CompactionConfig, CompactionError, CompactionOutcome};
-pub use config::{AgentSettings, Config, ConfigError, ModelConfig, ModelSettings, ProviderConfig};
+pub use config::{
+    AgentSettings, Config, ConfigError, ModelConfig, ModelSettings, ProviderConfig, WebConfig,
+};
 pub use event::{ApprovalDecision, Event, Guard, Op, StopReason};
 pub use memory::Memory;
 pub use message::{ContentBlock, Message, MessageMetadata, Role, Usage};

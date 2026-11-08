@@ -1915,7 +1915,7 @@ mod tests {
                 .iter()
                 .map(|tool| tool.name.as_str())
                 .collect::<Vec<_>>(),
-            ["bash", "edit", "grep", "read", "write"]
+            ["bash", "edit", "grep", "read", "write", "web_fetch"]
         );
         assert_eq!(requests[1].messages.len(), 3);
         assert_eq!(requests[1].messages[0].role, Role::User);

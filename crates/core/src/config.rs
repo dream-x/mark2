@@ -23,6 +23,10 @@
 //!   новую версию harness, которая написала поле из будущего;
 //! * **битый TOML — понятная ошибка с путём файла**: пользователь должен
 //!   узнать, какой из трёх файлов чинить.
+//!
+//! Переменная окружения в слоях одна — [`SEARXNG_URL_ENV`]: адрес поиска
+//! зависит от машины, а не от проекта, и её значение перекрывает
+//! `[web] search_base_url` из файлов ([`Config::search_base_url`]).
 
 use std::collections::BTreeMap;
 use std::io;
@@ -44,6 +48,10 @@ pub const USER_CONFIG_RELATIVE: &str = ".config/mark2/config.toml";
 
 /// Имя проектного конфига; ищется от cwd вверх.
 pub const PROJECT_CONFIG_FILE: &str = ".mark2.toml";
+
+/// Переменная окружения с адресом SearXNG для `web_search`; непустая —
+/// старше `[web] search_base_url` из файлов.
+pub const SEARXNG_URL_ENV: &str = "MARK2_SEARXNG_URL";
 
 /// Ошибка загрузки конфига. В сообщении — путь файла, причина — в `source`
 /// (её печатает и `anyhow` в альтернативном формате, и [`ConfigError::chain`]).
@@ -102,8 +110,33 @@ pub struct Config {
     pub provider: ProviderConfig,
     /// Секция `[agent]`.
     pub agent: AgentSettings,
+    /// Секция `[web]`.
+    pub web: WebConfig,
     /// Таблица `[models."<id>"]` — настройки под конкретную модель.
     pub models: BTreeMap<String, ModelConfig>,
+}
+
+/// Секция `[web]`: сетевые тулы.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    /// База SearXNG для `web_search` (`http://localhost:8888`): запросы идут
+    /// в `{base}/search?format=json`. Нет ни здесь, ни в [`SEARXNG_URL_ENV`]
+    /// — тула `web_search` нет вовсе. Пустая строка — явное «выключить»:
+    /// старший слой гасит адрес младшего.
+    pub search_base_url: Option<String>,
+}
+
+impl WebConfig {
+    /// Адрес SearXNG с учётом значения переменной окружения `env`: непустая
+    /// переменная побеждает, иначе — непустой `search_base_url`, иначе `None`.
+    pub fn search_base_url_with_env(&self, env: Option<&str>) -> Option<String> {
+        env.filter(|url| !url.trim().is_empty())
+            .or(self.search_base_url.as_deref())
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_string)
+    }
 }
 
 /// Секция `[provider]`: куда и как ходить за моделью.
@@ -229,6 +262,7 @@ impl Config {
         let Config {
             provider,
             agent,
+            web,
             mut models,
         } = self;
 
@@ -262,6 +296,9 @@ impl Config {
                     .agent
                     .post_edit_timeout_seconds
                     .or(agent.post_edit_timeout_seconds),
+            },
+            web: WebConfig {
+                search_base_url: other.web.search_base_url.or(web.search_base_url),
             },
             models,
         }
@@ -329,6 +366,14 @@ impl Config {
             .base_url
             .as_deref()
             .unwrap_or(DEFAULT_BASE_URL)
+    }
+
+    /// Адрес SearXNG для `web_search`: [`SEARXNG_URL_ENV`], затем
+    /// `[web] search_base_url` (см. [`WebConfig::search_base_url_with_env`]).
+    /// `None` — тул не регистрируется.
+    pub fn search_base_url(&self) -> Option<String> {
+        let env = std::env::var(SEARXNG_URL_ENV).ok();
+        self.web.search_base_url_with_env(env.as_deref())
     }
 
     /// Настройки конкретной модели, если она описана в `[models]`.
@@ -478,6 +523,9 @@ api_key_env = "OPENROUTER_API_KEY"
 cache_prompt = true
 slot_id = 3
 
+[web]
+search_base_url = "http://localhost:8888"
+
 [agent]
 model = "qwen3-coder-30b"
 max_turns = 12
@@ -513,6 +561,10 @@ context_limit = 8192
         );
         assert_eq!(config.provider.cache_prompt, Some(true));
         assert_eq!(config.provider.slot_id, Some(3));
+        assert_eq!(
+            config.web.search_base_url.as_deref(),
+            Some("http://localhost:8888")
+        );
 
         assert_eq!(config.agent.model.as_deref(), Some("qwen3-coder-30b"));
         assert_eq!(config.agent.max_turns, Some(12));
@@ -762,6 +814,58 @@ context_limit = 8192
             assert!(text.contains("post_edit_timeout_seconds"), "{bad}: {text}");
         }
         let error = Config::parse("[agent]\npost_edit_command = 7\n", "cfg.toml").unwrap_err();
+        assert!(error.chain().contains("cfg.toml"), "{}", error.chain());
+    }
+
+    /// `[web] search_base_url`: слои мёржатся как остальные поля, непустая
+    /// переменная окружения старше файлов, пустая строка в старшем слое
+    /// гасит адрес младшего.
+    #[test]
+    fn search_base_url_comes_from_the_env_then_the_layers() {
+        let silent = layer("[web]\n");
+        assert_eq!(silent.web.search_base_url, None);
+        assert_eq!(silent.web.search_base_url_with_env(None), None);
+        assert_eq!(Config::default().web.search_base_url_with_env(None), None);
+
+        let user = layer("[web]\nsearch_base_url = \"http://user:8888\"\n");
+        let project = layer("[web]\nsearch_base_url = \" http://project:8888/ \"\n");
+        let off = layer("[web]\nsearch_base_url = \"\"\n");
+
+        assert_eq!(
+            user.web.search_base_url_with_env(None).as_deref(),
+            Some("http://user:8888")
+        );
+        let merged = user.clone().merge(project);
+        assert_eq!(
+            merged.web.search_base_url_with_env(None).as_deref(),
+            Some("http://project:8888/")
+        );
+        // Про что старший слой молчит — достаётся от младшего.
+        assert_eq!(user.clone().merge(layer("")), user);
+        // Пустая строка старшего слоя — выключить.
+        let disabled = user.clone().merge(off);
+        assert_eq!(disabled.web.search_base_url_with_env(None), None);
+
+        // Непустая переменная окружения побеждает и файлы, и их «выключить».
+        for config in [&user, &disabled, &silent] {
+            assert_eq!(
+                config
+                    .web
+                    .search_base_url_with_env(Some("http://env:8080"))
+                    .as_deref(),
+                Some("http://env:8080")
+            );
+        }
+        // Пустая переменная — как незаданная.
+        for blank in ["", "  "] {
+            assert_eq!(
+                user.web.search_base_url_with_env(Some(blank)).as_deref(),
+                Some("http://user:8888")
+            );
+            assert_eq!(silent.web.search_base_url_with_env(Some(blank)), None);
+        }
+
+        let error = Config::parse("[web]\nsearch_base_url = 8888\n", "cfg.toml").unwrap_err();
         assert!(error.chain().contains("cfg.toml"), "{}", error.chain());
     }
 

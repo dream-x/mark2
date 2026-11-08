@@ -26,18 +26,18 @@ flowchart LR
 
 | Путь | Что делает |
 |---|---|
-| `crates/core` | Ядро-библиотека, ноль знаний о UI и HTTP |
+| `crates/core` | Ядро-библиотека, ноль знаний о UI; HTTP — только у сетевых тулов (`reqwest`), провайдеры живут в `crates/providers` |
 | — `message.rs` | Нейтральный формат: `Message`, `ContentBlock` (Text/Thinking/ToolUse/ToolResult), `MessageMetadata` (флаги видимости `agent_visible`/`user_visible`), `Usage` |
 | — `event.rs` | `Event` и `Op` — serde-tagged, snake_case, стабильные wire-имена |
 | — `provider.rs` | `trait Provider` (один обязательный метод `stream()`), `ProviderRequest`, `StreamChunk`, `ToolDef`, `ProviderError` (в т.ч. `ContextLengthExceeded` — на нём висит компакция) |
 | — `agent.rs` | Цикл: `Agent::spawn() → (AgentHandle, Receiver<Event>)`; сэмплинг → тул-коллы → результаты → повтор; permission-гейт, отмена, интеграция компакции и сессий |
-| — `tools/` | `trait Tool` + `ToolRegistry` (schemars-схемы, приведение типов аргументов к схеме — `coerce.rs`, jsonschema-валидация, retry-with-error); bash/read/grep/write/edit (`grep` — read-only поиск внутри cwd с капами) |
-| — `permission.rs` | `PermissionPolicy`: Yolo / AskWrites / ReadOnly |
-| — `prompt.rs` | Системный промпт (≤1000 токенов вместе со схемами тулов) + поиск AGENTS.md вверх от cwd (ближайший выигрывает) + секция `## Memory` последней, если есть память |
+| — `tools/` | `trait Tool` + `ToolRegistry` (schemars-схемы, приведение типов аргументов к схеме — `coerce.rs`, jsonschema-валидация, retry-with-error); bash/read/grep/write/edit (`grep` — read-only поиск внутри cwd с капами); сетевые `web_fetch` (HTML → текст, `html.rs`) и `web_search` (SearXNG, только при заданном адресе) — общее в `web.rs`: капы, маркеры недоверенных данных |
+| — `permission.rs` | `PermissionPolicy`: Yolo / AskWrites / ReadOnly; гейт — мутирующие (`bash`/`edit`/`write`) и сетевые (`web_fetch`/`web_search`) тулы |
+| — `prompt.rs` | Системный промпт (≤1000 токенов вместе со схемами локальных тулов, сетевые — надбавка ≤175) + поиск AGENTS.md вверх от cwd (ближайший выигрывает) + секция `## Memory` последней, если есть память |
 | — `memory.rs` | Память агента: поиск `.mark2.memory.md` (или `[agent] memory_file`), кап 4096 байт с обрезкой по строке, путь для модели |
 | — `compact.rs` | Компакция: оценка токенов, суммаризация через провайдера, скрытие истории флагами |
 | — `session.rs` | `SessionRecorder`/`load_session`: JSONL, фоновый писатель, толерантная загрузка |
-| — `config.rs` | Слоёный TOML-конфиг: user → project → CLI; per-model настройки; `find_upwards` — общий обход «ближайший файл от cwd вверх» |
+| — `config.rs` | Слоёный TOML-конфиг: user → project → CLI; per-model настройки; `[web] search_base_url` с env-оверрайдом `MARK2_SEARXNG_URL`; `find_upwards` — общий обход «ближайший файл от cwd вверх» |
 | `crates/providers` | HTTP-реализации. `openai_compat.rs` — wire-типы Chat Completions (толерантный serde), сборка стрим-дельт (текст, reasoning, тул-коллы по index), ретраи до стрима, маппинг переполнения контекста; `sse.rs` — байтовый поток → SSE-события; `json_repair.rs` — спасение обрезанного JSON |
 | `crates/cli` | Бинарь `mark2`: `main.rs` (сборка из конфига), `render.rs` (чистая функция Event → строка), `interactive.rs`, `print.rs` |
 

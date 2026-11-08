@@ -9,7 +9,8 @@ OpenAI-compatible. План: `docs/plans/20260824-rust-agent-harness.md`.
 ## Структура
 
 - `crates/core` (`mark2-core`) — нейтральные типы сообщений и событий, trait `Provider`,
-  agent loop, тулы (bash/read/grep/write/edit), сессии JSONL, компакция, конфиг.
+  agent loop, тулы (bash/read/grep/write/edit/web_fetch/web_search), сессии JSONL,
+  компакция, конфиг.
 - `crates/providers` (`mark2-providers`) — реализации провайдеров: `openai_compat`,
   SSE-парсинг, JSON-repair для tool-аргументов слабых моделей.
 - `crates/cli` (`mark2-cli`, бинарь `mark2`) — clap, интерактив и `-p` print mode,
@@ -49,7 +50,13 @@ cargo run -q -p mark2-cli -- -p --yolo \
 
 `-p` — print mode (ответ в stdout, служебное в stderr), `--yolo` — не спрашивать
 подтверждений, `-C` — рабочая директория агента. Постоянные настройки удобнее
-держать в `~/.config/mark2/config.toml` (секции `[provider]`, `[agent]`).
+держать в `~/.config/mark2/config.toml` (секции `[provider]`, `[agent]`, `[web]`).
+
+Сетевые тулы: `web_fetch` есть всегда, `web_search` регистрируется, только если
+задан SearXNG — `[web] search_base_url = "http://localhost:8888"` или переменная
+`MARK2_SEARXNG_URL` (непустая — старше файлов); в `settings.yml` SearXNG должен
+быть включён формат `json`. Без `--yolo` оба спрашивают подтверждение, как `bash`,
+в `read_only` запрещены.
 
 E2E-тесты против живого сервера помечены `#[ignore]` и по умолчанию не
 запускаются:

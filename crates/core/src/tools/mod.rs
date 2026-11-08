@@ -1,6 +1,6 @@
-//! Тулы агента: контракт [`Tool`], реестр [`ToolRegistry`] и пять базовых
+//! Тулы агента: контракт [`Tool`], реестр [`ToolRegistry`], пять базовых
 //! инструментов — [`BashTool`], [`EditTool`], [`GrepTool`], [`ReadTool`],
-//! [`WriteTool`].
+//! [`WriteTool`] — и сетевые [`WebFetchTool`] и [`WebSearchTool`].
 //!
 //! Четыре свойства этого модуля важны за пределами «просто вызвать функцию»:
 //!
@@ -22,13 +22,21 @@
 //! Читающие тулы (`read`, `grep`) заперты внутри cwd общим замком (модуль
 //! `confine`): путь канонизируется, наружу — ни абсолютным путём, ни `..`,
 //! ни симлинком.
+//!
+//! Сетевые тулы (модуль `web`) отдают содержимое сети только между маркерами
+//! недоверенных данных; `web_fetch` есть всегда, `web_search` — только при
+//! заданном бэкенде SearXNG ([`ToolRegistry::with_web_search`]).
 
 pub mod bash;
 mod coerce;
 mod confine;
 pub mod edit;
 pub mod grep;
+mod html;
 pub mod read;
+pub mod web;
+pub mod web_fetch;
+pub mod web_search;
 pub mod write;
 
 use std::path::{Path, PathBuf};
@@ -45,6 +53,8 @@ pub use bash::BashTool;
 pub use edit::{EditStrategy, EditTool, UnknownEditStrategy};
 pub use grep::GrepTool;
 pub use read::ReadTool;
+pub use web_fetch::WebFetchTool;
+pub use web_search::{InvalidSearchUrl, WebSearchTool};
 pub use write::WriteTool;
 
 /// Результат выполнения тула — ровно то, что уйдёт модели как tool result.
@@ -211,8 +221,9 @@ impl ToolRegistry {
         Self::default()
     }
 
-    /// Реестр из пяти базовых тулов в фиксированном порядке:
-    /// `bash`, `edit`, `grep`, `read`, `write`.
+    /// Реестр базовых тулов в фиксированном порядке: `bash`, `edit`, `grep`,
+    /// `read`, `write`, `web_fetch`. Сетевой тул — в хвосте: префикс
+    /// определений пяти локальных тулов остаётся байт-в-байт прежним.
     pub fn with_defaults(edit_strategy: EditStrategy) -> Self {
         let mut registry = Self::new();
         registry.register(Box::new(BashTool::new()));
@@ -220,7 +231,18 @@ impl ToolRegistry {
         registry.register(Box::new(GrepTool::new()));
         registry.register(Box::new(ReadTool::new()));
         registry.register(Box::new(WriteTool::new()));
+        registry.register(Box::new(WebFetchTool::new()));
         registry
+    }
+
+    /// Добавить `web_search` поверх SearXNG по `base_url`. `None` или пустая
+    /// строка — тул не регистрируется вовсе: слабой модели нельзя показывать
+    /// тул, который всегда отвечает ошибкой. Ошибка — адрес не http(s) URL.
+    pub fn with_web_search(mut self, base_url: Option<&str>) -> Result<Self, InvalidSearchUrl> {
+        if let Some(base_url) = base_url.filter(|url| !url.trim().is_empty()) {
+            self.register(Box::new(WebSearchTool::new(base_url)?));
+        }
+        Ok(self)
     }
 
     /// Зарегистрировать тул. Схема компилируется здесь один раз — на горячем
@@ -454,7 +476,10 @@ mod tests {
     /// явные `null` — в схему он не попадает.
     #[test]
     fn optional_fields_carry_no_null_default() {
-        for def in registry().defs() {
+        let full = registry()
+            .with_web_search(Some("http://localhost:8888"))
+            .unwrap();
+        for def in full.defs() {
             let schema = serde_json::to_string(&def.input_schema).unwrap();
             assert!(
                 !schema.contains(r#""default":null"#),
@@ -471,7 +496,51 @@ mod tests {
     #[test]
     fn defs_are_in_registration_order() {
         let names: Vec<String> = registry().defs().into_iter().map(|def| def.name).collect();
-        assert_eq!(names, ["bash", "edit", "grep", "read", "write"]);
+        assert_eq!(
+            names,
+            ["bash", "edit", "grep", "read", "write", "web_fetch"]
+        );
+    }
+
+    /// `web_search` есть только при заданном бэкенде и всегда последним;
+    /// `web_fetch` — всегда.
+    #[test]
+    fn web_search_is_registered_only_with_a_backend() {
+        for unset in [None, Some(""), Some("   ")] {
+            let registry = registry().with_web_search(unset).unwrap();
+            assert_eq!(
+                registry.names(),
+                ["bash", "edit", "grep", "read", "write", "web_fetch"],
+                "{unset:?}"
+            );
+            assert!(registry.get("web_search").is_none());
+        }
+
+        let registry = registry()
+            .with_web_search(Some("http://localhost:8888"))
+            .unwrap();
+        assert_eq!(
+            registry.names(),
+            [
+                "bash",
+                "edit",
+                "grep",
+                "read",
+                "write",
+                "web_fetch",
+                "web_search"
+            ]
+        );
+
+        let error = registry_error(Some("localhost:8888"));
+        assert!(error.contains("localhost:8888"), "{error}");
+    }
+
+    fn registry_error(base_url: Option<&str>) -> String {
+        match registry().with_web_search(base_url) {
+            Ok(registry) => panic!("ожидалась ошибка, а реестр {registry:?}"),
+            Err(error) => error.to_string(),
+        }
     }
 
     /// Порядок и содержимое `defs()` обязаны быть байт-в-байт стабильными —
@@ -486,7 +555,10 @@ mod tests {
 
     #[test]
     fn every_def_has_a_valid_object_schema_and_description() {
-        for def in registry().defs() {
+        let full = registry()
+            .with_web_search(Some("http://localhost:8888"))
+            .unwrap();
+        for def in full.defs() {
             assert!(
                 !def.description.is_empty(),
                 "{} has no description",
@@ -506,7 +578,7 @@ mod tests {
     #[test]
     fn registry_lookup_helpers() {
         let registry = registry();
-        assert_eq!(registry.len(), 5);
+        assert_eq!(registry.len(), 6);
         assert!(!registry.is_empty());
         assert_eq!(registry.get("bash").map(Tool::name), Some("bash"));
         assert!(registry.get("nope").is_none());
@@ -524,7 +596,8 @@ mod tests {
             out.content
         );
         assert!(
-            out.content.contains("bash, edit, grep, read, write"),
+            out.content
+                .contains("bash, edit, grep, read, write, web_fetch"),
             "{}",
             out.content
         );
@@ -753,6 +826,10 @@ mod tests {
             ("write", json!({"path": "a.txt", "content": 60})),
             ("grep", json!({"pattern": "x", "case_insensitive": "yes"})),
             ("grep", json!({"pattern": "x", "files_only": "yes"})),
+            (
+                "web_fetch",
+                json!({"url": "https://x.y", "max_chars": "lots"}),
+            ),
         ];
         for (name, input) in cases {
             let expected = raw_validation_message(&registry, name, &input);

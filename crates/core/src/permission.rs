@@ -14,6 +14,10 @@
 //! (и любой незнакомый реестру тул чтения) свободны. `bash` считается мутирующим, даже
 //! когда модель зовёт его ради `ls`: разобрать шелл-строку надёжно нельзя, а
 //! ошибаться безопаснее в сторону вопроса.
+//!
+//! Сетевые тулы (`web_fetch`, `web_search`) диск не меняют, но гейтятся так же,
+//! как `bash`: запрос уходит наружу, и URL с данными из проекта — готовый канал
+//! утечки для промпт-инъекции. Спросить в `ask_writes`, отказать в `read_only`.
 
 use serde::{Deserialize, Serialize};
 
@@ -26,17 +30,32 @@ pub fn is_mutating(tool_name: &str) -> bool {
     MUTATING_TOOLS.contains(&tool_name)
 }
 
+/// Тулы, уводящие запрос в сеть. Гейтятся как мутирующие; список тоже
+/// фиксирован: новый сетевой тул обязан быть добавлен сюда явно.
+pub const NETWORK_TOOLS: [&str; 2] = ["web_fetch", "web_search"];
+
+/// Ходит ли тул с таким именем в сеть.
+pub fn is_network(tool_name: &str) -> bool {
+    NETWORK_TOOLS.contains(&tool_name)
+}
+
+/// Стоит ли тул за гейтом политики: мутирует машину или ходит в сеть.
+pub fn is_gated(tool_name: &str) -> bool {
+    is_mutating(tool_name) || is_network(tool_name)
+}
+
 /// Политика доступа: чем ядро отвечает на запрос тула.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionPolicy {
     /// Ничего не спрашивать — всё разрешено (`--yolo`, CI, песочница).
     Yolo,
-    /// Значение по умолчанию: чтение свободно, мутирующие тулы требуют
-    /// подтверждения пользователя.
+    /// Значение по умолчанию: чтение свободно, мутирующие и сетевые тулы
+    /// требуют подтверждения пользователя.
     #[default]
     AskWrites,
-    /// Только чтение: мутирующие тулы отклоняются, ничего не спрашивая.
+    /// Только чтение: мутирующие и сетевые тулы отклоняются, ничего не
+    /// спрашивая.
     ReadOnly,
 }
 
@@ -52,7 +71,7 @@ impl PermissionPolicy {
 
     /// Решение по конкретному тулу.
     pub fn check(&self, tool_name: &str) -> PermissionCheck {
-        if !is_mutating(tool_name) {
+        if !is_gated(tool_name) {
             return PermissionCheck::Allowed;
         }
         match self {
@@ -150,8 +169,45 @@ mod tests {
     }
 
     #[test]
+    fn network_tools_are_gated_but_not_mutating() {
+        assert_eq!(NETWORK_TOOLS, ["web_fetch", "web_search"]);
+        for tool in NETWORK_TOOLS {
+            assert!(is_network(tool), "{tool}");
+            assert!(is_gated(tool), "{tool}");
+            assert!(!is_mutating(tool), "{tool}");
+        }
+        for tool in MUTATING_TOOLS {
+            assert!(is_gated(tool) && !is_network(tool), "{tool}");
+        }
+        for tool in READ_ONLY_TOOLS {
+            assert!(!is_gated(tool), "{tool}");
+        }
+    }
+
+    /// Сеть — как `bash`: yolo пускает, ask_writes спрашивает, read_only
+    /// отказывает текстом для модели.
+    #[test]
+    fn network_tools_follow_the_bash_rules() {
+        for tool in NETWORK_TOOLS {
+            assert_eq!(PermissionPolicy::Yolo.check(tool), PermissionCheck::Allowed);
+            assert!(
+                PermissionPolicy::AskWrites.check(tool).needs_approval(),
+                "{tool}"
+            );
+            let check = PermissionPolicy::ReadOnly.check(tool);
+            let reason = check.denial_reason().unwrap_or_else(|| panic!("{tool}"));
+            assert!(reason.starts_with("Permission denied:"), "{reason}");
+            assert!(reason.contains(tool), "{reason}");
+        }
+    }
+
+    #[test]
     fn yolo_allows_everything() {
-        for tool in MUTATING_TOOLS.iter().chain(READ_ONLY_TOOLS.iter()) {
+        for tool in MUTATING_TOOLS
+            .iter()
+            .chain(NETWORK_TOOLS.iter())
+            .chain(READ_ONLY_TOOLS.iter())
+        {
             assert_eq!(
                 PermissionPolicy::Yolo.check(tool),
                 PermissionCheck::Allowed,
@@ -198,14 +254,16 @@ mod tests {
         }
     }
 
-    /// Из реестра по умолчанию в read-only сессии остаются ровно `grep` и
-    /// `read`: новый тул обязан быть классифицирован осознанно, а поиск —
-    /// доступен ревьюверу наравне с чтением.
+    /// Из полного реестра (с `web_search`) в read-only сессии остаются ровно
+    /// `grep` и `read`: новый тул обязан быть классифицирован осознанно, а
+    /// поиск — доступен ревьюверу наравне с чтением.
     #[test]
     fn read_only_keeps_exactly_grep_and_read_from_the_default_registry() {
         use crate::tools::{EditStrategy, ToolRegistry};
 
-        let registry = ToolRegistry::with_defaults(EditStrategy::SearchReplace);
+        let registry = ToolRegistry::with_defaults(EditStrategy::SearchReplace)
+            .with_web_search(Some("http://localhost:8888"))
+            .unwrap();
         let allowed: Vec<&str> = registry
             .names()
             .into_iter()
@@ -214,7 +272,7 @@ mod tests {
         assert_eq!(allowed, ["grep", "read"]);
         for name in registry.names() {
             assert!(
-                is_mutating(name) || PermissionPolicy::AskWrites.check(name).is_allowed(),
+                is_gated(name) || PermissionPolicy::AskWrites.check(name).is_allowed(),
                 "{name}"
             );
         }

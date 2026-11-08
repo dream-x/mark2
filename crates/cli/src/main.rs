@@ -27,12 +27,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
+use mark2_core::config::SEARXNG_URL_ENV;
 use mark2_core::provider::Provider;
 use mark2_core::session::{SessionMeta, SessionRecorder, default_base_dir};
-use mark2_core::tools::ToolRegistry;
+use mark2_core::tools::{EditStrategy, ToolRegistry};
 use mark2_core::{
     Agent, AgentConfig, AgentSettings, Config, Memory, ModelSettings, Op, PermissionPolicy,
-    ProviderConfig, StopReason,
+    ProviderConfig, StopReason, WebConfig,
 };
 use mark2_providers::openai_compat::{CompatOptions, OpenAiCompatProvider, PROVIDER_NAME};
 
@@ -107,7 +108,7 @@ pub struct Args {
 pub enum PolicyArg {
     /// Ничего не спрашивать.
     Yolo,
-    /// Спрашивать перед bash/edit/write.
+    /// Спрашивать перед bash/edit/write и сетевыми web_fetch/web_search.
     AskWrites,
     /// Только чтение.
     ReadOnly,
@@ -196,6 +197,7 @@ impl Args {
                 post_edit_command: None,
                 post_edit_timeout_seconds: None,
             },
+            web: WebConfig::default(),
             models: BTreeMap::new(),
         }
     }
@@ -323,10 +325,14 @@ async fn run(args: Args) -> Result<ExitCode> {
         },
     );
 
+    let registry = tool_registry(
+        settings.edit_strategy,
+        config.agent.arg_coercion.unwrap_or(true),
+        config.search_base_url().as_deref(),
+    )?;
     let mut agent = Agent::new(
         Arc::new(provider) as Arc<dyn Provider>,
-        ToolRegistry::with_defaults(settings.edit_strategy)
-            .with_arg_coercion(config.agent.arg_coercion.unwrap_or(true)),
+        registry,
         agent_config(&config, &model, &cwd, settings),
     );
     if let Some(memory) = agent.memory() {
@@ -358,6 +364,22 @@ async fn run(args: Args) -> Result<ExitCode> {
     // Ждём, пока агент закроет файл сессии.
     handle.shutdown().await;
     Ok(exit_code(reason))
+}
+
+/// Реестр тулов: базовые плюс `web_search`, если задан адрес SearXNG
+/// (`search_base_url` — уже с учётом [`SEARXNG_URL_ENV`]). Битый адрес —
+/// ошибка запуска, а не тул, который на каждый вызов отвечает ошибкой.
+fn tool_registry(
+    edit_strategy: EditStrategy,
+    arg_coercion: bool,
+    search_base_url: Option<&str>,
+) -> Result<ToolRegistry> {
+    ToolRegistry::with_defaults(edit_strategy)
+        .with_arg_coercion(arg_coercion)
+        .with_web_search(search_base_url)
+        .with_context(|| {
+            format!("web_search: проверь [web] search_base_url в конфиге или {SEARXNG_URL_ENV}")
+        })
 }
 
 /// Настройки агента из сложенных слоёв конфига; чего слои не сказали — дефолт
@@ -874,6 +896,54 @@ mod tests {
                 .map(|check| check.command),
             Some("make check".to_string())
         );
+    }
+
+    /// `web_fetch` есть всегда, `web_search` — только с адресом SearXNG;
+    /// битый адрес — ошибка запуска с подсказкой, где его чинить.
+    #[test]
+    fn tool_registry_adds_web_search_only_with_a_backend() {
+        let names = |registry: ToolRegistry| -> Vec<String> {
+            registry.names().into_iter().map(str::to_string).collect()
+        };
+        let plain = tool_registry(EditStrategy::SearchReplace, true, None).unwrap();
+        assert!(plain.arg_coercion());
+        let plain = names(plain);
+        assert!(plain.contains(&"web_fetch".to_string()), "{plain:?}");
+        assert!(!plain.contains(&"web_search".to_string()), "{plain:?}");
+
+        let full = tool_registry(
+            EditStrategy::WholeFile,
+            false,
+            Some("http://localhost:8888"),
+        )
+        .unwrap();
+        assert!(!full.arg_coercion());
+        assert_eq!(names(full).last().map(String::as_str), Some("web_search"));
+
+        let error =
+            tool_registry(EditStrategy::SearchReplace, true, Some("localhost:8888")).unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("[web] search_base_url"), "{text}");
+        assert!(text.contains(SEARXNG_URL_ENV), "{text}");
+        assert!(text.contains("localhost:8888"), "{text}");
+    }
+
+    /// Адрес поиска из файла доходит до реестра; флаги CLI про него молчат.
+    #[test]
+    fn search_base_url_from_the_config_reaches_the_registry() {
+        let files = Config::parse("[web]\nsearch_base_url = \"http://searx:8888\"\n", "t").unwrap();
+        let merged = files.merge(parse(&["mark2", "--model", "m", "x"]).overrides());
+        assert_eq!(
+            merged.web.search_base_url_with_env(None).as_deref(),
+            Some("http://searx:8888")
+        );
+        let registry = tool_registry(
+            EditStrategy::SearchReplace,
+            true,
+            merged.web.search_base_url_with_env(None).as_deref(),
+        )
+        .unwrap();
+        assert!(registry.get("web_search").is_some());
     }
 
     #[test]

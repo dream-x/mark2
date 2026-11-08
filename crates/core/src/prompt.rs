@@ -1,9 +1,10 @@
 //! Системный промпт агента и подмешивание `AGENTS.md` проекта.
 //!
-//! Бюджет — жёсткий: **системный промпт вместе с описаниями тулов ≤ 1000
-//! токенов**. На локалках с контекстом в 8–32k каждая тысяча токенов преамбулы
-//! отъедается у задачи, а длинные инструкции слабые модели всё равно
-//! игнорируют. Отсюда два правила:
+//! Бюджет — жёсткий: **системный промпт вместе с описаниями локальных тулов
+//! ≤ 1000 токенов**, сетевые (`web_fetch`, `web_search`) — отдельная надбавка
+//! ≤ 175 токенов поверх. На локалках с контекстом в 8–32k каждая тысяча
+//! токенов преамбулы отъедается у задачи, а длинные инструкции слабые модели
+//! всё равно игнорируют. Отсюда два правила:
 //!
 //! * описания тулов живут в их схемах ([`crate::tools`]) и **не дублируются**
 //!   в промпте — здесь только то, чего из схем не видно: кто мы, где мы и как
@@ -146,6 +147,11 @@ mod tests {
     /// одна тысяча токенов — это примерно четыре тысячи символов.
     const PROMPT_BUDGET_CHARS: usize = 4000;
 
+    /// Надбавка на сетевые тулы (`web_fetch` всегда, `web_search` — с
+    /// бэкендом): ≈175 токенов. Отдельно от основного бюджета, чтобы рост
+    /// локальной части по-прежнему упирался в 4000.
+    const WEB_TOOLS_BUDGET_CHARS: usize = 700;
+
     fn tempdir() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
     }
@@ -178,16 +184,29 @@ mod tests {
         );
 
         // То, что реально уходит модели преамбулой: промпт + имена, описания и
-        // схемы тулов.
-        let defs = ToolRegistry::with_defaults(EditStrategy::SearchReplace).defs();
-        let tools_size: usize = defs
-            .iter()
-            .map(|def| def.name.len() + def.description.len() + def.input_schema.to_string().len())
-            .sum();
+        // схемы тулов — в самом полном составе, с `web_search`.
+        let defs = ToolRegistry::with_defaults(EditStrategy::SearchReplace)
+            .with_web_search(Some("http://localhost:8888"))
+            .unwrap()
+            .defs();
+        let size = |network: bool| -> usize {
+            defs.iter()
+                .filter(|def| crate::permission::is_network(&def.name) == network)
+                .map(|def| {
+                    def.name.len() + def.description.len() + def.input_schema.to_string().len()
+                })
+                .sum()
+        };
+        let (local, web) = (size(false), size(true));
         assert!(
-            prompt.len() + tools_size <= PROMPT_BUDGET_CHARS,
-            "промпт {} + тулы {tools_size} символов не влезают в {PROMPT_BUDGET_CHARS}",
+            prompt.len() + local <= PROMPT_BUDGET_CHARS,
+            "промпт {} + локальные тулы {local} символов не влезают в {PROMPT_BUDGET_CHARS}",
             prompt.len(),
+        );
+        assert!(web > 0, "сетевые тулы должны попасть в замер");
+        assert!(
+            web <= WEB_TOOLS_BUDGET_CHARS,
+            "сетевые тулы {web} символов не влезают в надбавку {WEB_TOOLS_BUDGET_CHARS}"
         );
     }
 

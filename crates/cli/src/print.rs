@@ -448,7 +448,8 @@ mod tests {
         assert_eq!(requests[0].model, "mock-model");
         assert_eq!(requests[0].messages.len(), 1);
         assert_eq!(requests[0].messages[0].text(), "что там с тестами?");
-        assert_eq!(requests[0].tools.len(), 5);
+        // Пять локальных тулов и всегда доступный `web_fetch`.
+        assert_eq!(requests[0].tools.len(), 6);
     }
 
     #[tokio::test]
@@ -625,6 +626,32 @@ mod tests {
         assert!(failed[0].starts_with("✗ write: Denied by user"), "{stderr}");
 
         // Модель получила отказ как обычный tool result.
+        let requests = harness.provider.requests();
+        let tool_result = tool_results(&requests[1].messages[2]);
+        assert!(tool_result.contains("Denied by user"), "{tool_result}");
+    }
+
+    /// Сеть гейтится как `bash`: без `--yolo` вызов `web_fetch` в -p
+    /// отклоняется, запрос не уходит, модель получает отказ tool result'ом.
+    #[tokio::test]
+    async fn web_fetch_needs_approval_like_bash() {
+        let harness = run_turn(
+            vec![
+                answer(
+                    "Смотрю доку.",
+                    Some(("c1", "web_fetch", json!({"url": "http://127.0.0.1:9/docs"}))),
+                ),
+                answer("Не смог открыть доку.", None),
+            ],
+            PermissionPolicy::AskWrites,
+            "прочитай доку",
+        )
+        .await;
+
+        assert_eq!(harness.reason, StopReason::Completed);
+        let stderr = harness.stderr();
+        assert!(stderr.contains("auto-denied `web_fetch`"), "{stderr}");
+        assert!(stderr.contains("127.0.0.1:9/docs"), "{stderr}");
         let requests = harness.provider.requests();
         let tool_result = tool_results(&requests[1].messages[2]);
         assert!(tool_result.contains("Denied by user"), "{tool_result}");
