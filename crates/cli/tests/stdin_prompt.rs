@@ -206,3 +206,54 @@ fn temperature_flag_beats_the_project_config_in_the_request() {
     let from_file = sent_temperature(&server.join().unwrap()).expect("температура из файла");
     assert!((from_file - 0.9).abs() < 1e-6, "{from_file}");
 }
+
+/// Раскладка песочницы бенча: `$HOME` и cwd — соседи. Конфиг в
+/// `$HOME/.config/mark2/config.toml` — доверенный слой: его температура уходит
+/// в запрос, post-edit сенсор в нём законен. Тот же сенсор в `.mark2.toml`
+/// cwd — ошибка запуска с путём файла и ключом, до любого запроса.
+#[test]
+fn home_config_is_trusted_and_a_project_sensor_fails_before_any_request() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("home");
+    let cwd = sandbox.path().join("cwd");
+    let user_config = home.join(".config").join("mark2").join("config.toml");
+    std::fs::create_dir_all(user_config.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    let runner_config = "[agent]\ntemperature = 0.6\npost_edit_command = \"true\"\n";
+    std::fs::write(&user_config, runner_config).unwrap();
+
+    let launch = |base_url: &str| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_mark2"));
+        command
+            .args(["-p", "--no-session", "--model", "m", "--base-url", base_url])
+            .arg("-C")
+            .arg(&cwd)
+            .arg("-")
+            .env("HOME", &home)
+            .env_remove("RUST_LOG")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    };
+
+    let (base_url, server) = serve_once("ok");
+    let output = run(launch(&base_url), "задача");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let sent = sent_temperature(&server.join().unwrap()).expect("температура из $HOME");
+    assert!((sent - 0.6).abs() < 1e-6, "{sent}");
+
+    // Порт 9 никто не слушает: дойди дело до запроса, ошибка была бы сетевой.
+    let project = cwd.join(".mark2.toml");
+    std::fs::write(&project, runner_config).unwrap();
+    let output = run(launch("http://127.0.0.1:9/v1"), "задача");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = text(&output.stderr);
+    assert!(stderr.contains("post_edit_command"), "{stderr}");
+    assert!(stderr.contains(".mark2.toml"), "{stderr}");
+    assert!(
+        !stderr.contains("127.0.0.1:9"),
+        "запроса быть не должно: {stderr}"
+    );
+    assert!(output.stdout.is_empty(), "{output:?}");
+}

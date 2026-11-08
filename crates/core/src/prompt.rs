@@ -14,7 +14,8 @@
 //!   локального сервера инвалидируется на каждом запросе.
 //!
 //! `AGENTS.md` — сложившийся стандарт проектных инструкций; [`find_agents_md`]
-//! ищет его от рабочей директории вверх до корня, ближайший выигрывает, и
+//! ищет его от рабочей директории вверх (не выше `$HOME`; вне `$HOME` —
+//! только в самой рабочей директории), ближайший выигрывает, и
 //! содержимое уходит отдельной секцией **в конец** промпта — после стабильной
 //! части, чтобы её префикс не менялся от проекта к проекту.
 //!
@@ -25,6 +26,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use crate::config::{search_boundary, upward_dirs};
 use crate::memory::Memory;
 
 /// Имя файла проектных инструкций.
@@ -114,14 +116,21 @@ pub fn with_project_instructions(base: &str, path: &Path, content: &str) -> Stri
     )
 }
 
-/// Найти ближайший `AGENTS.md`: от `cwd` вверх до корня файловой системы.
+/// Найти ближайший `AGENTS.md`: от `cwd` вверх, но не выше `$HOME`, а вне
+/// `$HOME` — только в самом `cwd` ([`crate::config::upward_dirs`]): чужой
+/// `/tmp/AGENTS.md` не должен становиться правилами каждого запуска в `/tmp`.
 ///
 /// Возвращает путь и содержимое. Ближайший к рабочей директории выигрывает —
 /// файл монорепы не перебивает файл конкретного пакета. Нечитаемый кандидат
 /// (нет прав, это директория) не останавливает поиск: он логируется и обход
 /// продолжается вверх.
 pub fn find_agents_md(cwd: &Path) -> Option<(PathBuf, String)> {
-    for dir in cwd.ancestors() {
+    find_agents_md_within(cwd, search_boundary().as_deref())
+}
+
+/// [`find_agents_md`] с явной границей поиска `home` вместо настоящего `$HOME`.
+pub fn find_agents_md_within(cwd: &Path, home: Option<&Path>) -> Option<(PathBuf, String)> {
+    for dir in upward_dirs(cwd, home) {
         let candidate = dir.join(AGENTS_MD);
         match std::fs::read_to_string(&candidate) {
             Ok(content) => return Some((candidate, content)),
@@ -226,12 +235,13 @@ mod tests {
         std::fs::write(root.join(AGENTS_MD), "правила монорепы\n").unwrap();
         std::fs::write(nested.join(AGENTS_MD), "правила пакета\n").unwrap();
 
-        let (path, content) = find_agents_md(&nested).unwrap();
+        // tempdir — вне настоящего `$HOME`; граница поиска — его корень.
+        let (path, content) = find_agents_md_within(&nested, Some(root)).unwrap();
         assert_eq!(path, nested.join(AGENTS_MD));
         assert_eq!(content, "правила пакета\n");
 
         // На уровень выше — уже файл монорепы.
-        let (path, content) = find_agents_md(&root.join("crates")).unwrap();
+        let (path, content) = find_agents_md_within(&root.join("crates"), Some(root)).unwrap();
         assert_eq!(path, root.join(AGENTS_MD));
         assert_eq!(content, "правила монорепы\n");
     }
@@ -243,8 +253,29 @@ mod tests {
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(dir.path().join(AGENTS_MD), "корневые правила").unwrap();
 
-        let (path, _) = find_agents_md(&nested).unwrap();
+        let (path, _) = find_agents_md_within(&nested, Some(dir.path())).unwrap();
         assert_eq!(path, dir.path().join(AGENTS_MD));
+    }
+
+    /// Выше границы `AGENTS.md` не ищется: вне `$HOME` (здесь — вне `home`)
+    /// — только в самом cwd, внутри — не выше `home`.
+    #[test]
+    fn agents_md_above_the_boundary_is_not_found() {
+        let dir = tempdir();
+        let home = dir.path().join("home");
+        let nested = home.join("proj");
+        let outside = dir.path().join("tmp").join("scratch");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(dir.path().join(AGENTS_MD), "чужие правила").unwrap();
+
+        assert!(find_agents_md_within(&nested, Some(&home)).is_none());
+        assert!(find_agents_md_within(&outside, Some(&home)).is_none());
+        assert!(find_agents_md_within(&outside, None).is_none());
+
+        std::fs::write(outside.join(AGENTS_MD), "свои правила").unwrap();
+        let (path, _) = find_agents_md_within(&outside, Some(&home)).unwrap();
+        assert_eq!(path, outside.join(AGENTS_MD));
     }
 
     #[test]
@@ -333,14 +364,14 @@ mod tests {
     /// Файл памяти выше cwd — путь абсолютный: относительного «от cwd» нет.
     #[test]
     fn memory_outside_the_cwd_is_shown_by_its_absolute_path() {
-        use crate::memory::{MEMORY_FILE, load_memory};
+        use crate::memory::{MEMORY_FILE, load_memory_within};
 
         let dir = tempdir();
         let nested = dir.path().join("pkg");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(dir.path().join(MEMORY_FILE), "- факт\n").unwrap();
 
-        let memory = load_memory(&nested, None).unwrap();
+        let memory = load_memory_within(&nested, None, Some(dir.path())).unwrap();
         let prompt = system_prompt_with_memory(&nested, Some(&memory));
         let absolute = dir.path().join(MEMORY_FILE).display().to_string();
         assert!(prompt.contains(&format!("`{absolute}`")), "{prompt}");
@@ -372,7 +403,7 @@ mod tests {
         std::fs::create_dir_all(nested.join(AGENTS_MD)).unwrap();
         std::fs::write(dir.path().join(AGENTS_MD), "выше").unwrap();
 
-        let (path, content) = find_agents_md(&nested).unwrap();
+        let (path, content) = find_agents_md_within(&nested, Some(dir.path())).unwrap();
         assert_eq!(path, dir.path().join(AGENTS_MD));
         assert_eq!(content, "выше");
     }

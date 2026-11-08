@@ -2,7 +2,8 @@
 //!
 //! Настоящий бенч ходит в модель, поэтому его нельзя гонять в CI. Но всё, что
 //! между промптом и вердиктом, — наше: копирование `setup/`, изоляция `$HOME`,
-//! аргументы запуска, `.mark2.toml` с температурой 0, таймаут с убийством
+//! аргументы запуска, конфиг ранера с температурой 0 в
+//! `$HOME/.config/mark2/config.toml` песочницы, таймаут с убийством
 //! процесса, сбор сессии, `verify.sh`, `results.json` и `report.md`. Это и
 //! проверяется — на шелл-скрипте, который притворяется агентом: пишет ответ в
 //! stdout, строку токенов в stderr, создаёт файл в cwd и кладёт JSONL-сессию в
@@ -26,7 +27,9 @@ if [ -n "$FAKE_MARK2_LOG" ]; then
         echo "--- run"
         echo "argv: $*"
         echo "home: $HOME"
-        echo "config: $(tr '\n' ' ' < .mark2.toml 2>/dev/null)"
+        # Конфиг ранера — там, где настоящий mark2 читает доверенный слой.
+        echo "config: $(tr '\n' ' ' < "$HOME/.config/mark2/config.toml" 2>/dev/null)"
+        echo "project config: $( [ -e .mark2.toml ] && echo present || echo none )"
         echo "path: $PATH"
         echo "python3: $(command -v python3 || echo none)"
         echo "first holds: $(ls -A "${PATH%%:*}" 2>/dev/null | tr '\n' ' ')"
@@ -379,6 +382,9 @@ fn full_run_writes_results_report_and_sessions() {
     assert!(log.contains("--model fake-model-2"), "{log}");
     assert!(log.contains("Создай hello.txt"), "{log}");
     assert!(log.contains("config: [agent] temperature = 0.0"), "{log}");
+    // В cwd модели конфига ранера нет: проектный слой mark2 — не его место.
+    assert!(log.contains("project config: none"), "{log}");
+    assert!(!log.contains("project config: present"), "{log}");
     assert!(
         !log.contains(&format!(
             "home: {}",
@@ -527,7 +533,7 @@ fn relative_paths_still_resolve_from_the_run_cwd() {
 }
 
 /// Настройки задачи из `task.toml` доезжают до mark2: `policy = "read-only"` —
-/// флагом вместо `--yolo`, `context_limit` — секцией модели в `.mark2.toml`.
+/// флагом вместо `--yolo`, `context_limit` — секцией модели в конфиге ранера.
 /// Задача без них запускается ровно как раньше.
 #[test]
 fn task_policy_and_context_limit_reach_mark2() {
@@ -606,7 +612,8 @@ fn task_policy_and_context_limit_reach_mark2() {
     assert!(report.contains("| компакции |"), "{report}");
 }
 
-/// Post-edit сенсор задачи доезжает до `[agent]` песочницы, а
+/// Post-edit сенсор задачи доезжает до `[agent]` конфига ранера в `$HOME`
+/// песочницы (не в cwd: проектному `.mark2.toml` mark2 сенсор не даёт), а
 /// `--agent-override 'post_edit_command = ""'` его перекрывает (абляция «без
 /// сенсора»), не сталкиваясь с ключом задачи; задача без сенсора его не
 /// получает. Обе настройки — в `results.json`.
@@ -642,6 +649,9 @@ fn task_post_edit_check_reaches_mark2_and_the_override_switches_it_off() {
         "[agent] temperature = 0.0 post_edit_command = \"python3 -B test.py\" \
          post_edit_timeout_seconds = 20 "
     );
+    for run in &runs {
+        assert_eq!(logged(run, "project config"), "none", "{run}");
+    }
     let results = fixture.results();
     let tasks = results["config"]["tasks"].as_array().unwrap();
     assert_eq!(tasks[0]["post_edit_command"], serde_json::Value::Null);
@@ -680,6 +690,51 @@ fn task_post_edit_check_reaches_mark2_and_the_override_switches_it_off() {
         fixture.report().contains("`post_edit_command = \"\"`"),
         "{}",
         fixture.report()
+    );
+}
+
+/// Абляции `[agent]`-ключей (температура 2026-11-07, сенсор «включить всем»)
+/// после переезда конфига ранера в `$HOME` песочницы доезжают как раньше:
+/// override перекрывает базовую `temperature = 0.0` строкой на своём месте,
+/// сенсор приходит доверенным слоем, cwd модели без `.mark2.toml`.
+#[test]
+fn agent_overrides_reach_mark2_through_the_sandbox_home_config() {
+    let fixture = Fixture::new();
+    fixture.task(
+        "T01-plain",
+        "Создай hello.txt\n",
+        "[task]\ntimeout_seconds = 60\nrepeats = 1\nmax_turns = 40\n",
+        "#!/bin/sh\nexit 0\n",
+    );
+
+    let output = fixture.bench(&[
+        "--models",
+        "fake1",
+        "--no-warmup",
+        "--agent-override",
+        "temperature = 0.6",
+        "--agent-override",
+        "post_edit_command = \"python3 -B test.py\"",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = fixture.log();
+    let runs: Vec<&str> = log.split("--- run").skip(1).collect();
+    assert_eq!(runs.len(), 1, "{log}");
+    assert_eq!(
+        logged(runs[0], "config"),
+        "[agent] max_turns = 40 temperature = 0.6 post_edit_command = \"python3 -B test.py\" "
+    );
+    assert_eq!(logged(runs[0], "project config"), "none");
+    assert_eq!(
+        fixture.results()["config"]["agent_overrides"],
+        serde_json::json!([
+            "temperature = 0.6",
+            "post_edit_command = \"python3 -B test.py\""
+        ])
     );
 }
 

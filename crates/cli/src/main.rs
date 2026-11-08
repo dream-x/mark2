@@ -848,8 +848,15 @@ mod tests {
         std::fs::write(root_path.join("notes").join("mem.md"), "- из корня\n").unwrap();
         std::fs::write(cwd.join("notes").join("mem.md"), "- из sub\n").unwrap();
 
-        let path = mark2_core::config::find_project_config(&cwd).unwrap();
-        let config = Config::load_file(&path).unwrap().unwrap();
+        // tempdir — вне настоящего `$HOME`, где поиск вверх не идёт; граница —
+        // сам tempdir.
+        let path = mark2_core::config::find_upwards_within(
+            &cwd,
+            mark2_core::config::PROJECT_CONFIG_FILE,
+            Some(&root_path),
+        )
+        .unwrap();
+        let config = Config::load_layers(None, Some(&path)).unwrap();
         let agent_config = agent_config(&config, "m", &cwd, config.resolve("m"));
         assert_eq!(
             agent_config.memory_file.as_deref(),

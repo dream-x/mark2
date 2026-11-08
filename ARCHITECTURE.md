@@ -37,7 +37,7 @@ flowchart LR
 | — `memory.rs` | Память агента: поиск `.mark2.memory.md` (или `[agent] memory_file`), кап 4096 байт с обрезкой по строке, путь для модели |
 | — `compact.rs` | Компакция: оценка токенов, суммаризация через провайдера, скрытие истории флагами |
 | — `session.rs` | `SessionRecorder`/`load_session`: JSONL, фоновый писатель, толерантная загрузка |
-| — `config.rs` | Слоёный TOML-конфиг: user → project → CLI; per-model настройки; `[web] search_base_url` с env-оверрайдом `MARK2_SEARXNG_URL`; `find_upwards` — общий обход «ближайший файл от cwd вверх» |
+| — `config.rs` | Слоёный TOML-конфиг: user → project → CLI; проектный слой только ужесточает (`validate_as_project`: без провайдера, `yolo`, `post_edit_command`, памяти вне своей директории; `merge_project`: policy — только строже); per-model настройки; `[web] search_base_url` с env-оверрайдом `MARK2_SEARXNG_URL`; `find_upwards` — общий обход «ближайший файл от cwd вверх», не выше `$HOME` (вне него — только cwd) |
 | `crates/providers` | HTTP-реализации. `openai_compat.rs` — wire-типы Chat Completions (толерантный serde), сборка стрим-дельт (текст, reasoning, тул-коллы по index), ретраи до стрима, маппинг переполнения контекста; `sse.rs` — байтовый поток → SSE-события; `json_repair.rs` — спасение обрезанного JSON |
 | `crates/cli` | Бинарь `mark2`: `main.rs` (сборка из конфига), `render.rs` (чистая функция Event → строка; `approval_prompt` — ключевое поле тула целиком, остальное JSON до 500 символов, управляющие символы экранированы), `interactive.rs`, `print.rs` |
 

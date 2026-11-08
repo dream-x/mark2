@@ -7,7 +7,8 @@
 //! Явный `[agent] memory_file` (относительный — от директории конфиг-файла,
 //! см. [`crate::config::AgentSettings::memory_file`]) или ближайший
 //! [`MEMORY_FILE`] от cwd вверх — тем же обходом, что `.mark2.toml`
-//! ([`crate::config::find_upwards`]). Конфиг и память ищутся независимо,
+//! ([`crate::config::find_upwards`]: не выше `$HOME`, а вне `$HOME` — только
+//! в самом cwd). Конфиг и память ищутся независимо,
 //! каждый по своему ближайшему. Явный путь, которого нет на диске, — не
 //! ошибка: памяти просто нет, файл появится при первой записи; к поиску
 //! ближайшего такой путь не откатывается.
@@ -46,7 +47,7 @@
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
-use crate::config::find_upwards;
+use crate::config::{find_upwards_within, search_boundary};
 
 /// Имя файла памяти; ищется от cwd вверх.
 pub const MEMORY_FILE: &str = ".mark2.memory.md";
@@ -157,18 +158,38 @@ fn truncate_at_line(body: &str, cap: usize) -> &str {
 }
 
 /// Где лежит память: явный путь (относительный — от `cwd`) или ближайший
-/// [`MEMORY_FILE`] от `cwd` вверх. `None` — искать нечего.
+/// [`MEMORY_FILE`] от `cwd` вверх, не выше `$HOME`
+/// ([`crate::config::find_upwards`]).
+/// `None` — искать нечего.
 pub fn memory_path(cwd: &Path, explicit: Option<&Path>) -> Option<PathBuf> {
+    memory_path_within(cwd, explicit, search_boundary().as_deref())
+}
+
+/// [`memory_path`] с явной границей поиска `home` вместо настоящего `$HOME`.
+pub fn memory_path_within(
+    cwd: &Path,
+    explicit: Option<&Path>,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
     match explicit {
         Some(path) => Some(lexical(&cwd.join(path))),
-        None => find_upwards(cwd, MEMORY_FILE),
+        None => find_upwards_within(cwd, MEMORY_FILE, home),
     }
 }
 
 /// Прочитать память для `cwd`. `None` — памяти нет: файла нет, он пуст или
 /// не читается (последнее — `tracing::warn`: ход это не ломает).
 pub fn load_memory(cwd: &Path, explicit: Option<&Path>) -> Option<Memory> {
-    let path = memory_path(cwd, explicit)?;
+    load_memory_within(cwd, explicit, search_boundary().as_deref())
+}
+
+/// [`load_memory`] с явной границей поиска `home` вместо настоящего `$HOME`.
+pub fn load_memory_within(
+    cwd: &Path,
+    explicit: Option<&Path>,
+    home: Option<&Path>,
+) -> Option<Memory> {
+    let path = memory_path_within(cwd, explicit, home)?;
     match std::fs::read_to_string(&path) {
         Ok(text) => Memory::from_text(path, &text),
         Err(error) if error.kind() == ErrorKind::NotFound => None,
@@ -202,30 +223,60 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
+    /// Память с поиском вверх до границы `root`: корень tempdir играет роль
+    /// `$HOME` (сам tempdir лежит вне настоящего `$HOME`).
+    fn load_in(root: &Path, cwd: &Path) -> Option<Memory> {
+        load_memory_within(cwd, None, Some(root))
+    }
+
     #[test]
     fn memory_is_found_in_the_cwd_and_in_a_parent() {
         let dir = tempdir();
-        let nested = dir.path().join("a").join("b");
+        let root = dir.path();
+        let nested = root.join("a").join("b");
         std::fs::create_dir_all(&nested).unwrap();
-        assert_eq!(load_memory(&nested, None), None, "файла нет — памяти нет");
+        assert_eq!(load_in(root, &nested), None, "файла нет — памяти нет");
 
-        std::fs::write(dir.path().join(MEMORY_FILE), "# Memory\n- корень\n").unwrap();
-        let memory = load_memory(&nested, None).unwrap();
-        assert_eq!(memory.path, dir.path().join(MEMORY_FILE));
+        std::fs::write(root.join(MEMORY_FILE), "# Memory\n- корень\n").unwrap();
+        let memory = load_in(root, &nested).unwrap();
+        assert_eq!(memory.path, root.join(MEMORY_FILE));
         assert_eq!(memory.content, "# Memory\n- корень");
         assert_eq!(memory.file_bytes, "# Memory\n- корень\n".len());
         assert!(!memory.truncated);
 
         // Ближайший выигрывает.
         std::fs::write(nested.join(MEMORY_FILE), "# Memory\n- пакет\n").unwrap();
-        let memory = load_memory(&nested, None).unwrap();
+        let memory = load_in(root, &nested).unwrap();
         assert_eq!(memory.path, nested.join(MEMORY_FILE));
         assert_eq!(memory.content, "# Memory\n- пакет");
         assert_eq!(memory.display_path(&nested), MEMORY_FILE);
         // Из родителя файл пакета не виден.
         assert_eq!(
-            load_memory(&dir.path().join("a"), None).unwrap().path,
-            dir.path().join(MEMORY_FILE)
+            load_in(root, &root.join("a")).unwrap().path,
+            root.join(MEMORY_FILE)
+        );
+    }
+
+    /// Выше границы память не ищется: вне `$HOME` (здесь — вне `home`)
+    /// виден только файл в самом cwd, внутри — не выше `home`.
+    #[test]
+    fn memory_above_the_boundary_is_not_found() {
+        let dir = tempdir();
+        let home = dir.path().join("home");
+        let nested = home.join("proj");
+        let outside = dir.path().join("tmp").join("scratch");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(dir.path().join(MEMORY_FILE), "- чужое\n").unwrap();
+
+        assert_eq!(load_memory_within(&nested, None, Some(&home)), None);
+        assert_eq!(load_memory_within(&outside, None, Some(&home)), None);
+        assert_eq!(load_memory_within(&outside, None, None), None);
+
+        std::fs::write(home.join(MEMORY_FILE), "- своё\n").unwrap();
+        assert_eq!(
+            load_memory_within(&nested, None, Some(&home)).unwrap().path,
+            home.join(MEMORY_FILE)
         );
     }
 
@@ -246,7 +297,7 @@ mod tests {
         std::fs::create_dir_all(nested.join(MEMORY_FILE)).unwrap();
         std::fs::write(dir.path().join(MEMORY_FILE), "выше").unwrap();
         assert_eq!(
-            load_memory(&nested, None).unwrap().path,
+            load_in(dir.path(), &nested).unwrap().path,
             dir.path().join(MEMORY_FILE)
         );
     }
@@ -296,8 +347,15 @@ mod tests {
         // Ближайший `.mark2.memory.md` есть, но конфиг сказал явно.
         std::fs::write(cwd.join(MEMORY_FILE), "- ближайший\n").unwrap();
 
-        let config_path = crate::config::find_project_config(&cwd).unwrap();
+        let config_path = crate::config::find_upwards_within(
+            &cwd,
+            crate::config::PROJECT_CONFIG_FILE,
+            Some(root.path()),
+        )
+        .unwrap();
         let config = crate::Config::load_file(&config_path).unwrap().unwrap();
+        // Путь внутри директории конфига — проектному слою можно.
+        config.validate_as_project(&config_path).unwrap();
         let memory = load_memory(&cwd, config.agent.memory_file.as_deref()).unwrap();
         assert_eq!(memory.path, root.path().join("docs").join("memory.md"));
         assert_eq!(memory.content, "- из docs");

@@ -10,17 +10,21 @@
 //! * **свежая tmp-cwd** с копией `setup/` и **свежий tmp-`$HOME`** на каждый
 //!   прогон: `$HOME` изолирует пользовательский конфиг mark2 и заодно даёт
 //!   директорию сессий, из которой сессия и забирается;
-//! * **температура 0** через `<cwd>/.mark2.toml`: сравниваем модели, а не
+//! * **конфиг ранера** — в пользовательском конфиге песочницы,
+//!   `<home>/.config/mark2/config.toml` ([`write_runner_config`]): это
+//!   доверенный слой, а проектному `.mark2.toml` mark2 не даёт задавать
+//!   `post_edit_command`; в cwd модели конфига нет;
+//! * **температура 0** через конфиг ранера: сравниваем модели, а не
 //!   сэмплинг;
 //! * **настройки задачи** — тоже снаружи, без особых режимов в mark2:
 //!   `policy = "read-only"` превращается в `--policy read-only` вместо
 //!   `--yolo`, `max_turns` и post-edit сенсор (`post_edit_command`,
 //!   `post_edit_timeout_seconds`) — в строки секции `[agent]`,
-//!   `context_limit` — в секцию `[models."<id>"]` того же `.mark2.toml` (см.
+//!   `context_limit` — в секцию `[models."<id>"]` того же конфига (см.
 //!   [`project_config`]); туда же — `edit_strategy` модели из матрицы (свойство
 //!   модели, а не задачи);
 //! * **абляция** — строки `--agent-override 'key = value'` ([`Runner::agent_overrides`])
-//!   дописываются в `[agent]` каждого `.mark2.toml` после базы и настроек
+//!   дописываются в `[agent]` конфига ранера после базы и настроек
 //!   задачи; одноимённую строку ранера override **перекрывает** (строка базы
 //!   или задачи не пишется: `temperature = 0.6` вместо базового `0.0`,
 //!   `post_edit_command = ""` выключает сенсор задачи); каждая строка и каждый
@@ -50,7 +54,7 @@ use anyhow::{Context, Result, bail};
 use jiff::{Timestamp, Zoned};
 use tokio::process::Command;
 
-use mark2_core::config::{AgentSettings, Config};
+use mark2_core::config::{AgentSettings, Config, USER_CONFIG_RELATIVE};
 use mark2_core::tools::EditStrategy;
 
 use crate::metrics::{find_session_file, parse_tokens, read_session_metrics};
@@ -70,9 +74,10 @@ pub const WARMUP_TIMEOUT: Duration = Duration::from_secs(300);
 /// `verify_timeout_seconds`.
 pub const VERIFY_TIMEOUT_SECONDS: u64 = 30;
 
-/// Проектный конфиг, который кладётся в cwd каждого прогона (база; задача с
-/// `max_turns` или `context_limit` и модель с `edit_strategy` дописывают к
-/// нему — см. [`project_config`]).
+/// База конфига ранера, который кладётся в `$HOME` каждого прогона
+/// ([`write_runner_config`]; задача с `max_turns` или `context_limit` и модель
+/// с `edit_strategy` дописывают к нему — см. [`project_config`]). Имя — с
+/// тех времён, когда он лежал в cwd как `.mark2.toml`.
 pub const PROJECT_CONFIG: &str = "[agent]\ntemperature = 0.0\n";
 
 /// Сколько символов вывода `verify.sh` сохраняем в `results.json`.
@@ -103,7 +108,7 @@ pub struct Runner {
     /// Делать ли прогрев модели (выключается только в тестах).
     pub warmup: bool,
     /// Строки `--agent-override` (уже проверенные [`parse_agent_override`]):
-    /// дописываются в `[agent]` `.mark2.toml` каждого прогона.
+    /// дописываются в `[agent]` конфига ранера каждого прогона.
     pub agent_overrides: Vec<String>,
 }
 
@@ -236,10 +241,9 @@ impl Runner {
                 )
             })?;
         }
-        let project_config_path = sandbox.cwd().join(".mark2.toml");
-        std::fs::write(
-            &project_config_path,
-            project_config(
+        write_runner_config(
+            sandbox.home(),
+            &project_config(
                 &model.model,
                 task.context_limit,
                 task.max_turns,
@@ -247,8 +251,7 @@ impl Runner {
                 model.edit_strategy,
                 &self.agent_overrides,
             ),
-        )
-        .with_context(|| format!("не удалось записать {}", project_config_path.display()))?;
+        )?;
 
         let logs_dir = self.run_dir.join("logs").join(&model.alias).join(&task.id);
         std::fs::create_dir_all(&logs_dir)
@@ -650,7 +653,30 @@ pub fn mark2_args(
     args
 }
 
-/// Содержимое `<cwd>/.mark2.toml` для прогона модели `model_id`.
+/// Положить конфиг ранера в пользовательский конфиг песочницы —
+/// `<home>/.config/mark2/config.toml` ([`USER_CONFIG_RELATIVE`]), где `home` —
+/// `$HOME`, с которым ранер запускает mark2.
+///
+/// Это доверенный слой mark2: проектному `.mark2.toml` ядро не даёт задавать
+/// `post_edit_command` (и провайдера, и `yolo`), а сенсор задачи и абляции
+/// `--agent-override` его задают. `$HOME` у прогона свой, так что «глобальный»
+/// конфиг тут — конфиг одного прогона. Заодно в cwd модели больше не лежит
+/// чужой ей файл. Возвращает путь записанного файла.
+pub fn write_runner_config(home: &Path, text: &str) -> Result<PathBuf> {
+    let path = home.join(USER_CONFIG_RELATIVE);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("не удалось создать {}", dir.display()))?;
+    }
+    std::fs::write(&path, text)
+        .with_context(|| format!("не удалось записать {}", path.display()))?;
+    Ok(path)
+}
+
+/// Конфиг ранера для прогона модели `model_id` — содержимое
+/// `<home>/.config/mark2/config.toml` песочницы ([`write_runner_config`]; до
+/// 2026-11-08 — `<cwd>/.mark2.toml`, отсюда имя). Ключи — те же, слой —
+/// доверенный.
 ///
 /// Без настроек задачи, модели и overrides — ровно [`PROJECT_CONFIG`], байт в
 /// байт как раньше. `max_turns`, post-edit сенсор задачи и затем строки
@@ -729,8 +755,8 @@ pub fn project_config(
 }
 
 /// Разобрать одно значение `--agent-override`: ровно одна пара `key = value`
-/// секции `[agent]`, которую понимает mark2. Возвращает строку для
-/// `.mark2.toml` (без пробелов по краям).
+/// секции `[agent]`, которую понимает mark2. Возвращает строку для конфига
+/// ранера (без пробелов по краям).
 ///
 /// Проверок две, обе — до прогонов:
 ///
@@ -776,8 +802,8 @@ fn override_key(line: &str) -> Option<String> {
         .cloned()
 }
 
-/// Проверить до первого прогона, что `.mark2.toml` каждой пары модель × задача
-/// разбирается парсером ядра.
+/// Проверить до первого прогона, что конфиг ранера ([`project_config`])
+/// каждой пары модель × задача разбирается парсером ядра.
 ///
 /// Столкнуться с ключом, который пишет сам ранер (`temperature` базы,
 /// `max_turns` или сенсор задачи), override больше не может — по построению
@@ -802,9 +828,9 @@ pub fn check_project_configs(
                 model.edit_strategy,
                 agent_overrides,
             );
-            if let Err(error) = Config::parse(&text, ".mark2.toml") {
+            if let Err(error) = Config::parse(&text, USER_CONFIG_RELATIVE) {
                 bail!(
-                    ".mark2.toml для {} × {} не разбирается mark2 (--agent-override: {}): {}\n{text}",
+                    "конфиг ранера для {} × {} не разбирается mark2 (--agent-override: {}): {}\n{text}",
                     model.alias,
                     task.id,
                     agent_overrides.join("; "),
@@ -1412,6 +1438,40 @@ mod tests {
             sandbox_check(&text).map(|check| check.command),
             Some("python3 -B test.py".to_string())
         );
+    }
+
+    /// Конфиг ранера ложится в пользовательский конфиг `$HOME` песочницы —
+    /// туда, где mark2 читает его доверенным слоем: сенсор задачи и
+    /// override температуры доезжают. Тот же текст проектным `.mark2.toml`
+    /// mark2 отверг бы — поэтому конфиг и переехал из cwd.
+    #[test]
+    fn runner_config_goes_to_the_trusted_user_layer_of_the_sandbox_home() {
+        let sandbox = TempDir::new().unwrap();
+        let home = sandbox.path().join("home");
+        let check = post_edit("python3 -B test.py", Some(20));
+        let overrides = [parse_agent_override("temperature = 0.6").unwrap()];
+        let text = project_config("m", Some(4096), None, Some(&check), None, &overrides);
+
+        let path = write_runner_config(&home, &text).unwrap();
+        assert_eq!(path, home.join(".config").join("mark2").join("config.toml"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        // Повторная запись в ту же песочницу — не ошибка.
+        assert_eq!(write_runner_config(&home, &text).unwrap(), path);
+
+        // Так его сложит mark2: пользовательский слой, проектного нет.
+        let config = Config::load_layers(Some(&path), None).unwrap();
+        assert_eq!(config.agent.temperature, Some(0.6));
+        let sensor = config.agent.post_edit_check().unwrap();
+        assert_eq!(sensor.command, "python3 -B test.py");
+        assert_eq!(sensor.timeout, Duration::from_secs(20));
+        assert_eq!(config.resolve("m").context_limit, Some(4096));
+
+        // Тот же текст в cwd модели — ошибка запуска mark2.
+        let project = sandbox.path().join("cwd").join(".mark2.toml");
+        std::fs::create_dir_all(project.parent().unwrap()).unwrap();
+        std::fs::write(&project, &text).unwrap();
+        let error = Config::load_layers(None, Some(&project)).unwrap_err();
+        assert!(error.to_string().contains("post_edit_command"), "{error}");
     }
 
     /// Проверка конфигов до прогона: override сенсора или `max_turns` с

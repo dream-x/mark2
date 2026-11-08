@@ -82,7 +82,8 @@ struct Args {
     #[arg(long)]
     no_warmup: bool,
 
-    /// Строка `key = value` в секцию [agent] `.mark2.toml` каждого прогона —
+    /// Строка `key = value` в секцию [agent] конфига ранера каждого прогона
+    /// (`$HOME/.config/mark2/config.toml` песочницы) —
     /// абляция настроек mark2 (например 'arg_coercion = false',
     /// 'write_churn = false', 'temperature = 0.6'). Ключ, который пишет сам
     /// ранер (temperature базы, max_turns и post_edit_* задачи), override

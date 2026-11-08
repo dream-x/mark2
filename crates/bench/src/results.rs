@@ -54,19 +54,22 @@ pub struct RunConfig {
     pub verify_timeout_seconds: u64,
     /// Промпт прогрева (не таймируется, в результаты не попадает).
     pub warmup_prompt: String,
-    /// Что писалось в `<cwd>/.mark2.toml` каждого прогона. Задача с
+    /// База конфига ранера каждого прогона: с 2026-11-08 — в
+    /// `<home>/.config/mark2/config.toml` песочницы (доверенный слой mark2),
+    /// раньше — в `<cwd>/.mark2.toml`; имя поля осталось ради старых
+    /// `results.json`. Задача с
     /// `max_turns` (см. [`TaskRecord::max_turns`]) или post-edit сенсором (см.
     /// [`TaskRecord::post_edit_command`]) дописывает строки в `[agent]`, с
     /// `context_limit` (см. [`TaskRecord::context_limit`]) — секцию
     /// `[models."<id модели>"]`; в ту же секцию уходит `edit_strategy` модели
     /// (см. [`ModelSpec::edit_strategy`]).
     pub project_config: String,
-    /// Строки `--agent-override`, дописанные в `[agent]` `.mark2.toml` каждого
+    /// Строки `--agent-override`, дописанные в `[agent]` конфига ранера каждого
     /// прогона после базы и настроек задачи: абляция настроек mark2
     /// (`arg_coercion = false`, `write_churn = false`, `post_edit_command =
     /// ""`). Одноимённый ключ ранера (`temperature` из
     /// [`RunConfig::project_config`], `max_turns` и сенсор задачи) override
-    /// перекрывает: строка ранера в `.mark2.toml` не попадает. Пусто — mark2 с
+    /// перекрывает: строка ранера в конфиг не попадает. Пусто — mark2 с
     /// дефолтами; в старых `results.json` поля нет.
     #[serde(default)]
     pub agent_overrides: Vec<String>,
