@@ -6,6 +6,26 @@
 
 ## 2026-11-08
 
+### Гейт инвертирован: незнакомый тул заперт, свобода — только из allowlist
+- `permission::READ_ONLY_TOOLS` (`read`, `grep`) — публичный allowlist:
+  `PermissionPolicy::check` пропускает без гейта только его, всё остальное
+  в `ask_writes` спрашивает, в `read_only` отклоняет. Тулу вне всех списков
+  — свой отказ `unclassified_denial`: «Permission denied: `X` is an
+  unclassified tool, and unclassified tools are locked in this read-only
+  session…» с перечнем свободных тулов. `MUTATING_TOOLS`/`NETWORK_TOOLS` на
+  месте — точные формулировки отказов и разметка промпта. Агентский цикл
+  не отдаёт гейту имена вне реестра: галлюцинированный тул, как и раньше,
+  получает «Unknown tool … Available tools: …», а не вопрос пользователю о
+  несуществующем туле. +6 тестов (ядро 372 → 378).
+  ← Аудит безопасности 2026-11-08, High №4: всё незнакомое считалось
+  читающим, и тул, добавленный в реестр без строчки в `permission.rs`,
+  молча получал свободу в `ask_writes` и в `read_only` (ревьювер
+  `scripts/review.sh`).
+  → Забытая классификация стоит вопроса или отказа, а не тихой дыры;
+  `every_default_registry_tool_is_classified` валится на первом же
+  неклассифицированном туле реестра. Для пяти локальных и двух сетевых
+  тулов решения политики прежние, промпт и определения тулов не менялись.
+
 ### Доводка сетевых тулов по ревью: сбой SearXNG — ошибка, поиск не чаще раза в 2 с
 - `web_search`: пустые `results` при непустом `unresponsive_engines` —
   теперь ошибка тула («Search backend problem: no results and N engines did

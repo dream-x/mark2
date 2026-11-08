@@ -1296,7 +1296,18 @@ impl AgentLoop {
                 }
             }
 
-            match self.config.policy.check(&call.name) {
+            // Гейт — для зарегистрированных тулов. Имя не из реестра
+            // (галлюцинация модели) исполнить нечего: реестр сам ответит
+            // «Unknown tool …» со списком доступных. Без этой развилки
+            // запертый по умолчанию незнакомец (`permission::is_gated`)
+            // спрашивал бы пользователя о несуществующем туле, а в
+            // `read_only` получал бы отказ вместо подсказки.
+            let check = if self.registry.get(&call.name).is_some() {
+                self.config.policy.check(&call.name)
+            } else {
+                PermissionCheck::Allowed
+            };
+            match check {
                 PermissionCheck::Allowed => {}
                 PermissionCheck::Denied { reason } => {
                     self.finish_tool_call(&mut results, call, reason, true);
@@ -3759,29 +3770,139 @@ mod tests {
         );
     }
 
-    /// Неизвестный тул не роняет ход: модель получает список доступных.
+    /// Неизвестный тул не роняет ход: модель получает список доступных — при
+    /// любой политике. Имени нет в реестре, исполнять нечего, поэтому гейт
+    /// его не видит: ни вопроса пользователю в `ask_writes`, ни отказа
+    /// «unclassified» в `read_only` вместо подсказки.
     #[tokio::test]
     async fn unknown_tool_is_reported_to_the_model() {
-        let mut harness = Harness::new(
-            vec![
-                tools_script("", &[("call_1", "browse", json!({"url": "example.com"}))]),
-                text_script("понял"),
-            ],
+        for policy in [
             PermissionPolicy::Yolo,
-            DEFAULT_MAX_TURNS,
-        )
-        .await;
+            PermissionPolicy::AskWrites,
+            PermissionPolicy::ReadOnly,
+        ] {
+            let mut harness = Harness::new(
+                vec![
+                    tools_script("", &[("call_1", "browse", json!({"url": "example.com"}))]),
+                    text_script("понял"),
+                ],
+                policy,
+                DEFAULT_MAX_TURNS,
+            )
+            .await;
 
-        let events = harness.turn("сходи в интернет").await;
-        assert_eq!(stop_reason(&events), StopReason::Completed);
-        let results = tool_results(&events);
-        assert!(results[0].2);
-        assert!(
-            results[0].1.contains("Unknown tool `browse`"),
-            "{}",
-            results[0].1
-        );
-        harness.finish().await;
+            let events = harness.turn("сходи в интернет").await;
+            assert_eq!(stop_reason(&events), StopReason::Completed, "{policy:?}");
+            assert!(
+                !tags(&events).contains(&"approval_required".to_string()),
+                "{policy:?}: {:?}",
+                tags(&events)
+            );
+            let results = tool_results(&events);
+            assert!(results[0].2);
+            assert!(
+                results[0].1.contains("Unknown tool `browse`"),
+                "{policy:?}: {}",
+                results[0].1
+            );
+            harness.finish().await;
+        }
+    }
+
+    /// Тул вне всех списков `permission`: создаёт `marker.txt` — по файлу
+    /// видно, исполнялся ли он.
+    struct UnclassifiedTool;
+
+    #[async_trait]
+    impl crate::tools::Tool for UnclassifiedTool {
+        fn name(&self) -> &str {
+            "touch_marker"
+        }
+        fn description(&self) -> &str {
+            "creates marker.txt"
+        }
+        fn input_schema(&self) -> Value {
+            json!({"type": "object", "properties": {}})
+        }
+        async fn execute(&self, _input: Value, ctx: &ToolCtx) -> crate::tools::ToolOutput {
+            match std::fs::write(ctx.resolve("marker.txt"), "ran") {
+                Ok(()) => crate::tools::ToolOutput::ok("created marker.txt"),
+                Err(error) => crate::tools::ToolOutput::err(error.to_string()),
+            }
+        }
+    }
+
+    /// Зарегистрированный, но не классифицированный тул заперт по умолчанию:
+    /// в `ask_writes` — вопрос (пользователь отказал), в `read_only` — отказ
+    /// «unclassified» без вопроса; в обоих случаях тул не запускался. В
+    /// `yolo` он исполняется — гейт снят целиком.
+    #[tokio::test]
+    async fn registered_unclassified_tool_is_gated_by_default() {
+        for policy in [
+            PermissionPolicy::AskWrites,
+            PermissionPolicy::ReadOnly,
+            PermissionPolicy::Yolo,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let provider = MockProvider::new(vec![
+                tools_script("", &[("call_1", "touch_marker", json!({}))]),
+                text_script("ок"),
+            ]);
+            let (handle, mut events) = Agent::new(
+                provider,
+                ToolRegistry::with_defaults(EditStrategy::SearchReplace)
+                    .with(Box::new(UnclassifiedTool)),
+                AgentConfig::new("mock-model")
+                    .with_policy(policy)
+                    .with_cwd(dir.path()),
+            )
+            .with_system_prompt("s")
+            .spawn();
+
+            handle.submit(Op::user_input("отметься"));
+            let mut seen = Vec::new();
+            loop {
+                let event = tokio::time::timeout(EVENT_TIMEOUT, events.recv())
+                    .await
+                    .expect("таймаут ожидания события")
+                    .expect("канал событий закрыт");
+                if let Event::ApprovalRequired { id, name, .. } = &event {
+                    assert_eq!(name, "touch_marker");
+                    handle.submit(Op::deny(id));
+                }
+                let finished = matches!(event, Event::TurnFinished { .. });
+                seen.push(event);
+                if finished {
+                    break;
+                }
+            }
+            handle.shutdown().await;
+
+            let tags = tags(&seen);
+            let results = tool_results(&seen);
+            let ran = dir.path().join("marker.txt").exists();
+            match policy {
+                PermissionPolicy::AskWrites => {
+                    assert!(tags.contains(&"approval_required".to_string()), "{tags:?}");
+                    assert!(results[0].1.starts_with("Denied by user:"), "{results:?}");
+                }
+                PermissionPolicy::ReadOnly => {
+                    assert!(!tags.contains(&"approval_required".to_string()), "{tags:?}");
+                    assert_eq!(
+                        results[0].1,
+                        permission::unclassified_denial("touch_marker")
+                    );
+                }
+                PermissionPolicy::Yolo => {
+                    assert!(!results[0].2, "{results:?}");
+                    assert!(ran, "в yolo тул исполняется");
+                    continue;
+                }
+            }
+            assert!(results[0].2, "{policy:?}: отказ — ошибка тула");
+            assert!(!tags.contains(&"tool_call_started".to_string()), "{tags:?}");
+            assert!(!ran, "{policy:?}: тул не должен был запуститься");
+        }
     }
 
     /// Сообщения, скрытые от модели, не уходят в запрос, но остаются в истории.

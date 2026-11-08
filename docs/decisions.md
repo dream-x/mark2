@@ -191,6 +191,35 @@
   начнёт сообщать о таком сбое не-2xx статусом — тогда его ловит общая
   ветка «HTTP-статус не успех».
 
+### Гейт по умолчанию: незнакомый тул заперт (allowlist `READ_ONLY_TOOLS`)
+- **Введён:** 2026-11-08 по аудиту безопасности (High №4).
+  `permission::READ_ONLY_TOOLS` (`read`, `grep`) — единственный путь мимо
+  гейта: всё остальное в `ask_writes` спрашивает, в `read_only` отклоняется;
+  тул вне всех списков — отказом `unclassified_denial` («…is an unclassified
+  tool, and unclassified tools are locked in this read-only session…»).
+  `MUTATING_TOOLS`/`NETWORK_TOOLS` остались — ради точных отказов и разметки
+  промпта, гейт на них больше не держится. Имя не из реестра (галлюцинация
+  модели) гейт не видит: исполнять нечего, реестр отвечает «Unknown tool …».
+- **Инцидента нет** — находка аудита: классификация держалась на закрытых
+  списках гейтованных тулов, всё незнакомое считалось читающим. Тул,
+  добавленный в реестр без строчки в `permission.rs`, молча проходил без
+  вопроса в `ask_writes` и в `read_only` (ревьювер `scripts/review.sh`);
+  сетевые тулы попали в список вовремя, но держалось это на памяти автора.
+- **Проверка:** юнит-тесты `permission.rs`
+  (`unclassified_tools_are_gated_by_default`,
+  `ask_writes_frees_only_the_read_only_allowlist`,
+  `read_only_denies_unclassified_tools_as_unclassified`,
+  `classification_lists_are_disjoint`, `every_default_registry_tool_is_classified`
+  — каждый тул реестра при обеих стратегиях `edit` и с `web_search` стоит
+  хотя бы в одном списке) и `agent.rs` (`registered_unclassified_tool_is_gated_by_default`,
+  `unknown_tool_is_reported_to_the_model` под всеми тремя политиками).
+  Проверены мутациями: возврат старого `is_gated` валит 4 теста, гейт для
+  имён вне реестра — 1.
+- **Сигнал снятия:** не снимается (базовое свойство гейта). Пересмотреть
+  форму, когда тулы начнут приходить извне (MCP, плагины): классификацию
+  тогда нести в самом туле, а не в списке имён; запертый дефолт остаётся
+  для тех, кто её не объявил.
+
 ## Отвергнутое
 
 ### Авто-ревьювер внутри agent loop
