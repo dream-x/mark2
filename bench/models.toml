@@ -34,6 +34,14 @@ model = "qwen3.8:27b"
 base_url = "http://white.local:11434/v1"
 timeout_multiplier = 2.5
 
+# Та же модель на самом ноуте (эксперимент «ноут против white», 2026-11-08).
+# Dense 27B на M-серии заметно медленнее 5090 — множитель выше, чем у @white.
+[[models]]
+alias = "qwen27-local"
+model = "qwen3.8:27b"
+base_url = "http://localhost:11434/v1"
+timeout_multiplier = 3.0
+
 # deepseek-v4.1-flash:cloud требует платного плана Ollama Cloud (HTTP 402);
 # gemma4:31b-cloud — облачная модель из Free-плана.
 [[models]]

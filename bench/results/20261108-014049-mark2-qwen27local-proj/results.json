@@ -1,0 +1,553 @@
+{
+  "schema_version": 1,
+  "label": "mark2-qwen27local-proj",
+  "run_id": "20261108-014049-mark2-qwen27local-proj",
+  "started_at": "2026-11-07T22:40:49.944515Z",
+  "finished_at": "2026-11-08T02:50:07.442394Z",
+  "config": {
+    "bench_version": "0.1.0",
+    "mark2": "/Users/maks/projects/mark2/target/release/mark2",
+    "tasks_dir": "/Users/maks/projects/mark2/bench/tasks",
+    "models_file": "/Users/maks/projects/mark2/bench/models.toml",
+    "repeats_override": 2,
+    "verify_timeout_seconds": 30,
+    "warmup_prompt": "Reply with exactly: ok",
+    "project_config": "[agent]\ntemperature = 0.0\n",
+    "agent_overrides": [],
+    "models": [
+      {
+        "alias": "qwen27-local",
+        "model": "qwen3.8:27b",
+        "base_url": "http://localhost:11434/v1",
+        "timeout_multiplier": 3.0
+      }
+    ],
+    "tasks": [
+      {
+        "id": "T17",
+        "slug": "ws-chat",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T17-ws-chat",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project",
+          "frontend",
+          "backend",
+          "hard"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Build a small multi-user chat in the current working directory: a Python\nbackend on aiohttp, a plain JavaScript frontend, and an automated test for\nit. A checker will start your server, talk to it over WebSocket, and drive\nthe page in a headless browser like a real user (typing and clicking).\nFollow the contract below exactly.\n\n## Files\n\n- `server.py`\n- `static/index.html`\n- `static/app.js`\n- `static/style.css`\n- `test_chat.py`\n\n## Server (`server.py`)\n\n- Python 3 with aiohttp. It is started as `python3 server.py` from the\n  working directory and must keep running until it is killed.\n- Port: the `PORT` environment variable, default `8765`. Listen on `0.0.0.0`\n  or `127.0.0.1`: the checker connects to `127.0.0.1`.\n- `GET /` returns `static/index.html`. Every file in `static/` is also served\n  at `/static/<name>`, and `index.html` loads `/static/style.css` and\n  `/static/app.js` from there.\n- The WebSocket endpoint is `/ws` on the same port.\n\n## Protocol\n\nEvery WebSocket message is a text frame holding one JSON object.\n\nClient to server:\n\n- `{\"type\": \"join\", \"nick\": \"<nick>\"}`\n- `{\"type\": \"message\", \"text\": \"<text>\"}`\n\nServer to client:\n\n- `{\"type\": \"history\", \"messages\": [...]}`: sent only to the client that\n  joined, right after its `join`. `messages` holds the last 50 chat messages,\n  oldest first, each in the `message` form below. System notices are not\n  part of the history.\n- `{\"type\": \"system\", \"text\": \"...\"}`: sent to every joined client when a\n  client joins and when a joined client leaves (its WebSocket closes). The\n  text names the nick, e.g. `alice joined`, `alice left`. Whether the joining\n  client also receives its own join notice is up to you.\n- `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}`: when a\n  joined client sends a message, the server broadcasts it to every joined\n  client, the sender included. `nick` is the sender's nick, `ts` is the\n  server time in Unix milliseconds.\n\nA client that is connected but has not joined gets no broadcasts, and its\n`message` frames are ignored.\n\n## Page\n\n- `static/index.html` has elements with exactly these ids: `nick` (text\n  input), `join-btn` (button), `msg` (text input), `send-btn` (button),\n  `messages` (the chat feed).\n- No auto-join. Loading the page must never send `join` by itself, not even\n  with a default or remembered nick: the user joins only by acting. Until\n  then `#nick` and `#join-btn` are visible and enabled, and `#messages` is\n  empty (no placeholder text).\n- Clicking `#join-btn` joins with the nick typed into `#nick`. Pressing Enter\n  in `#nick` does the same.\n- After joining, `#msg` and `#send-btn` are visible and enabled (before\n  joining they may be hidden or disabled). Pressing Enter in `#msg` or\n  clicking `#send-btn` sends the typed text as a message.\n- On join, `#messages` shows the received history. After that, every\n  incoming `message` and `system` notice is appended to `#messages` with its\n  text visible. A message is shown when its broadcast comes back from the\n  server (the sender receives its own broadcast too).\n- The page may open the WebSocket on load or when the user joins.\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet. The checker's browser can reach only your server.\n\n## Test (`test_chat.py`)\n\nWrite your own automated test and ship it with the code:\n\n- It runs as `python3 test_chat.py` from the working directory, needs\n  nothing already running, and finishes within 60 seconds.\n- It starts `server.py` itself as a subprocess (use `sys.executable`), with\n  `PORT` set to a free port it picks, waits until the server accepts\n  connections, and stops the server at the end, also when a check fails.\n- It checks the protocol with real WebSocket clients: join and history,\n  broadcast between two clients, join and leave notices, history for a\n  newcomer.\n- It exits with status 0 only if every check passed, non-zero otherwise.\n\n## Environment\n\n`python3` on your PATH has aiohttp available. It is the same Python the\nchecker uses to run `server.py` and `test_chat.py`, so there is nothing to\ninstall. Do not install packages globally. You may start the server and run\nyour test while you work, but you don't have to. Stop any server you started\nbefore you finish.\n"
+      },
+      {
+        "id": "T24",
+        "slug": "app-freeform",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T24-app-freeform",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 360,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Build a small kanban board web app in the current directory: an aiohttp backend `server.py`, started as `python3 server.py`, that listens on the port from the `PORT` environment variable (default 8770) and serves the page at `/`, and a plain JavaScript frontend with no frameworks, no build step and nothing loaded from the internet. The board has three columns, To Do, Doing and Done, behind a JSON API: `GET /api/cards` returns the list of all cards, each an object `{\"id\": ..., \"title\": ..., \"column\": ...}` with a unique id and the column `todo`, `doing` or `done`; `POST /api/cards` with `{\"title\": ...}` creates a card in `todo` and returns it, or answers 400 when the title is blank; `PATCH /api/cards/<id>` with `{\"column\": ...}` moves the card and returns it, or answers 400 for an unknown column; `DELETE /api/cards/<id>` removes the card; and both of the last two answer 404 for an id that does not exist. Every change is saved, before the server answers, to a JSON file at the path from the `BOARD_FILE` environment variable (default `board.json`; no file yet means an empty board), so the board survives a restart of the server, even a hard kill. The page has a text input `#new-card` and a button `#add-btn` that adds a card with the typed title (pressing Enter in the input does the same), and column elements `#todo`, `#doing` and `#done` that hold one `.card` element per card, showing its title, with the buttons `.move-left` and `.move-right` to move it to the neighbouring column (they may be missing or disabled where there is none) and `.delete`; the page changes the board only through the API, loads it when it opens and always shows it exactly as the server stores it. Write `test_board.py`, an automated test that starts `server.py` itself as a subprocess on a free port with its own temporary `BOARD_FILE`, checks the API, stops the server even when a check fails, finishes within 60 seconds and exits 0 only if everything works, then run it and make it pass. `python3` on your PATH already has aiohttp, so install nothing, and stop the servers you started before you finish, each by the PID of the process you launched — never by matching names with pkill or killall: other processes on this machine are not yours.\n"
+      },
+      {
+        "id": "T25",
+        "slug": "app-planned",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T25-app-planned",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 360,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "# Kanban board web app\n\n## Brief\n\nBuild a small kanban board web app in the current directory: an aiohttp\nbackend, a plain JavaScript page and an automated test. The board has three\ncolumns, To Do, Doing and Done; cards can be added, moved between columns and\ndeleted, and the board is kept in a JSON file, so it survives a restart.\n\n## Requirements\n\n### Server\n\n- `server.py`, on aiohttp, started as `python3 server.py`.\n- Port: the `PORT` environment variable, default `8770`.\n- Serves the page at `/`.\n\n### JSON API\n\n- `GET /api/cards` returns the list of all cards. A card is an object\n  `{\"id\": ..., \"title\": ..., \"column\": ...}`: the id is unique, the column is\n  `todo`, `doing` or `done`.\n- `POST /api/cards` with `{\"title\": ...}` creates a card in `todo` and returns\n  it. A blank title: 400.\n- `PATCH /api/cards/<id>` with `{\"column\": ...}` moves the card and returns it.\n  An unknown column: 400.\n- `DELETE /api/cards/<id>` removes the card.\n- `PATCH` and `DELETE` answer 404 for an id that does not exist.\n\n### Storage\n\n- Every change is saved, before the server answers, to a JSON file at the\n  path from the `BOARD_FILE` environment variable, default `board.json`.\n- No file yet means an empty board.\n- The board survives a restart of the server, even a hard kill.\n\n### Page\n\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet.\n- A text input `#new-card` and a button `#add-btn` that adds a card with the\n  typed title. Pressing Enter in the input does the same.\n- Column elements `#todo`, `#doing` and `#done`, holding one `.card` element\n  per card.\n- Each `.card` shows its title and has the buttons `.move-left` and\n  `.move-right` (move it to the neighbouring column; they may be missing or\n  disabled where there is none) and `.delete`.\n- The page changes the board only through the API, loads it when it opens and\n  always shows it exactly as the server stores it.\n\n### Test: `test_board.py`\n\n- Starts `server.py` itself as a subprocess on a free port with its own\n  temporary `BOARD_FILE`.\n- Checks the API.\n- Stops the server, even when a check fails.\n- Finishes within 60 seconds and exits 0 only if everything works.\n- You run it and make it pass.\n\n### Environment\n\n- `python3` on your PATH already has aiohttp: install nothing.\n- Stop the servers you started before you finish, each by the PID of the\n  process you launched — never by matching names with pkill or killall: other\n  processes on this machine are not yours.\n\n## Plan\n\nWork in this order and finish each step before the next.\n\n1. **Server and storage.** Write `server.py`: the port, the board loaded from\n   `BOARD_FILE`, the four API routes with their 400 and 404 answers, a save on\n   every change.\n2. **Check the API by hand.** Start the server with a temporary `BOARD_FILE`\n   and walk the API: create, a blank title, move, an unknown column, delete,\n   an unknown id. Kill the server with SIGKILL, start it again on the same\n   `BOARD_FILE` and confirm that the board is unchanged.\n3. **Page.** Serve it at `/` with the required ids and classes. It loads the\n   board when it opens; adding (button and Enter), moving left and right and\n   deleting go through the API; after every action the page shows the board as\n   the server stores it.\n4. **Test.** Write `test_board.py` as required above.\n5. **Run and fix.** Run `python3 test_board.py` until it passes, then go\n   through the Definition of Done item by item and fix what fails.\n6. **Clean up.** Stop every server you started.\n\n## TODO\n\n- [ ] `server.py` starts with `python3 server.py`, port from `PORT` (default 8770)\n- [ ] `GET /` serves the page\n- [ ] `GET /api/cards`\n- [ ] `POST /api/cards`, 400 for a blank title\n- [ ] `PATCH /api/cards/<id>`, 400 for an unknown column, 404 for an unknown id\n- [ ] `DELETE /api/cards/<id>`, 404 for an unknown id\n- [ ] Board saved to `BOARD_FILE` on every change, before answering; loaded at start; no file means an empty board\n- [ ] Page: `#new-card` and `#add-btn`, Enter adds too\n- [ ] Page: `#todo`, `#doing`, `#done` with one `.card` per card: title, `.move-left`, `.move-right`, `.delete`\n- [ ] Page: loads the board on open, changes it only through the API, always shows it as the server stores it\n- [ ] `test_board.py` written, run, passing\n- [ ] Every Definition of Done item checked\n- [ ] Every server you started is stopped\n\n## Definition of Done\n\nThe task is done when all of the following hold.\n\nAPI and storage, with the server started on a `BOARD_FILE` that does not exist yet:\n\n1. `GET /` answers 200 with the page; `GET /api/cards` answers 200 with `[]`.\n2. `POST /api/cards` with a title answers 2xx with the new card: an id, the\n   same title, the column `todo`. Three cards get three different ids, and\n   `GET /api/cards` lists all three in `todo`.\n3. `POST /api/cards` with the title `\"\"` or `\"   \"` answers 400 and creates\n   nothing.\n4. `PATCH /api/cards/<id>` to any of the three columns answers 2xx with the\n   card in that column, and `GET /api/cards` agrees. With\n   `{\"column\": \"archive\"}` it answers 400 and the card stays where it was.\n5. `DELETE /api/cards/<id>` answers 2xx, and the card is gone from\n   `GET /api/cards`.\n6. `PATCH` and `DELETE` of an id that does not exist, or no longer exists,\n   answer 404.\n7. After a change the file at `BOARD_FILE` exists and holds valid JSON.\n8. Killed with SIGKILL right after a change and started again on the same\n   `BOARD_FILE`, the server returns exactly the same cards: ids, titles,\n   columns. A card created after the restart gets an id no other card has, and\n   it survives the next SIGKILL and restart as well.\n\nPage, in a real browser, typing and clicking like a user:\n\n9. Cards that are already stored show up when the page opens, each as one\n   `.card` in its column (`#todo`, `#doing`, `#done`).\n10. Typing a title into `#new-card` and pressing Enter adds the card to\n    `#todo`, on the page and on the server. Typing a title and clicking\n    `#add-btn` does the same.\n11. Clicking `#add-btn` with an empty or blank title adds nothing, neither on\n    the page nor on the server.\n12. `.move-right` on a card in `#todo` moves it to `#doing`, once more to\n    `#done`; `.move-left` on it in `#done` moves it back to `#doing`. After\n    each click the card is in exactly one column on the page, and the server\n    has it in the same column.\n13. `.delete` removes the card from the page and from the server.\n14. The page never shows more or fewer cards than the server has. Reloading\n    it, or opening it in a second browser, shows the same board.\n\nTest:\n\n15. `python3 test_board.py`, with nothing running beforehand, exits 0 within\n    60 seconds and leaves no server running.\n16. If `server.py` cannot start (say, it exits at once), `python3 test_board.py`\n    exits non-zero.\n"
+      },
+      {
+        "id": "T26",
+        "slug": "chat-freeform",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T26-chat-freeform",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "Build a small multi-user chat in the current working directory: a Python backend `server.py` on aiohttp, a plain JavaScript frontend in `static/index.html`, `static/app.js` and `static/style.css`, and an automated test `test_chat.py`; a checker will start your server, talk to it over WebSocket and drive the page in a headless browser like a real user (typing and clicking), so follow this contract exactly. The server is started as `python3 server.py` from the working directory and must keep running until it is killed; it listens on the port from the `PORT` environment variable, default `8765`, on `0.0.0.0` or `127.0.0.1` (the checker connects to `127.0.0.1`), `GET /` returns `static/index.html`, every file in `static/` is also served at `/static/<name>`, `index.html` loads `/static/style.css` and `/static/app.js` from there, and the WebSocket endpoint is `/ws` on the same port. Every WebSocket message is a text frame holding one JSON object: a client sends `{\"type\": \"join\", \"nick\": \"<nick>\"}` and `{\"type\": \"message\", \"text\": \"<text>\"}`, and a client that is connected but has not joined gets no broadcasts and its `message` frames are ignored. The server sends `{\"type\": \"history\", \"messages\": [...]}` only to the client that joined, right after its `join`, with the last 50 chat messages, oldest first, each in the `message` form below (system notices are not part of the history); it sends `{\"type\": \"system\", \"text\": \"...\"}` to every joined client when a client joins and when a joined client leaves (its WebSocket closes), with a text that names the nick, e.g. `alice joined`, `alice left` (whether the joining client also receives its own join notice is up to you); and when a joined client sends a message it broadcasts `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}` to every joined client, the sender included, where `nick` is the sender's nick and `ts` is the server time in Unix milliseconds. `static/index.html` has elements with exactly these ids: `nick` (text input), `join-btn` (button), `msg` (text input), `send-btn` (button) and `messages` (the chat feed), and there is no auto-join: loading the page must never send `join` by itself, not even with a default or remembered nick, the user joins only by acting, and until then `#nick` and `#join-btn` are visible and enabled and `#messages` is empty (no placeholder text). Clicking `#join-btn` joins with the nick typed into `#nick`, and pressing Enter in `#nick` does the same; after joining, `#msg` and `#send-btn` are visible and enabled (before joining they may be hidden or disabled), and pressing Enter in `#msg` or clicking `#send-btn` sends the typed text as a message. On join `#messages` shows the received history, after that every incoming `message` and `system` notice is appended to `#messages` with its text visible, and a message is shown when its broadcast comes back from the server (the sender receives its own broadcast too); the page may open the WebSocket on load or when the user joins, and it is plain JavaScript with no frameworks, no build step and nothing loaded from the internet, because the checker's browser can reach only your server. Write your own automated test `test_chat.py` and ship it with the code: it runs as `python3 test_chat.py` from the working directory, needs nothing already running and finishes within 60 seconds; it starts `server.py` itself as a subprocess (use `sys.executable`) with `PORT` set to a free port it picks, waits until the server accepts connections, and stops the server at the end, also when a check fails; it checks the protocol with real WebSocket clients (join and history, broadcast between two clients, join and leave notices, history for a newcomer), and it exits with status 0 only if every check passed, non-zero otherwise. `python3` on your PATH has aiohttp available and is the same Python the checker uses to run `server.py` and `test_chat.py`, so there is nothing to install: do not install packages globally; you may start the server and run your test while you work, and stop the servers you started before you finish, each by the PID of the process you launched — never by matching names with pkill or killall: other processes on this machine are not yours.\n"
+      },
+      {
+        "id": "T27",
+        "slug": "chat-planned",
+        "dir": "/Users/maks/projects/mark2/bench/tasks/T27-chat-planned",
+        "timeout_seconds": 1800,
+        "repeats": 2,
+        "tags": [
+          "project"
+        ],
+        "policy": "yolo",
+        "context_limit": null,
+        "max_turns": 80,
+        "verify_timeout_seconds": 300,
+        "uitest_env": true,
+        "post_edit_command": null,
+        "post_edit_timeout_seconds": null,
+        "prompt": "# Multi-user WebSocket chat\n\n## Brief\n\nBuild a small multi-user chat in the current working directory: a Python\nbackend on aiohttp, a plain JavaScript frontend and an automated test. Users\nopen the page, join under the nick they type and exchange messages over a\nWebSocket; a newcomer sees the recent history. A checker will start your\nserver, talk to it over WebSocket, and drive the page in a headless browser\nlike a real user (typing and clicking). Follow the requirements below exactly.\n\n## Requirements\n\n### Files\n\n- `server.py`\n- `static/index.html`\n- `static/app.js`\n- `static/style.css`\n- `test_chat.py`\n\n### Server: `server.py`\n\n- Python 3 with aiohttp. It is started as `python3 server.py` from the working\n  directory and must keep running until it is killed.\n- Port: the `PORT` environment variable, default `8765`. Listen on `0.0.0.0`\n  or `127.0.0.1`: the checker connects to `127.0.0.1`.\n- `GET /` returns `static/index.html`. Every file in `static/` is also served\n  at `/static/<name>`, and `index.html` loads `/static/style.css` and\n  `/static/app.js` from there.\n- The WebSocket endpoint is `/ws` on the same port.\n\n### Protocol\n\nEvery WebSocket message is a text frame holding one JSON object.\n\nClient to server:\n\n- `{\"type\": \"join\", \"nick\": \"<nick>\"}`\n- `{\"type\": \"message\", \"text\": \"<text>\"}`\n\nServer to client:\n\n- `{\"type\": \"history\", \"messages\": [...]}`: sent only to the client that\n  joined, right after its `join`. `messages` holds the last 50 chat messages,\n  oldest first, each in the `message` form below. System notices are not part\n  of the history.\n- `{\"type\": \"system\", \"text\": \"...\"}`: sent to every joined client when a\n  client joins and when a joined client leaves (its WebSocket closes). The\n  text names the nick, e.g. `alice joined`, `alice left`. Whether the joining\n  client also receives its own join notice is up to you.\n- `{\"type\": \"message\", \"nick\": \"...\", \"text\": \"...\", \"ts\": <number>}`: when a\n  joined client sends a message, the server broadcasts it to every joined\n  client, the sender included. `nick` is the sender's nick, `ts` is the server\n  time in Unix milliseconds.\n\nA client that is connected but has not joined gets no broadcasts, and its\n`message` frames are ignored.\n\n### Page\n\n- `static/index.html` has elements with exactly these ids: `nick` (text\n  input), `join-btn` (button), `msg` (text input), `send-btn` (button),\n  `messages` (the chat feed).\n- No auto-join. Loading the page must never send `join` by itself, not even\n  with a default or remembered nick: the user joins only by acting. Until then\n  `#nick` and `#join-btn` are visible and enabled, and `#messages` is empty\n  (no placeholder text).\n- Clicking `#join-btn` joins with the nick typed into `#nick`. Pressing Enter\n  in `#nick` does the same.\n- After joining, `#msg` and `#send-btn` are visible and enabled (before\n  joining they may be hidden or disabled). Pressing Enter in `#msg` or\n  clicking `#send-btn` sends the typed text as a message.\n- On join, `#messages` shows the received history. After that, every incoming\n  `message` and `system` notice is appended to `#messages` with its text\n  visible. A message is shown when its broadcast comes back from the server\n  (the sender receives its own broadcast too).\n- The page may open the WebSocket on load or when the user joins.\n- Plain JavaScript: no frameworks, no build step, nothing loaded from the\n  internet. The checker's browser can reach only your server.\n\n### Test: `test_chat.py`\n\nWrite your own automated test and ship it with the code:\n\n- It runs as `python3 test_chat.py` from the working directory, needs nothing\n  already running, and finishes within 60 seconds.\n- It starts `server.py` itself as a subprocess (use `sys.executable`), with\n  `PORT` set to a free port it picks, waits until the server accepts\n  connections, and stops the server at the end, also when a check fails.\n- It checks the protocol with real WebSocket clients: join and history,\n  broadcast between two clients, join and leave notices, history for a\n  newcomer.\n- It exits with status 0 only if every check passed, non-zero otherwise.\n\n### Environment\n\n- `python3` on your PATH has aiohttp available. It is the same Python the\n  checker uses to run `server.py` and `test_chat.py`, so there is nothing to\n  install. Do not install packages globally.\n- You may start the server and run your test while you work. Stop the servers\n  you started before you finish, each by the PID of the process you launched —\n  never by matching names with pkill or killall: other processes on this\n  machine are not yours.\n\n## Plan\n\nWork in this order and finish each step before the next.\n\n1. **Server.** Write `server.py`: the port, `GET /` and `/static/<name>`, the\n   `/ws` endpoint. On `join`: `history` to the joining client, a `system`\n   notice to every joined client. On `message` from a joined client: the\n   broadcast to every joined client, the sender included. On a joined\n   client's disconnect: the leave notice. Clients that have not joined get\n   nothing and are not heard.\n2. **Test.** Write `test_chat.py` as required above: it starts the server on a\n   free port, checks join and history, broadcast between two clients, join and\n   leave notices and history for a newcomer, and stops the server whatever\n   happens.\n3. **Run and fix the server.** Run `python3 test_chat.py` until it passes.\n4. **Page.** Write `static/index.html`, `static/app.js` and `static/style.css`:\n   the five ids, join by click and by Enter, send by click and by Enter, the\n   history on join and every incoming `message` and `system` notice appended\n   to `#messages`.\n5. **Walk the page as a user.** The checker uses the page in a real browser,\n   so go through `static/app.js` step by step the way a user meets it: the\n   page loads and nobody touches it; a nick is typed and Enter is pressed; a\n   message is typed and Enter is pressed; another one is typed and\n   `#send-btn` is clicked; a second user opens the page, types a nick and\n   clicks `#join-btn`. After each step the page and the server must be in the\n   state the Page requirements describe.\n6. **Check the Definition of Done.** Go through it item by item and fix what\n   fails.\n7. **Clean up.** Stop every server you started.\n\n## TODO\n\n- [ ] `server.py` starts with `python3 server.py`, port from `PORT` (default 8765), keeps running until killed\n- [ ] `GET /` serves `static/index.html`; every file in `static/` is served at `/static/<name>`\n- [ ] `/ws`: `join` gets `history` (the last 50 chat messages, oldest first, no system notices), sent only to the joining client\n- [ ] `system` notice naming the nick to every joined client on a join and on a leave\n- [ ] `message` broadcast to every joined client, the sender included, with `nick` and `ts` (Unix milliseconds)\n- [ ] A client that has not joined gets no broadcasts, and its `message` frames are ignored\n- [ ] Page: ids `nick`, `join-btn`, `msg`, `send-btn`, `messages`\n- [ ] Page: no auto-join; before joining `#nick` and `#join-btn` are visible and enabled, `#messages` is empty\n- [ ] Page: join by clicking `#join-btn` or pressing Enter in `#nick`\n- [ ] Page: after joining, `#msg` and `#send-btn` are visible and enabled; send by pressing Enter in `#msg` or clicking `#send-btn`\n- [ ] Page: history on join, then every incoming `message` and `system` notice appended to `#messages`\n- [ ] Page: plain JavaScript, no frameworks, no build step, nothing loaded from the internet\n- [ ] `test_chat.py` written, run, passing\n- [ ] Every Definition of Done item checked\n- [ ] Every server you started is stopped\n\n## Definition of Done\n\nThe task is done when all of the following hold.\n\n1. `server.py`, `static/index.html`, `static/app.js`, `static/style.css` and\n   `test_chat.py` exist in the working directory.\n\nProtocol, with the server started as `python3 server.py` and `PORT` set to a\nfree port:\n\n2. The server answers HTTP on `127.0.0.1` at that port and keeps running.\n3. A client that opens a WebSocket at `/ws` and sends `join` receives a\n   `history` frame; on a fresh server its `messages` is empty.\n4. When a second client joins, it receives its own `history`, and the first\n   client receives a `system` notice whose text names the second client's\n   nick.\n5. A `message` sent by a joined client reaches every joined client, the sender\n   included, as a `message` frame with the sender's `nick`, the same `text`\n   and a `ts` that is a positive number.\n6. When a joined client's WebSocket closes, the joined clients that remain\n   receive a `system` notice that names its nick.\n7. A client that joins later receives in its `history` exactly the chat\n   messages sent so far, oldest first, each with its `nick`, `text` and `ts`,\n   and no system notices.\n8. After more than 50 chat messages, many of them sent in a quick burst, every\n   one of them is broadcast, and a newcomer's `history` holds exactly the last\n   50, oldest first.\n\nPage, in a real browser that can reach only your server, typing and clicking\nlike a user:\n\n9. `GET /` answers 200 with a page that has elements with the ids `nick`,\n   `join-btn`, `msg`, `send-btn` and `messages`.\n10. Left alone after it loads, the page joins nobody: the server announces no\n    join and no message, `#messages` is empty, `#nick` is visible and\n    editable, `#join-btn` is visible and enabled.\n11. Typing a nick into `#nick` and pressing Enter joins under that nick: the\n    other joined clients receive a `system` notice that names it.\n12. Typing a text into `#msg` and pressing Enter sends it: every joined client\n    receives its broadcast with the page's nick, and the text appears in the\n    page's own `#messages`.\n13. Typing a text into `#msg` and clicking `#send-btn` does the same.\n14. On a second page, typing a nick into `#nick` and clicking `#join-btn`\n    joins: its `#messages` shows the texts of the messages sent before, and\n    the first page's `#messages` shows a notice that names the newcomer.\n15. A message sent from the second page appears in the first page's\n    `#messages`.\n\nTest:\n\n16. `python3 test_chat.py`, with nothing running beforehand, exits 0 within 60\n    seconds and leaves no server running.\n"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T17",
+      "repeat": 1,
+      "started_at": "2026-11-07T22:40:51.054039Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 5400.007856125,
+      "timeout_seconds": 5400.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 0,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer C own test_chat.py]: `python3 test_chat.py` exited with code 1; its output:\nFAIL: alice sees bob join notice\nFAIL: alice receives own broadcast\nFAIL: bob receives alice's message\nFAIL: message has integer ts\nPASS: unjoined client receives no broadcasts\nFAIL: unjoined client's message is ignored\nFAIL: bob sees alice left notice\nPASS: dave receives history on join\nPASS: newcomer history contains earlier message\nPASS: history contains only messages, no system notices\n\n6 check(s) failed: alice sees bob join notice, alice receives own broadcast, bob receives alice's message, message has integer ts, unjoined client's message is ignored, bob sees alice left notice\n"
+      },
+      "answer_chars": 830,
+      "stdout_path": "logs/qwen27-local/T17/1.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T17/1.stderr.txt",
+      "session_path": "sessions/qwen27-local/T17/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T17",
+      "repeat": 2,
+      "started_at": "2026-11-08T00:10:56.65413Z",
+      "pass": false,
+      "exit_code": null,
+      "timed_out": true,
+      "wall_time_seconds": 5400.004743875,
+      "timeout_seconds": 5400.0,
+      "tokens": null,
+      "session": {
+        "assistant_messages": 0,
+        "tool_uses": 0,
+        "tool_errors": 0,
+        "compactions": 0,
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 2,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": null,
+        "compactions": 0,
+        "tool_errors": 2
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): FAIL\n",
+        "stderr": "FAIL [layer C own test_chat.py]: `python3 test_chat.py` exited with code 1; its output:\n  FAIL: bob receives alice's broadcast\n  FAIL: bob sees correct text\n  ok: carol receives history first\n  ok: newcomer history contains earlier message\n  ok: alice gets a system notice on leave\n  FAIL: leave notice names carol and says left\n  FAIL: bob gets a system notice on leave\n  FAIL: bob's leave notice names carol\n  ok: unjoined client receives no broadcast\n  FAIL: unjoined client's message is ignored\n\n10 check(s) failed: alice receives her own broadcast, broadcast nick is alice, broadcast text matches, broadcast ts is an int (ms), bob receives alice's broadcast, bob sees correct text, leave notice names carol and says left, bob gets a system notice on leave, bob's leave notice names carol, unjoined client's message is ignored\n"
+      },
+      "answer_chars": 860,
+      "stdout_path": "logs/qwen27-local/T17/2.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T17/2.stderr.txt",
+      "session_path": "sessions/qwen27-local/T17/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T24",
+      "repeat": 1,
+      "started_at": "2026-11-08T01:41:02.757936Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 368.015697583,
+      "timeout_seconds": 5400.0,
+      "tokens": {
+        "input": 126616,
+        "output": 10672,
+        "cached": 113145
+      },
+      "session": {
+        "assistant_messages": 18,
+        "tool_uses": 17,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 2,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): PASS\nT24 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 2915,
+      "stdout_path": "logs/qwen27-local/T24/1.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T24/1.stderr.txt",
+      "session_path": "sessions/qwen27-local/T24/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T24",
+      "repeat": 2,
+      "started_at": "2026-11-08T01:47:25.251371Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 472.540502542,
+      "timeout_seconds": 5400.0,
+      "tokens": {
+        "input": 42388,
+        "output": 14766,
+        "cached": 33373
+      },
+      "session": {
+        "assistant_messages": 8,
+        "tool_uses": 7,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T24 layer A (api): PASS\nT24 layer B (ui): PASS\nT24 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 2179,
+      "stdout_path": "logs/qwen27-local/T24/2.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T24/2.stderr.txt",
+      "session_path": "sessions/qwen27-local/T24/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T25",
+      "repeat": 1,
+      "started_at": "2026-11-08T01:55:37.190701Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 248.119576375,
+      "timeout_seconds": 5400.0,
+      "tokens": {
+        "input": 112575,
+        "output": 7125,
+        "cached": 97632
+      },
+      "session": {
+        "assistant_messages": 13,
+        "tool_uses": 12,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): PASS\nT25 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 2468,
+      "stdout_path": "logs/qwen27-local/T25/1.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T25/1.stderr.txt",
+      "session_path": "sessions/qwen27-local/T25/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T25",
+      "repeat": 2,
+      "started_at": "2026-11-08T02:00:04.830315Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 236.819095583,
+      "timeout_seconds": 5400.0,
+      "tokens": {
+        "input": 71887,
+        "output": 5965,
+        "cached": 58495
+      },
+      "session": {
+        "assistant_messages": 10,
+        "tool_uses": 9,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T25 layer A (api): PASS\nT25 layer B (ui): PASS\nT25 layer C (own test_board.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 2246,
+      "stdout_path": "logs/qwen27-local/T25/2.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T25/2.stderr.txt",
+      "session_path": "sessions/qwen27-local/T25/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T26",
+      "repeat": 1,
+      "started_at": "2026-11-08T02:04:21.08807Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 1272.842846083,
+      "timeout_seconds": 5400.0,
+      "tokens": {
+        "input": 290261,
+        "output": 33058,
+        "cached": 271702
+      },
+      "session": {
+        "assistant_messages": 27,
+        "tool_uses": 26,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 4044,
+      "stdout_path": "logs/qwen27-local/T26/1.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T26/1.stderr.txt",
+      "session_path": "sessions/qwen27-local/T26/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T26",
+      "repeat": 2,
+      "started_at": "2026-11-08T02:25:39.714218Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 456.460904,
+      "timeout_seconds": 5400.0,
+      "tokens": {
+        "input": 112928,
+        "output": 9315,
+        "cached": 101057
+      },
+      "session": {
+        "assistant_messages": 17,
+        "tool_uses": 16,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 2453,
+      "stdout_path": "logs/qwen27-local/T26/2.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T26/2.stderr.txt",
+      "session_path": "sessions/qwen27-local/T26/2.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T27",
+      "repeat": 1,
+      "started_at": "2026-11-08T02:33:22.75468Z",
+      "pass": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 452.536442958,
+      "timeout_seconds": 5400.0,
+      "tokens": {
+        "input": 261854,
+        "output": 11019,
+        "cached": 239448
+      },
+      "session": {
+        "assistant_messages": 22,
+        "tool_uses": 21,
+        "tool_errors": 0,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 1,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 0
+      },
+      "verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): PASS\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": ""
+      },
+      "answer_chars": 3128,
+      "stdout_path": "logs/qwen27-local/T27/1.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T27/1.stderr.txt",
+      "session_path": "sessions/qwen27-local/T27/1.jsonl",
+      "error": null
+    },
+    {
+      "model": "qwen27-local",
+      "model_id": "qwen3.8:27b",
+      "task": "T27",
+      "repeat": 2,
+      "started_at": "2026-11-08T02:41:00.47685Z",
+      "pass": false,
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_seconds": 536.469622458,
+      "timeout_seconds": 5400.0,
+      "tokens": {
+        "input": 224224,
+        "output": 10423,
+        "cached": 202772
+      },
+      "session": {
+        "assistant_messages": 20,
+        "tool_uses": 21,
+        "tool_errors": 1,
+        "compactions": 0,
+        "stop_reason": "completed",
+        "skipped_lines": 0
+      },
+      "harness": {
+        "nudges_write_churn": 0,
+        "nudges_loop_detection": 0,
+        "post_edit_failures": 0,
+        "coerced": 0,
+        "compactions": 0,
+        "tool_errors": 1
+      },
+      "verify": {
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout": "T17 layer A (protocol): PASS\nT17 layer B (ui): FAIL\nT17 layer C (own test_chat.py): PASS\n",
+        "stderr": "FAIL [layer B ui]: page 1: typing a nick into #nick and pressing Enter did not join: probe9851cc expected a `system` notice that ann9851cc joined within 5 s; received instead: nothing\n  page errors: pageerror: Failed to execute 'send' on 'WebSocket': Still in CONNECTING state.; console.error: WebSocket connection to 'ws://127.0.0.1:56708/ws//127.0.0.1:56708/ws' failed: Error during WebSocket handshake: Unexpected response code: 404\n"
+      },
+      "answer_chars": 2702,
+      "stdout_path": "logs/qwen27-local/T27/2.stdout.txt",
+      "stderr_path": "logs/qwen27-local/T27/2.stderr.txt",
+      "session_path": "sessions/qwen27-local/T27/2.jsonl",
+      "error": null
+    }
+  ]
+}
