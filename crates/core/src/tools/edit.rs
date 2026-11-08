@@ -8,12 +8,22 @@
 //!
 //! Оба формата работают только с существующим файлом: создание — это `write`, и
 //! ошибка прямо на это указывает.
+//!
+//! Правится только внутри cwd: путь проходит тот же замок мутирующих тулов,
+//! что у `write` (`tools::confine`), — наружу ни абсолютным путём, ни `..`, ни
+//! симлинком; симлинк внутри, ведущий внутрь, правит свою цель. Путь снаружи
+//! отбивается явным «outside the working directory» ещё до проверки
+//! существования: «File not found … create it with `write`» для него было бы
+//! ложной подсказкой.
+
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::confine::{self, Target};
 use super::{Tool, ToolCtx, ToolOutput, input_schema_for};
 
 /// Формат правки файла.
@@ -80,7 +90,7 @@ impl std::str::FromStr for EditStrategy {
 /// Аргументы `edit` в режиме [`EditStrategy::SearchReplace`].
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SearchReplaceInput {
-    /// Path to an existing file, absolute or relative to the working directory.
+    /// Path to an existing file inside the working directory, relative or absolute.
     pub path: String,
     /// Exact text to find, copied verbatim from the file including indentation.
     /// It must match exactly once unless `replace_all` is true.
@@ -95,7 +105,7 @@ pub struct SearchReplaceInput {
 /// Аргументы `edit` в режиме [`EditStrategy::WholeFile`].
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct WholeFileInput {
-    /// Path to an existing file, absolute or relative to the working directory.
+    /// Path to an existing file inside the working directory, relative or absolute.
     pub path: String,
     /// Complete new contents of the file, not a fragment or a diff.
     pub content: String,
@@ -145,8 +155,8 @@ impl EditTool {
             );
         }
 
-        let contents = match read_existing(&path, ctx).await {
-            Ok(contents) => contents,
+        let (target, contents) = match read_existing(&input.path, ctx).await {
+            Ok(existing) => existing,
             Err(output) => return output,
         };
 
@@ -173,7 +183,7 @@ impl EditTool {
             contents.replacen(&input.old_string, &input.new_string, 1)
         };
 
-        match tokio::fs::write(&path, updated.as_bytes()).await {
+        match tokio::fs::write(&target, updated.as_bytes()).await {
             Ok(()) => {
                 let replaced = if replace_all { matches } else { 1 };
                 let plural = if replaced == 1 { "" } else { "s" };
@@ -199,8 +209,8 @@ impl EditTool {
         let path = ctx.resolve(&input.path);
         let display = path.display();
 
-        let contents = match read_existing(&path, ctx).await {
-            Ok(contents) => contents,
+        let (target, contents) = match read_existing(&input.path, ctx).await {
+            Ok(existing) => existing,
             Err(output) => return output,
         };
 
@@ -214,7 +224,7 @@ impl EditTool {
         let before = contents.len();
         let after = input.content.len();
 
-        match tokio::fs::write(&path, input.content.as_bytes()).await {
+        match tokio::fs::write(&target, input.content.as_bytes()).await {
             Ok(()) => ToolOutput::ok(format!("Rewrote {display} ({after} bytes, was {before})")),
             Err(error) => ToolOutput::err(format!("Cannot write {display}: {error}")),
         }
@@ -257,22 +267,36 @@ impl Tool for EditTool {
     }
 }
 
-/// Прочитать файл, который обязан существовать; иначе — готовая ошибка модели.
-async fn read_existing(path: &std::path::Path, ctx: &ToolCtx) -> Result<String, ToolOutput> {
-    let display = path.display();
-    match tokio::fs::read(path).await {
-        Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(ToolOutput::err(format!(
-                "File not found: {display}. `edit` only changes existing files — \
+/// Пропустить `requested` через замок мутирующих тулов и прочитать файл,
+/// который обязан существовать; иначе — готовая ошибка модели. Отдаёт
+/// резолвленный путь — писать правку нужно по нему, — и содержимое.
+async fn read_existing(requested: &str, ctx: &ToolCtx) -> Result<(PathBuf, String), ToolOutput> {
+    // В текстах — путь, как его видит модель, а не резолвленный.
+    let display_path = ctx.resolve(requested);
+    let display = display_path.display();
+    let not_found = || {
+        ToolOutput::err(format!(
+            "File not found: {display}. `edit` only changes existing files — \
              create it with the `write` tool, or check the path \
              (relative paths resolve against {}).",
-                ctx.cwd.display()
-            )))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::IsADirectory => Err(ToolOutput::err(
-            format!("{display} is a directory, not a file."),
-        )),
+            ctx.cwd.display()
+        ))
+    };
+    let is_a_directory = || ToolOutput::err(format!("{display} is a directory, not a file."));
+
+    let Target { path, metadata } = confine::resolve_target("edit", ctx, requested)
+        .await
+        .map_err(ToolOutput::err)?;
+    match &metadata {
+        None => return Err(not_found()),
+        Some(metadata) if metadata.is_dir() => return Err(is_a_directory()),
+        Some(_) => {}
+    }
+
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => Ok((path, String::from_utf8_lossy(&bytes).into_owned())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(not_found()),
+        Err(error) if error.kind() == std::io::ErrorKind::IsADirectory => Err(is_a_directory()),
         Err(error) => Err(ToolOutput::err(format!("Cannot read {display}: {error}"))),
     }
 }
@@ -566,6 +590,136 @@ mod tests {
         .await;
         assert!(out.is_error);
         assert!(out.content.contains("identical"), "{}", out.content);
+    }
+
+    /// `parent/work` — cwd; `parent/secret.rs` — снаружи.
+    fn sandbox() -> (TempDir, ToolCtx) {
+        let parent = TempDir::new().unwrap();
+        std::fs::create_dir(parent.path().join("work")).unwrap();
+        std::fs::write(parent.path().join("secret.rs"), "fn secret() {}\n").unwrap();
+        let ctx = ToolCtx::new(parent.path().join("work"));
+        (parent, ctx)
+    }
+
+    fn assert_outside(out: &ToolOutput, requested: &str) {
+        assert!(out.is_error, "{}", out.content);
+        assert!(
+            out.content.starts_with(&format!(
+                "Path {requested} is outside the working directory"
+            )),
+            "{}",
+            out.content
+        );
+        assert!(
+            out.content
+                .contains("`edit` only changes files inside the working directory"),
+            "{}",
+            out.content
+        );
+    }
+
+    /// Оба формата правки: `..`, абсолютный путь наружу и путь снаружи,
+    /// которого нет, — явное «outside», а не «File not found … use `write`».
+    #[tokio::test]
+    async fn paths_outside_the_cwd_are_refused_in_both_strategies() {
+        let (parent, ctx) = sandbox();
+        let absolute = parent.path().join("secret.rs");
+        let absolute = absolute.to_str().unwrap();
+        for requested in [
+            "../secret.rs",
+            absolute,
+            "../missing.rs",
+            "ghost/../../secret.rs",
+        ] {
+            let out = tool()
+                .execute(
+                    json!({"path": requested, "old_string": "secret", "new_string": "pwned"}),
+                    &ctx,
+                )
+                .await;
+            assert_outside(&out, requested);
+
+            let out = EditTool::new(EditStrategy::WholeFile)
+                .execute(json!({"path": requested, "content": "pwned"}), &ctx)
+                .await;
+            assert_outside(&out, requested);
+        }
+        assert_eq!(
+            std::fs::read_to_string(parent.path().join("secret.rs")).unwrap(),
+            "fn secret() {}\n"
+        );
+        assert!(!parent.path().join("missing.rs").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlinks_pointing_outside_are_refused() {
+        use std::os::unix::fs::symlink;
+        let (parent, ctx) = sandbox();
+        symlink(parent.path().join("secret.rs"), ctx.cwd.join("notes.rs")).unwrap();
+        symlink(parent.path(), ctx.cwd.join("up")).unwrap();
+        for requested in ["notes.rs", "up/secret.rs"] {
+            let out = tool()
+                .execute(
+                    json!({"path": requested, "old_string": "secret", "new_string": "pwned"}),
+                    &ctx,
+                )
+                .await;
+            assert_outside(&out, requested);
+        }
+        assert_eq!(
+            std::fs::read_to_string(parent.path().join("secret.rs")).unwrap(),
+            "fn secret() {}\n"
+        );
+    }
+
+    /// Симлинк внутри cwd, ведущий внутрь, — законен: правится его цель, а сам
+    /// симлинк остаётся симлинком.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_inside_the_cwd_edits_its_target() {
+        let dir = TempDir::new().unwrap();
+        let real = seed(&dir, "fn a() {}\n");
+        std::os::unix::fs::symlink(&real, dir.path().join("link.rs")).unwrap();
+
+        let out = run(
+            tool(),
+            &dir,
+            json!({"path": "link.rs", "old_string": "fn a", "new_string": "fn b"}),
+        )
+        .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "fn b() {}\n");
+
+        let out = run(
+            EditTool::new(EditStrategy::WholeFile),
+            &dir,
+            json!({"path": "link.rs", "content": "fn c() {}\n"}),
+        )
+        .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "fn c() {}\n");
+        assert!(
+            std::fs::symlink_metadata(dir.path().join("link.rs"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    /// Абсолютный путь внутри cwd — по-прежнему законен.
+    #[tokio::test]
+    async fn absolute_path_inside_the_cwd_is_allowed() {
+        let dir = TempDir::new().unwrap();
+        let path = seed(&dir, "old\n");
+        let out = run(
+            tool(),
+            &dir,
+            json!({"path": path.to_str().unwrap(), "old_string": "old", "new_string": "new"}),
+        )
+        .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "new\n");
     }
 
     #[tokio::test]

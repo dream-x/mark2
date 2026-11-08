@@ -1,6 +1,6 @@
 //! Тул `bash`: выполнение shell-команды через `sh -c`.
 //!
-//! Три вещи здесь неочевидны и важны:
+//! Четыре вещи здесь неочевидны и важны:
 //!
 //! * **Один поток вывода.** Скрипт запускается с `exec 2>&1`, поэтому stdout и
 //!   stderr приходят одной трубой и в реальном порядке — склеивать два пайпа
@@ -11,11 +11,20 @@
 //! * **Вывод копится с капом.** Труба всё равно дренируется до конца (иначе
 //!   процесс заблокируется на записи), но в буфер попадают только первые
 //!   [`MAX_OUTPUT_BYTES`] байт.
+//! * **Секреты окружения детям не достаются.** Шелл наследует окружение
+//!   харнесса без переменных, чьи имена похожи на ключи и токены
+//!   ([`SECRET_ENV_PATTERNS`], [`scrub_env`]): иначе `env` или `printenv` в
+//!   команде модели унесли бы `ZAI_API_KEY` в её контекст, сессию и логи, а
+//!   под `--yolo` — куда угодно. Сам харнесс читает ключ провайдера
+//!   (`api_key_env`) из своего окружения как раньше — чистится только
+//!   окружение детей.
 //!
-//! Запуск с этими тремя свойствами — [`run_shell`] — общий с post-edit
-//! сенсором agent loop ([`crate::post_edit`]): тот же `sh -c`, та же группа и
-//! тот же kill, только кап другой — голова и хвост вывода
-//! ([`OutputCap::head_and_tail`]).
+//! Запуск с этими четырьмя свойствами — [`run_shell`] — общий с post-edit
+//! сенсором agent loop ([`crate::post_edit`]): тот же `sh -c`, та же группа,
+//! тот же kill и то же чистое окружение, только кап другой — голова и хвост
+//! вывода ([`OutputCap::head_and_tail`]).
+
+use std::ffi::OsStr;
 
 use std::path::Path;
 use std::process::Stdio;
@@ -40,6 +49,78 @@ pub const MAX_OUTPUT_BYTES: usize = 30_000;
 
 /// Маркер обрезки вывода.
 const TRUNCATION_MARKER: &str = "[output truncated]";
+
+/// Имена переменных окружения, которые не доходят до детей `bash` и
+/// post-edit проверки: `*X` — имя кончается на `X`, `X*` — начинается с `X`.
+/// Сравнение без учёта регистра (`zai_api_key` — тот же секрет).
+///
+/// Почему именно эти: это общепринятые конвенции имён секретов, под которые
+/// попадают ключи, реально живущие в окружении харнесса, — ключ провайдера
+/// (`api_key_env`: `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_API_KEY`),
+/// токены `gh` и CI (`GH_TOKEN`, `GITHUB_TOKEN`, `AWS_SESSION_TOKEN`), ключи
+/// AWS (`AWS_SECRET_ACCESS_KEY`), пароли и файлы учёток. Префиксы
+/// `ANTHROPIC_`/`OPENAI_` сняты целиком: кроме ключа там бывают базовые URL и
+/// идентификаторы организаций, которым в шелле модели делать нечего.
+/// `GH_TOKEN*`/`GITHUB_TOKEN*` — префиксами, а не только точными именами:
+/// `GITHUB_TOKEN_RO` суффиксу `*_TOKEN` не подходит.
+///
+/// Чего список сознательно не делает: не чистит `PATH`, `HOME`, `USER`,
+/// `LANG`, `SSH_AUTH_SOCK` и прочее рабочее окружение (без него ломаются
+/// сборки и тесты — тот самый налог, которого не должно быть), и не ловит
+/// всё подряд с `KEY` в имени (`KEYCHAIN_*`, `PGP_KEY_ID` — не секреты).
+/// Ключ провайдера под нестандартным именем (`api_key_env = "MY_LLM"`) сюда
+/// не попадает — называй его по конвенции `*_API_KEY`.
+pub(crate) const SECRET_ENV_PATTERNS: [&str; 10] = [
+    "*_API_KEY",
+    "*_SECRET",
+    "*_TOKEN",
+    "*_PASSWORD",
+    "*_CREDENTIALS",
+    "ANTHROPIC_*",
+    "OPENAI_*",
+    "AWS_SECRET*",
+    "GH_TOKEN*",
+    "GITHUB_TOKEN*",
+];
+
+/// Похоже ли имя переменной окружения на секрет ([`SECRET_ENV_PATTERNS`]).
+///
+/// `*_X` ловит и голое `X` (`API_KEY`, `TOKEN`, `PASSWORD`): подчёркивание в
+/// шаблоне — граница слова, а не обязательный символ.
+pub(crate) fn is_secret_env_name(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    SECRET_ENV_PATTERNS.iter().any(|pattern| {
+        match (pattern.strip_prefix('*'), pattern.strip_suffix('*')) {
+            (Some(suffix), _) => {
+                name.ends_with(suffix) || suffix.strip_prefix('_').is_some_and(|word| name == word)
+            }
+            (None, Some(prefix)) => name.starts_with(prefix),
+            (None, None) => name == *pattern,
+        }
+    })
+}
+
+/// Какие из `names` надо убрать из окружения ребёнка — чистая часть
+/// [`scrub_env`], проверяемая без процессов и без `set_var`.
+fn secret_env_names<'a, I>(names: I) -> Vec<&'a OsStr>
+where
+    I: IntoIterator<Item = &'a OsStr>,
+{
+    names
+        .into_iter()
+        .filter(|name| is_secret_env_name(&name.to_string_lossy()))
+        .collect()
+}
+
+/// Убрать из окружения, которое `cmd` унаследует от харнесса, переменные с
+/// секретами ([`SECRET_ENV_PATTERNS`]). Остальное окружение наследуется как
+/// было. Звать до явных `cmd.env(…)`: `env_remove` снимает и их.
+pub(crate) fn scrub_env(cmd: &mut Command) {
+    let inherited: Vec<_> = std::env::vars_os().map(|(name, _)| name).collect();
+    for name in secret_env_names(inherited.iter().map(|name| name.as_os_str())) {
+        cmd.env_remove(name);
+    }
+}
 
 /// Аргументы тула `bash`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -213,7 +294,8 @@ impl OutputCap {
 }
 
 /// Запустить `command` через `sh -c` в `cwd`: stderr в той же трубе, что
-/// stdout, своя process group, по таймауту и отмене — `kill -9` всей группе.
+/// stdout, своя process group, по таймауту и отмене — `kill -9` всей группе,
+/// окружение без секретов ([`scrub_env`]).
 ///
 /// `Err` — процесс не стартовал (текст для модели); всё остальное, включая
 /// таймаут и отмену, — [`ShellRun`] с тем выводом, что успел накопиться.
@@ -236,6 +318,7 @@ pub(crate) async fn run_shell(
         // Своя process group, чтобы убить всё дерево одним kill.
         .process_group(0)
         .kill_on_drop(true);
+    scrub_env(&mut shell);
 
     let mut child = shell
         .spawn()
@@ -665,6 +748,141 @@ mod tests {
             description.contains("do not `cd` to absolute paths"),
             "{description}"
         );
+    }
+
+    #[test]
+    fn secret_env_patterns_match_key_and_token_names_only() {
+        for name in [
+            "ZAI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OLLAMA_API_KEY",
+            "zai_api_key",
+            "API_KEY",
+            "CLIENT_SECRET",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "GITHUB_TOKEN_RO",
+            "AWS_SESSION_TOKEN",
+            "TOKEN",
+            "AWS_SECRET_ACCESS_KEY",
+            "DB_PASSWORD",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "ANTHROPIC_BASE_URL",
+            "OPENAI_ORG_ID",
+        ] {
+            assert!(is_secret_env_name(name), "{name}");
+        }
+        for name in [
+            "PATH",
+            "HOME",
+            "USER",
+            "LANG",
+            "SSH_AUTH_SOCK",
+            "TMPDIR",
+            "MARK2_SEARXNG_URL",
+            "MARK2_E2E_BASE_URL",
+            "TOKENIZERS_PARALLELISM",
+            "KEYCHAIN_PATH",
+            "SECRETS_DIR",
+            "PASSWORD_HINT",
+            "MY_API_KEYS_HELP",
+            "",
+        ] {
+            assert!(!is_secret_env_name(name), "{name}");
+        }
+    }
+
+    /// Чистая часть `scrub_env`: из набора имён уходят ровно секреты, порядок
+    /// сохраняется, не-UTF-8 имя не роняет фильтр.
+    #[test]
+    fn secret_env_names_are_picked_from_a_set_of_names() {
+        let names = [
+            "PATH",
+            "ZAI_API_KEY",
+            "HOME",
+            "GITHUB_TOKEN",
+            "OPENAI_BASE_URL",
+            "CARGO_HOME",
+        ];
+        let picked = secret_env_names(names.iter().map(OsStr::new));
+        assert_eq!(
+            picked,
+            [
+                OsStr::new("ZAI_API_KEY"),
+                OsStr::new("GITHUB_TOKEN"),
+                OsStr::new("OPENAI_BASE_URL"),
+            ]
+        );
+        assert!(secret_env_names(std::iter::empty()).is_empty());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let broken = OsStr::from_bytes(b"\xffBROKEN_API_KEY");
+            assert_eq!(secret_env_names([broken, OsStr::new("PATH")]), [broken]);
+        }
+    }
+
+    /// Секрет пробы: ставится только дочернему тест-процессу через
+    /// `Command::env` — в процессе тестов `set_var` не зовётся.
+    const PROBE_SECRET: &str = "MARK2_PROBE_API_KEY";
+    /// Несекретная переменная пробы: остальное окружение наследуется.
+    const PROBE_VISIBLE: &str = "MARK2_PROBE_VISIBLE";
+
+    /// Живая проверка на настоящем спавне: тест-бинарь перезапускает сам себя
+    /// с секретом в окружении, и уже там [`secret_env_probe`] спрашивает
+    /// `printenv` через тул `bash` и через post-edit проверку.
+    #[test]
+    fn children_do_not_inherit_secrets_from_the_harness() {
+        // `mark2_core::tools::bash::tests` → `tools::bash::tests::secret_env_probe`.
+        let module = module_path!().split_once("::").unwrap().1;
+        let probe = format!("{module}::secret_env_probe");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([probe.as_str(), "--exact", "--ignored", "--test-threads=1"])
+            .env(PROBE_SECRET, "leaked-secret")
+            .env(PROBE_VISIBLE, "visible")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stdout}\n{stderr}");
+        assert!(
+            stdout.contains("1 passed"),
+            "проба не запустилась: {stdout}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "проба: её запускает children_do_not_inherit_secrets_from_the_harness"]
+    async fn secret_env_probe() {
+        // Ручной `--ignored` без окружения пробы — проверять нечего.
+        if std::env::var_os(PROBE_VISIBLE).is_none() {
+            return;
+        }
+        // Сам процесс секрет видит: харнесс читает свой `api_key_env` как раньше.
+        assert_eq!(std::env::var(PROBE_SECRET).as_deref(), Ok("leaked-secret"));
+
+        let dir = TempDir::new().unwrap();
+        let out = run(
+            &dir,
+            json!({"command": format!(
+                "printenv {PROBE_SECRET} || echo absent; printenv {PROBE_VISIBLE}"
+            )}),
+        )
+        .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, "absent\nvisible");
+
+        // Post-edit проверка — тот же запуск: секрет увидела бы — упала бы.
+        let report = crate::post_edit::run(
+            &crate::post_edit::PostEditCheck::new(format!(
+                "printenv {PROBE_SECRET} && exit 1; printenv {PROBE_VISIBLE} || exit 2"
+            )),
+            dir.path(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(report, None);
     }
 
     /// Поиск по содержимому — тулом `grep`, а не шеллом: в read-only сессии

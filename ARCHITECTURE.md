@@ -31,7 +31,7 @@ flowchart LR
 | — `event.rs` | `Event` и `Op` — serde-tagged, snake_case, стабильные wire-имена |
 | — `provider.rs` | `trait Provider` (один обязательный метод `stream()`), `ProviderRequest`, `StreamChunk`, `ToolDef`, `ProviderError` (в т.ч. `ContextLengthExceeded` — на нём висит компакция) |
 | — `agent.rs` | Цикл: `Agent::spawn() → (AgentHandle, Receiver<Event>)`; сэмплинг → тул-коллы → результаты → повтор; permission-гейт, отмена, интеграция компакции и сессий |
-| — `tools/` | `trait Tool` + `ToolRegistry` (schemars-схемы, приведение типов аргументов к схеме — `coerce.rs`, jsonschema-валидация, retry-with-error); bash/read/grep/write/edit (`grep` — read-only поиск внутри cwd с капами); сетевые `web_fetch` (HTML → текст, `html.rs`) и `web_search` (SearXNG, только при заданном адресе) — общее в `web.rs`: капы, маркеры недоверенных данных |
+| — `tools/` | `trait Tool` + `ToolRegistry` (schemars-схемы, приведение типов аргументов к схеме — `coerce.rs`, jsonschema-валидация, retry-with-error); bash/read/grep/write/edit (`grep` — read-only поиск внутри cwd с капами); `confine.rs` — замок путей внутри cwd: `read`/`grep` канонизируют путь целиком, `write`/`edit` — покомпонентно (цель может не существовать; висячий симлинк и путь снаружи — отказ «outside the working directory», пишется резолвленный путь); `bash.rs::run_shell` — общий запуск `bash` и post-edit проверки, окружение детей без секретов (`scrub_env`, `SECRET_ENV_PATTERNS`); сетевые `web_fetch` (HTML → текст, `html.rs`) и `web_search` (SearXNG, только при заданном адресе) — общее в `web.rs`: капы, маркеры недоверенных данных |
 | — `permission.rs` | `PermissionPolicy`: Yolo / AskWrites / ReadOnly; гейт — мутирующие (`bash`/`edit`/`write`) и сетевые (`web_fetch`/`web_search`) тулы |
 | — `prompt.rs` | Системный промпт (≤1000 токенов вместе со схемами локальных тулов, сетевые — надбавка ≤175) + поиск AGENTS.md вверх от cwd (ближайший выигрывает) + секция `## Memory` последней, если есть память |
 | — `memory.rs` | Память агента: поиск `.mark2.memory.md` (или `[agent] memory_file`), кап 4096 байт с обрезкой по строке, путь для модели |
@@ -39,7 +39,7 @@ flowchart LR
 | — `session.rs` | `SessionRecorder`/`load_session`: JSONL, фоновый писатель, толерантная загрузка |
 | — `config.rs` | Слоёный TOML-конфиг: user → project → CLI; per-model настройки; `[web] search_base_url` с env-оверрайдом `MARK2_SEARXNG_URL`; `find_upwards` — общий обход «ближайший файл от cwd вверх» |
 | `crates/providers` | HTTP-реализации. `openai_compat.rs` — wire-типы Chat Completions (толерантный serde), сборка стрим-дельт (текст, reasoning, тул-коллы по index), ретраи до стрима, маппинг переполнения контекста; `sse.rs` — байтовый поток → SSE-события; `json_repair.rs` — спасение обрезанного JSON |
-| `crates/cli` | Бинарь `mark2`: `main.rs` (сборка из конфига), `render.rs` (чистая функция Event → строка), `interactive.rs`, `print.rs` |
+| `crates/cli` | Бинарь `mark2`: `main.rs` (сборка из конфига), `render.rs` (чистая функция Event → строка; `approval_prompt` — ключевое поле тула целиком, остальное JSON до 500 символов, управляющие символы экранированы), `interactive.rs`, `print.rs` |
 
 ## Один ход агента
 
