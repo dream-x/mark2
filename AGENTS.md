@@ -1,72 +1,77 @@
 # mark2
 
-Собственный agent harness на Rust: **ядро-библиотека + headless CLI**, заточенный под
-запуск **локальных моделей** (llama.cpp / ollama / LM Studio на Apple Silicon).
-Ядро UI-agnostic: принимает `Op` (submission), стримит `Event` — CLI лишь первый
-потребитель этого канала, TUI/ACP/сервер придут позже. Первый провайдер —
-OpenAI-compatible. План: `docs/plans/20260824-rust-agent-harness.md`.
+A custom agent harness in Rust: **core library + headless CLI**, tuned for
+running **local models** (llama.cpp / ollama / LM Studio on Apple Silicon).
+The core is UI-agnostic: it accepts `Op` (submission) and streams `Event` — the CLI is only
+the first consumer of this channel, TUI/ACP/server will come later. The first provider is
+OpenAI-compatible. Plan: `docs/plans/completed/20260824-rust-agent-harness.md`.
 
-## Структура
+## Structure
 
-- `crates/core` (`mark2-core`) — нейтральные типы сообщений и событий, trait `Provider`,
-  agent loop, тулы (bash/read/grep/write/edit/web_fetch/web_search), сессии JSONL,
-  компакция, конфиг.
-- `crates/providers` (`mark2-providers`) — реализации провайдеров: `openai_compat`,
-  SSE-парсинг, JSON-repair для tool-аргументов слабых моделей.
-- `crates/cli` (`mark2-cli`, бинарь `mark2`) — clap, интерактив и `-p` print mode,
-  рендер Event-стрима.
+- `crates/core` (`mark2-core`) — neutral message and event types, the `Provider` trait,
+  agent loop, tools (bash/read/grep/write/edit/web_fetch/web_search), JSONL sessions,
+  compaction, config.
+- `crates/providers` (`mark2-providers`) — provider implementations: `openai_compat`,
+  SSE parsing, JSON repair for tool arguments from weak models.
+- `crates/cli` (`mark2-cli`, binary `mark2`) — clap, interactive and `-p` print mode,
+  Event stream rendering.
+- `crates/bench` (`mark2-bench`) — benchmark runner (`bench/STRATEGY.md`): runs the `mark2`
+  binary on the tasks in `bench/tasks/`, the verdict comes from the task's `verify.sh`.
 
-Общие зависимости объявлены в корневом `[workspace.dependencies]`; крейты подключают их
-через `dep.workspace = true`, свои версии не заводим.
+Shared dependencies are declared in the root `[workspace.dependencies]`; crates pull them
+in via `dep.workspace = true`, no crate-local versions.
 
-## Команды
+## Commands
 
-- Сборка: `cargo build`
-- Запуск: `cargo run -q -p mark2-cli -- "задача"`
-- Проверка перед коммитом:
+- Build: `cargo build`
+- Run: `cargo run -q -p mark2-cli -- "задача"`
+- Pre-commit check:
   `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
-- Ревью диффа локальной моделью (по желанию, нужен ollama): `scripts/review.sh`
-  (exit 0 — approve, 2 — needs-work, 1 — сбой); правишь саму обёртку — гоняй
+- Diff review by a local model (optional, needs ollama): `scripts/review.sh`
+  (exit 0 — approve, 2 — needs-work, 1 — failure); if you change the wrapper itself, run
   `sh scripts/test-review.sh`.
 
-Тесты обязательны в каждой задаче: код и тесты пишутся в рамках одного таска.
+Tests are mandatory in every task: code and tests are written within the same task.
 
-Значимое изменение сопровождается записью в `CHANGELOG.md` в формате
-«что сделано ← почему → к чему привело (измеримо)»; причины и сроки годности
-контролей харнеса — в `docs/decisions.md`.
+A significant change comes with a `CHANGELOG.md` entry in the format
+"what was done ← why → what it led to (measurably)"; the reasons for harness controls and
+their expiry conditions go to `docs/decisions.md`.
 
-## Запуск против локальной модели
+## Running against a local model
 
-Дефолтный `base_url` — `http://localhost:8080/v1` (llama-server). Если сервер
-другой (или, как бывает, порт 8080 занят посторонним веб-сервером — тогда в
-stderr прилетит HTML вместо ответа), указывай базу явно:
+The default `base_url` is `http://localhost:8080/v1` (llama-server). If the server is
+different (or, as happens, port 8080 is taken by an unrelated web server — then HTML
+lands in stderr instead of a response), set the base explicitly:
 
 ```sh
-# ollama: OpenAI-совместимый префикс — /v1, порт 11434
+# ollama: the OpenAI-compatible prefix is /v1, port 11434
 cargo run -q -p mark2-cli -- -p --yolo \
   --base-url http://localhost:11434/v1 --model qwen3.5:9b \
   -C /tmp/scratch "Create a file hello.txt with content exactly: mark2 works"
 ```
 
-`-p` — print mode (ответ в stdout, служебное в stderr), `--yolo` — не спрашивать
-подтверждений, `-C` — рабочая директория агента. Постоянные настройки удобнее
-держать в `~/.config/mark2/config.toml` (секции `[provider]`, `[agent]`, `[web]`).
+`-p` — print mode (the answer to stdout, service output to stderr), `--yolo` — do not ask
+for confirmations, `-C` — the agent's working directory. Persistent settings are easier to
+keep in `~/.config/mark2/config.toml` (sections `[provider]`, `[agent]`, `[web]`).
+A project `.mark2.toml` (searched upward from cwd, not above `$HOME`) can only tighten:
+setting `[provider] base_url`/`api_key_env`, `policy = "yolo"`, a non-empty
+`post_edit_command`, or a `memory_file` outside its directory there is a startup error.
 
-Сетевые тулы: `web_fetch` есть всегда, если не выключен `[web] fetch = false`
-(абляция бенча); `web_search` регистрируется, только если задан SearXNG —
-`[web] search_base_url = "http://localhost:8888"` или переменная
-`MARK2_SEARXNG_URL` (непустая — старше файлов); в `settings.yml` SearXNG должен
-быть включён формат `json`. Без `--yolo` оба спрашивают подтверждение, как `bash`,
-в `read_only` запрещены.
+Network tools: `web_fetch` is always present unless disabled with `[web] fetch = false`
+(bench ablation); `web_search` is registered only if SearXNG is configured —
+`[web] search_base_url = "http://localhost:8888"` or the `MARK2_SEARXNG_URL` variable
+(non-empty — takes precedence over the files); SearXNG's `settings.yml` must have the
+`json` format enabled. Without `--yolo` both ask for confirmation, like `bash`, and are
+forbidden in `read_only`.
 
-E2E-тесты против живого сервера помечены `#[ignore]` и по умолчанию не
-запускаются:
+E2E tests against a live server are marked `#[ignore]` and are not run by
+default:
 
 ```sh
 cargo test -p mark2-cli --test e2e_local -- --ignored
 ```
 
-Куда ходить — из окружения: `MARK2_E2E_BASE_URL` (дефолт
-`http://localhost:11434/v1`), `MARK2_E2E_MODEL` (дефолт `qwen3.5:9b`),
-`MARK2_E2E_TIMEOUT_SECS` (дефолт 300). Наблюдения с реальных прогонов —
+Where they go comes from the environment: `MARK2_E2E_BASE_URL` (default
+`http://localhost:11434/v1`), `MARK2_E2E_MODEL` (default `qwen3.5:9b`),
+`MARK2_E2E_TIMEOUT_SECS` (default 300). Observations from real runs —
 `docs/notes/e2e-findings-20260824.md`.
