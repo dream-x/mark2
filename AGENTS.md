@@ -2,9 +2,9 @@
 
 A custom agent harness in Rust: **core library + headless CLI**, tuned for
 running **local models** (llama.cpp / ollama / LM Studio on Apple Silicon).
-The core is UI-agnostic: it accepts `Op` (submission) and streams `Event` — the CLI is only
-the first consumer of this channel, TUI/ACP/server will come later. The first provider is
-OpenAI-compatible. Plan: `docs/plans/completed/20260824-rust-agent-harness.md`.
+The core is UI-agnostic: it accepts `Op` (submission) and streams `Event` — the CLI is the
+first consumer of this channel, the TUI the second; ACP/server will come later. The first
+provider is OpenAI-compatible. Plan: `docs/plans/completed/20260824-rust-agent-harness.md`.
 
 ## Structure
 
@@ -14,7 +14,8 @@ OpenAI-compatible. Plan: `docs/plans/completed/20260824-rust-agent-harness.md`.
 - `crates/providers` (`mark2-providers`) — provider implementations: `openai_compat`,
   SSE parsing, JSON repair for tool arguments from weak models.
 - `crates/cli` (`mark2-cli`, binary `mark2`) — clap, interactive and `-p` print mode,
-  Event stream rendering.
+  Event stream rendering; `src/tui/` — full-screen chat on ratatui (`App` state is a pure
+  function of `Event`/keys, rendering is snapshot-tested with `TestBackend`).
 - `crates/bench` (`mark2-bench`) — benchmark runner (`bench/STRATEGY.md`): runs the `mark2`
   binary on the tasks in `bench/tasks/`, the verdict comes from the task's `verify.sh`.
 
@@ -24,7 +25,8 @@ in via `dep.workspace = true`, no crate-local versions.
 ## Commands
 
 - Build: `cargo build`
-- Run: `cargo run -q -p mark2-cli -- "задача"`
+- Run: `cargo run -q -p mark2-cli -- "задача"`; TUI: `cargo run -q -p mark2-cli` with no
+  prompt in a terminal (or `--tui`)
 - Pre-commit check:
   `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
 - Diff review by a local model (optional, needs ollama): `scripts/review.sh`

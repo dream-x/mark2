@@ -41,6 +41,15 @@ jsonschema = "0.51"
 # CLI
 clap = { version = "4", features = ["derive"] }
 
+# TUI: ratatui с бэкендом crossterm. Сам crossterm объявлен отдельно ради
+# `event-stream` (асинхронный поток клавиш для tokio::select!); версия — та
+# же, что тянет ratatui-crossterm, так что крейт в дереве один.
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
+# Ширина символа в колонках терминала — перенос строк ленты и поля ввода
+# (та же версия, что у ratatui).
+unicode-width = "0.2"
+
 # Ошибки
 thiserror = "2"
 anyhow = "1"

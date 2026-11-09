@@ -244,8 +244,9 @@ fn capped(text: &str, limit: usize) -> String {
 /// zero-width-символы экранируются (`\r`, `\u{1b}`, `\u{202e}`). Иначе `\r`
 /// возвращает каретку и затирает начало команды, ESC-последовательность
 /// перекрашивает или пишет в буфер обмена (OSC 52), а RLO переворачивает
-/// хвост строки — пользователь одобрил бы не то, что видит.
-fn terminal_safe(text: &str) -> String {
+/// хвост строки — пользователь одобрил бы не то, что видит. Тем же фильтром
+/// TUI пропускает весь текст ленты ([`crate::tui`]).
+pub fn terminal_safe(text: &str) -> String {
     let mut safe = String::with_capacity(text.len());
     for c in text.chars() {
         let hidden = (c.is_control() && c != '\n' && c != '\t')

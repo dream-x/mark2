@@ -20,9 +20,13 @@ anyhow.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+unicode-width.workspace = true
+# Поток клавиш crossterm (`EventStream`) — `StreamExt::next` в цикле TUI.
+futures.workspace = true
 
 [dev-dependencies]
 # Скриптованный Provider в смоук-тестах print mode.
 async-trait.workspace = true
-futures.workspace = true
 tempfile.workspace = true

@@ -1,10 +1,14 @@
-//! `mark2` — headless CLI поверх [`mark2_core`].
+//! `mark2` — CLI и TUI поверх [`mark2_core`].
 //!
 //! Здесь живёт только сборка: разобрать флаги, сложить слои конфига, поднять
 //! провайдера, реестр тулов, сессию и агента — и отдать поток [`Event`] одному
-//! из двух фронтендов ([`interactive`] или [`print`]). Никакой логики хода в
-//! CLI нет и быть не должно: он первый потребитель SQ/EQ-канала, а не его
-//! часть.
+//! из трёх фронтендов ([`print`], [`interactive`] или полноэкранному
+//! [`tui`]). Никакой логики хода во фронтендах нет и быть не должно: они
+//! потребители SQ/EQ-канала, а не его часть.
+//!
+//! Режим выбирают флаги и терминал ([`Args::mode`]): `-p` — print mode;
+//! позиционный PROMPT — один интерактивный ход; без PROMPT в терминале (или с
+//! `--tui`) — TUI, многоходовый чат.
 //!
 //! Слои настроек складываются по возрастанию приоритета — пользовательский
 //! конфиг, ближайший `.mark2.toml`, флаги, — причём флаги превращаются в такой
@@ -12,11 +16,13 @@
 //!
 //! Коды возврата: `0` — ход завершён, `1` — ошибка или упёрлись в `max_turns`,
 //! `2` — ошибка в аргументах (clap), `130` — прервано пользователем (как
-//! принято у Ctrl+C в шелле).
+//! принято у Ctrl+C в шелле). TUI — сессия из многих ходов: выход по желанию
+//! пользователя — `0`, ошибка терминала или ядра — `1`.
 
 mod interactive;
 mod print;
 mod render;
+mod tui;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -42,7 +48,8 @@ use crate::render::RenderOptions;
 /// Значение `PROMPT`, означающее «прочитать промпт из stdin до EOF».
 pub const STDIN_PROMPT: &str = "-";
 
-/// Агент для локальных моделей: одна задача — один запуск.
+/// Агент для локальных моделей: одна задача — один запуск, без задачи в
+/// терминале — полноэкранный чат.
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "mark2",
@@ -52,9 +59,10 @@ pub const STDIN_PROMPT: &str = "-";
                   ./.mark2.toml, флаги.\nСессии пишутся в ~/.mark2/sessions/YYYY/MM/DD/*.jsonl."
 )]
 pub struct Args {
-    /// Задача агенту; `-` — прочитать её из stdin до EOF (только с -p).
+    /// Задача агенту; `-` — прочитать её из stdin до EOF (только с -p). Без
+    /// PROMPT в терминале открывается TUI.
     #[arg(value_name = "PROMPT")]
-    pub prompt: String,
+    pub prompt: Option<String>,
 
     /// Идентификатор модели в терминах сервера.
     #[arg(long, value_name = "ID")]
@@ -101,6 +109,22 @@ pub struct Args {
     /// Показывать рассуждения модели (приглушённо).
     #[arg(long)]
     pub show_thinking: bool,
+
+    /// Полноэкранный чат (TUI); PROMPT, если задан, уходит первым сообщением.
+    /// Нужен терминал: stdin и stdout — TTY.
+    #[arg(long, conflicts_with = "print")]
+    pub tui: bool,
+}
+
+/// Чем работает запуск.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// `-p`: один ход, ответ в stdout.
+    Print,
+    /// Позиционный PROMPT без `-p`: один ход в терминале, y/N-аппрувы.
+    Interactive,
+    /// Полноэкранный многоходовый чат.
+    Tui,
 }
 
 /// Политика доступа в терминах командной строки.
@@ -153,10 +177,11 @@ impl Args {
         Ok(args)
     }
 
-    /// `-` вместо промпта — только в print mode: интерактивный режим читает
-    /// stdin сам (подтверждения `y/N`), и делить его с промптом нечестно.
+    /// `-` вместо промпта — только в print mode: интерактивный режим и TUI
+    /// читают stdin сами (подтверждения `y/N`, клавиши), и делить его с
+    /// промптом нечестно.
     fn validate(&self) -> Result<(), clap::Error> {
-        if self.prompt == STDIN_PROMPT && !self.print {
+        if self.prompt.as_deref() == Some(STDIN_PROMPT) && !self.print {
             return Err(Self::command().error(
                 clap::error::ErrorKind::MissingRequiredArgument,
                 "PROMPT `-` (промпт из stdin) работает только вместе с -p: \
@@ -166,12 +191,45 @@ impl Args {
         Ok(())
     }
 
+    /// Режим запуска. `terminal` — stdin и stdout оба TTY.
+    ///
+    /// `-p` и позиционный PROMPT работают как раньше, где бы ни запускались;
+    /// без PROMPT в терминале — TUI (раньше это была ошибка clap), вне
+    /// терминала — та же ошибка аргументов с кодом 2. `--tui` вне терминала —
+    /// ошибка: рисовать некуда.
+    pub fn mode(&self, terminal: bool) -> Result<Mode, clap::Error> {
+        use clap::error::ErrorKind;
+
+        if self.tui {
+            if !terminal {
+                return Err(Self::command().error(
+                    ErrorKind::InvalidValue,
+                    "--tui работает только в терминале: stdin и stdout должны быть TTY",
+                ));
+            }
+            return Ok(Mode::Tui);
+        }
+        match (&self.prompt, self.print) {
+            (Some(_), true) => Ok(Mode::Print),
+            (Some(_), false) => Ok(Mode::Interactive),
+            (None, true) => Err(Self::command().error(
+                ErrorKind::MissingRequiredArgument,
+                "-p требует PROMPT (или `-` — прочитать промпт из stdin)",
+            )),
+            (None, false) if terminal => Ok(Mode::Tui),
+            (None, false) => Err(Self::command().error(
+                ErrorKind::MissingRequiredArgument,
+                "не задан PROMPT; без него открывается TUI, но stdin и stdout здесь не терминал",
+            )),
+        }
+    }
+
     /// Промпт хода: позиционный аргумент как есть, а для `-` — весь stdin.
     fn resolve_prompt(&self, stdin: &mut dyn Read) -> Result<String> {
-        if self.prompt == STDIN_PROMPT {
-            read_prompt(stdin)
-        } else {
-            Ok(self.prompt.clone())
+        match self.prompt.as_deref() {
+            Some(STDIN_PROMPT) => read_prompt(stdin),
+            Some(prompt) => Ok(prompt.to_string()),
+            None => bail!("не задан PROMPT"),
         }
     }
 
@@ -270,11 +328,17 @@ fn exit_code(reason: StopReason) -> ExitCode {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    init_tracing();
     let args =
         Args::try_parse_and_validate(std::env::args_os()).unwrap_or_else(|error| error.exit());
+    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let mode = args.mode(terminal).unwrap_or_else(|error| error.exit());
+    // В TUI stderr — тот же экран: строка лога легла бы поверх кадра. Логи
+    // там — только в перенаправленный stderr (`2>mark2.log`).
+    if mode != Mode::Tui || !std::io::stderr().is_terminal() {
+        init_tracing();
+    }
     let opts = args.render_options();
-    match run(args).await {
+    match run(args, mode).await {
         Ok(code) => code,
         Err(error) => {
             eprintln!("{}", render::error_line(&format!("{error:#}"), opts));
@@ -295,8 +359,8 @@ fn init_tracing() {
         .try_init();
 }
 
-/// Собрать агента из флагов и конфига и прогнать один ход.
-async fn run(args: Args) -> Result<ExitCode> {
+/// Собрать агента из флагов и конфига и отдать его фронтенду режима.
+async fn run(args: Args, mode: Mode) -> Result<ExitCode> {
     let cwd = args.resolve_cwd()?;
     let config = Config::load(&cwd)?.merge(args.overrides());
     let opts = args.render_options();
@@ -314,7 +378,11 @@ async fn run(args: Args) -> Result<ExitCode> {
     );
     // До сессии и агента: пустой stdin не должен оставлять за собой журнал.
     // Блокирующее чтение здесь безвредно — больше в рантайме ничего не идёт.
-    let prompt = args.resolve_prompt(&mut std::io::stdin().lock())?;
+    // TUI stdin не читает: это его клавиатура.
+    let prompt = match mode {
+        Mode::Tui => args.prompt.clone(),
+        Mode::Print | Mode::Interactive => Some(args.resolve_prompt(&mut std::io::stdin().lock())?),
+    };
 
     let provider = OpenAiCompatProvider::new(
         config.base_url(),
@@ -344,27 +412,64 @@ async fn run(args: Args) -> Result<ExitCode> {
             "память в системном промпте"
         );
     }
-    if !args.no_session
-        && let Some(recorder) = open_session(session_meta(&cwd, &model, agent.memory()), opts).await
-    {
-        tracing::debug!(path = %recorder.path().display(), "сессия пишется");
-        agent = agent.with_recorder(recorder);
+    // Служебные строки для ленты TUI: там stderr не виден.
+    let mut notes = Vec::new();
+    if !args.no_session {
+        match open_session(session_meta(&cwd, &model, agent.memory())).await {
+            Ok(recorder) => {
+                tracing::debug!(path = %recorder.path().display(), "сессия пишется");
+                notes.push((
+                    tui::NoticeKind::Info,
+                    format!("сессия: {}", tui::display_path(recorder.path())),
+                ));
+                agent = agent.with_recorder(recorder);
+            }
+            Err(reason) if mode == Mode::Tui => {
+                tracing::warn!(%reason, "сессия не пишется");
+                notes.push((tui::NoticeKind::Warning, no_session_note(&reason)));
+            }
+            Err(reason) => warn_no_session(&reason, opts),
+        }
     }
 
     let (handle, mut events) = agent.spawn();
-    handle.submit(Op::user_input(prompt));
 
-    let reason = if args.print {
-        let mut stdout = std::io::stdout();
-        let mut stderr = std::io::stderr();
-        print::run(&handle, &mut events, &mut stdout, &mut stderr).await
-    } else {
-        interactive::run(&handle, &mut events, opts).await
+    let code = match (mode, prompt) {
+        (Mode::Tui, prompt) => {
+            let options = tui::Options {
+                model,
+                cwd: tui::display_path(&cwd),
+                show_thinking: args.show_thinking,
+                prompt,
+                notes,
+            };
+            let outcome = tui::run(&handle, &mut events, options).await;
+            // Выход посреди хода — ход гасится, а не дорабатывает вслепую.
+            handle.cancel_token().cancel();
+            handle.shutdown().await;
+            let outcome = outcome?;
+            eprintln!(
+                "{}",
+                render::usage_summary(&outcome.usage, outcome.coerced, opts)
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        (Mode::Print, Some(prompt)) => {
+            handle.submit(Op::user_input(prompt));
+            let mut stdout = std::io::stdout();
+            let mut stderr = std::io::stderr();
+            exit_code(print::run(&handle, &mut events, &mut stdout, &mut stderr).await)
+        }
+        (Mode::Interactive, Some(prompt)) => {
+            handle.submit(Op::user_input(prompt));
+            exit_code(interactive::run(&handle, &mut events, opts).await)
+        }
+        (Mode::Print | Mode::Interactive, None) => unreachable!("PROMPT разобран выше"),
     };
 
     // Ждём, пока агент закроет файл сессии.
     handle.shutdown().await;
-    Ok(exit_code(reason))
+    Ok(code)
 }
 
 /// Реестр тулов: базовые (без `web_fetch` при `web_fetch == false` —
@@ -442,35 +547,24 @@ fn session_meta(cwd: &Path, model: &str, memory: Option<&Memory>) -> SessionMeta
     }
 }
 
-/// Открыть сессию на запись. Не смогли — работаем без журнала: потеря записи
-/// не повод не выполнить задачу.
-async fn open_session(meta: SessionMeta, opts: RenderOptions) -> Option<SessionRecorder> {
-    let base_dir = match default_base_dir() {
-        Ok(dir) => dir,
-        Err(error) => {
-            warn_no_session(&error.to_string(), opts);
-            return None;
-        }
-    };
-    match SessionRecorder::create(&base_dir, meta).await {
-        Ok(recorder) => Some(recorder),
-        Err(error) => {
-            warn_no_session(&error.to_string(), opts);
-            None
-        }
-    }
+/// Открыть сессию на запись. Не смогли — причина; вызывающий предупреждает
+/// и работает без журнала: потеря записи не повод не выполнить задачу.
+async fn open_session(meta: SessionMeta) -> Result<SessionRecorder, String> {
+    let base_dir = default_base_dir().map_err(|error| error.to_string())?;
+    SessionRecorder::create(&base_dir, meta)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Текст предупреждения «сессия не пишется».
+fn no_session_note(reason: &str) -> String {
+    format!("сессия не пишется ({reason}); работаю без записи")
 }
 
 /// Предупредить, что ход не будет записан.
 fn warn_no_session(reason: &str, opts: RenderOptions) {
     tracing::warn!(%reason, "сессия не пишется");
-    eprintln!(
-        "{}",
-        render::note_line(
-            &format!("сессия не пишется ({reason}); работаю без записи"),
-            opts
-        )
-    );
+    eprintln!("{}", render::note_line(&no_session_note(reason), opts));
 }
 
 #[cfg(test)]
@@ -483,9 +577,9 @@ mod tests {
     }
 
     #[test]
-    fn prompt_is_required_and_positional() {
+    fn prompt_is_positional() {
         let args = parse(&["mark2", "почини тесты"]);
-        assert_eq!(args.prompt, "почини тесты");
+        assert_eq!(args.prompt.as_deref(), Some("почини тесты"));
         assert!(!args.print);
         assert!(!args.yolo);
         assert!(!args.no_session);
@@ -494,8 +588,76 @@ mod tests {
         assert_eq!(args.policy, None);
         assert_eq!(args.temperature, None);
         assert_eq!(args.cwd, None);
+        assert!(!args.tui);
+        assert_eq!(args.mode(true).unwrap(), Mode::Interactive);
+        assert_eq!(args.mode(false).unwrap(), Mode::Interactive);
+    }
 
-        assert!(Args::try_parse_from(["mark2"]).is_err());
+    /// Без PROMPT в терминале — TUI; вне терминала — ошибка аргументов с
+    /// кодом 2, как и раньше (бенч и скрипты без промпта не запускают).
+    #[test]
+    fn no_prompt_opens_the_tui_only_in_a_terminal() {
+        let args = parse(&["mark2"]);
+        assert_eq!(args.prompt, None);
+        assert_eq!(args.mode(true).unwrap(), Mode::Tui);
+
+        let error = args.mode(false).unwrap_err();
+        assert_eq!(error.exit_code(), 2, "{error}");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert!(error.to_string().contains("PROMPT"), "{error}");
+
+        // `-p` без PROMPT — ошибка в любом окружении.
+        for terminal in [true, false] {
+            let error = parse(&["mark2", "-p"]).mode(terminal).unwrap_err();
+            assert_eq!(error.exit_code(), 2, "{error}");
+            assert!(error.to_string().contains("-p"), "{error}");
+        }
+    }
+
+    /// `--tui` — явный TUI, с PROMPT первым сообщением; вне терминала и
+    /// вместе с `-p` — ошибка аргументов.
+    #[test]
+    fn tui_flag_requires_a_terminal_and_excludes_print_mode() {
+        let args = parse(&["mark2", "--tui"]);
+        assert!(args.tui);
+        assert_eq!(args.mode(true).unwrap(), Mode::Tui);
+        let with_prompt = parse(&["mark2", "--tui", "почини тесты"]);
+        assert_eq!(with_prompt.mode(true).unwrap(), Mode::Tui);
+        assert_eq!(with_prompt.prompt.as_deref(), Some("почини тесты"));
+
+        let error = args.mode(false).unwrap_err();
+        assert_eq!(error.exit_code(), 2, "{error}");
+        assert!(error.to_string().contains("TTY"), "{error}");
+
+        let error = Args::try_parse_and_validate(["mark2", "--tui", "-p", "x"]).unwrap_err();
+        assert_eq!(error.exit_code(), 2, "{error}");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        // Промпт из stdin в TUI нельзя: stdin — его клавиатура.
+        let error = Args::try_parse_and_validate(["mark2", "--tui", "-"]).unwrap_err();
+        assert_eq!(error.exit_code(), 2, "{error}");
+    }
+
+    /// `-p` и позиционный PROMPT выбирают режим как раньше — и в терминале,
+    /// и в пайпе.
+    #[test]
+    fn print_and_prompt_modes_do_not_depend_on_the_terminal() {
+        for terminal in [true, false] {
+            assert_eq!(
+                parse(&["mark2", "-p", "x"]).mode(terminal).unwrap(),
+                Mode::Print
+            );
+            assert_eq!(
+                parse(&["mark2", "-p", "-"]).mode(terminal).unwrap(),
+                Mode::Print
+            );
+            assert_eq!(
+                parse(&["mark2", "x"]).mode(terminal).unwrap(),
+                Mode::Interactive
+            );
+        }
     }
 
     #[test]
@@ -522,7 +684,7 @@ mod tests {
             "задача",
         ]);
 
-        assert_eq!(args.prompt, "задача");
+        assert_eq!(args.prompt.as_deref(), Some("задача"));
         assert_eq!(args.model.as_deref(), Some("qwen3-coder"));
         assert_eq!(args.base_url.as_deref(), Some("http://localhost:11434/v1"));
         assert_eq!(args.api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
@@ -546,9 +708,16 @@ mod tests {
     /// с объяснением и кодом 2, как у любой ошибки аргументов.
     #[test]
     fn dash_prompt_means_stdin_and_requires_print_mode() {
-        assert_eq!(parse(&["mark2", "-p", "-"]).prompt, STDIN_PROMPT);
-        assert_eq!(parse(&["mark2", "-", "--print"]).prompt, STDIN_PROMPT);
-        assert_eq!(parse(&["mark2", "-p", "--", "-"]).prompt, STDIN_PROMPT);
+        let prompt = |argv: &[&str]| parse(argv).prompt;
+        assert_eq!(prompt(&["mark2", "-p", "-"]).as_deref(), Some(STDIN_PROMPT));
+        assert_eq!(
+            prompt(&["mark2", "-", "--print"]).as_deref(),
+            Some(STDIN_PROMPT)
+        );
+        assert_eq!(
+            prompt(&["mark2", "-p", "--", "-"]).as_deref(),
+            Some(STDIN_PROMPT)
+        );
 
         for argv in [&["mark2", "-"][..], &["mark2", "--yolo", "--", "-"][..]] {
             let error = Args::try_parse_and_validate(argv).unwrap_err();
@@ -559,8 +728,8 @@ mod tests {
         }
         // Обычный промпт без -p валиден, как и раньше.
         assert_eq!(
-            parse(&["mark2", "задача - с дефисом"]).prompt,
-            "задача - с дефисом"
+            parse(&["mark2", "задача - с дефисом"]).prompt.as_deref(),
+            Some("задача - с дефисом")
         );
     }
 
@@ -1004,6 +1173,8 @@ mod tests {
         assert!(help.contains("--temperature"), "{help}");
         assert!(help.contains(".mark2.toml"), "{help}");
         assert!(help.contains("stdin"), "{help}");
+        assert!(help.contains("--tui"), "{help}");
+        assert!(help.contains("TUI"), "{help}");
         assert!(!Args::command().get_version().unwrap_or_default().is_empty());
     }
 }

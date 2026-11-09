@@ -6,7 +6,8 @@
 //! Linux (128 КиБ на аргумент) доходит до сервера модели целиком. Сервер —
 //! заглушка на один запрос, отвечающая SSE-стримом из одного текста. Здесь же —
 //! что `--temperature` из такого вызова (так зовёт mark2 `scripts/review.sh`)
-//! перекрывает проектный `.mark2.toml` в самом запросе к модели.
+//! перекрывает проектный `.mark2.toml` в самом запросе к модели. И что без
+//! терминала запуск без PROMPT остаётся ошибкой аргументов, а не TUI.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -120,6 +121,26 @@ fn dash_without_print_mode_is_a_usage_error() {
     assert!(stderr.contains("stdin"), "{stderr}");
     assert!(stderr.contains("-p"), "{stderr}");
     assert!(output.stdout.is_empty(), "{output:?}");
+}
+
+/// Без PROMPT вне терминала (stdin и stdout — пайпы) — по-прежнему ошибка
+/// аргументов с кодом 2, а не TUI: скрипт без промпта не повиснет на
+/// полноэкранном чате. `--tui` вне терминала — тоже код 2.
+#[test]
+fn no_prompt_or_tui_flag_outside_a_terminal_is_a_usage_error() {
+    let home = tempfile::tempdir().unwrap();
+    for (args, needle) in [
+        (&["--model", "m"][..], "PROMPT"),
+        (&["--model", "m", "--tui"][..], "TTY"),
+        (&["--model", "m", "-p"][..], "-p"),
+    ] {
+        let output = run(mark2(home.path(), args), "");
+
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+        let stderr = text(&output.stderr);
+        assert!(stderr.contains(needle), "{args:?}: {stderr}");
+        assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+    }
 }
 
 #[test]
