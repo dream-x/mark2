@@ -42,6 +42,17 @@ model = "qwen3.8:27b"
 base_url = "http://localhost:11434/v1"
 timeout_multiplier = 3.0
 
+# Тот же 27B на ноуте, но через llama-server и квант Unsloth UD-Q8_K_XL
+# (29.3 GiB, KV F16) вместо nvfp4 ollama — эксперимент «квант против кванта»
+# (2026-11-10). Запуск сервера:
+#   llama-server --jinja -m ~/models/qwen3.8-27b-ud-q8/Qwen3.8-27B-UD-Q8_K_XL.gguf \
+#     -c 300000 -ngl 99 --port 8081 --alias qwen3.8-27b-udq8
+[[models]]
+alias = "qwen27-udq8"
+model = "qwen3.8-27b-udq8"
+base_url = "http://127.0.0.1:8081/v1"
+timeout_multiplier = 3.0
+
 # deepseek-v4.1-flash:cloud требует платного плана Ollama Cloud (HTTP 402);
 # gemma4:31b-cloud — облачная модель из Free-плана.
 [[models]]
