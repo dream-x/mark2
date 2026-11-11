@@ -8,3 +8,6 @@ bench/results/*/logs/
 
 # Окружение проектных verify (aiohttp + Playwright), собирается bench/uitest/bootstrap.sh.
 bench/uitest/.venv/
+
+# Байткод Python от запуска bench/shims/test-qwen-subscription-proxy.py.
+__pycache__/

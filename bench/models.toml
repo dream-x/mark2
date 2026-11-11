@@ -53,6 +53,28 @@ model = "qwen3.8-27b-udq8"
 base_url = "http://127.0.0.1:8081/v1"
 timeout_multiplier = 3.0
 
+# Тот же сервер и те же флаги, квант Unsloth UD-Q4_K_XL (16.35 GiB) —
+# третья точка «квант против кванта» (2026-11-10): nvfp4 ollama → UD-Q8 → UD-Q4.
+#   llama-server --jinja -m ~/models/qwen3.8-27b-ud-q4/Qwen3.8-27B-UD-Q4_K_XL.gguf \
+#     -c 300000 -ngl 99 --port 8081 --alias qwen3.8-27b-udq4
+[[models]]
+alias = "qwen27-udq4"
+model = "qwen3.8-27b-udq4"
+base_url = "http://127.0.0.1:8081/v1"
+timeout_multiplier = 3.0
+
+# Подписка Qwen (qwen.ai, вход через Qwen Code, OAuth) — дуэль харнессов
+# «Qwen Code против mark2 на одной модели» (2026-11-11). Ключа у подписки нет:
+# токен живёт 15 минут в ~/.qwen/subscription_credentials.json, поэтому mark2
+# ходит через локальный прокси bench/shims/qwen-subscription-proxy.py, который
+# подставляет и обновляет токен; колонка Qwen Code идёт через
+# bench/shims/mark2-qwc-shim.sh (--mark2 ранера), base_url шим игнорирует.
+[[models]]
+alias = "qwen38max"
+model = "qwen3.8-max"
+base_url = "http://127.0.0.1:8092/v1"
+timeout_multiplier = 2.5
+
 # deepseek-v4.1-flash:cloud требует платного плана Ollama Cloud (HTTP 402);
 # gemma4:31b-cloud — облачная модель из Free-плана.
 [[models]]
