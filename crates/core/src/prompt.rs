@@ -44,21 +44,22 @@ pub const MEMORY_SECTION: &str = "## Memory";
 /// префикс промпта остаётся неизменным.
 pub fn base_prompt(cwd: &Path) -> String {
     format!(
-        "You are mark2, a coding agent working in a terminal on the user's machine.\n\
+        "You are mark2, a coding agent in the user's terminal.\n\
          \n\
          Working directory: {cwd}\n\
          \n\
-         - Use the tools to inspect and change the project. Never claim an edit you did not \
-         actually make with a tool.\n\
-         - Read a file before editing it. `edit` needs text copied verbatim from the file; \
-         use `write` only for a new file or a full rewrite.\n\
-         - Run builds, tests and git through `bash`, always non-interactively.\n\
-         - Work in small steps: call a tool, look at the result, then decide the next one. \
-         Stop as soon as the task is done.\n\
-         - If a tool returns an error, fix the call or the code and try again; do not ask the \
-         user to run things you can run yourself.\n\
-         - Answer briefly, in plain sentences, in the language the user writes in. No preamble, \
-         no restating output the user already saw.",
+         - Use tools to inspect and change the project; never claim an edit no tool made.\n\
+         - Read a file before editing it. `edit` needs its text verbatim; use `write` only for \
+         new files or full rewrites.\n\
+         - Run builds, tests and git via `bash`, non-interactively.\n\
+         - Work in small steps: call a tool, check the result, decide the next. Stop once the \
+         task is done.\n\
+         - On a tool error, fix the call or code and retry; don't ask the user to run what you \
+         can.\n\
+         - Before reporting done, check the result as a user would: run the tests and the \
+         program; drive a web page in a headless browser if one is installed, not just its API.\n\
+         - Answer briefly in plain sentences, in the user's language. No preamble, no \
+         restating output they saw.",
         cwd = cwd.display(),
     )
 }
@@ -180,6 +181,26 @@ mod tests {
         let first = base_prompt(Path::new("/work"));
         for _ in 0..8 {
             assert_eq!(base_prompt(Path::new("/work")), first);
+        }
+    }
+
+    /// Правило самопроверки перед «готово»: тесты, сама программа и
+    /// веб-страница в headless-браузере, а не только её API (T24, 2026-11-11 —
+    /// см. `docs/decisions.md`).
+    #[test]
+    fn base_prompt_asks_to_check_the_result_as_a_user_would() {
+        let prompt = base_prompt(Path::new("/work"));
+        let rule = prompt
+            .lines()
+            .find(|line| line.starts_with("- Before reporting done"))
+            .unwrap_or_else(|| panic!("нет правила самопроверки: {prompt}"));
+        for action in [
+            "run the tests",
+            "the program",
+            "headless browser",
+            "not just its API",
+        ] {
+            assert!(rule.contains(action), "{action:?} нет в правиле: {rule}");
         }
     }
 
